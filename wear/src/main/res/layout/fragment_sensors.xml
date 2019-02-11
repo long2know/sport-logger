@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<android.support.wear.widget.BoxInsetLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:background="@color/dark_grey"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:textSize="30pt"
+    tools:context=".MainActivity"
+    tools:deviceIds="wear"
+    android:padding="15dp">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="5dp">
+
+    <TableLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:stretchColumns="1,2">
+
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="25dip"
+                android:text="Duration" />
+
+            <TextView
+                android:text="00:00:00"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:id="@+id/tvTimer"
+                android:textStyle="bold"
+                android:paddingLeft="1dip"
+                android:layout_marginRight="4dp"
+                android:textColor="#ffffff" />
+        </TableRow>
+
+        <View
+            android:layout_height="2dip"
+            android:background="#FF909090" />
+
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="10dip"
+                android:padding="3dip"
+                android:text="Heart Rate" />
+
+            <TextView
+                android:id="@+id/hrm"
+                android:layout_marginRight="15dip"
+                android:gravity="right"
+                android:padding="3dip"
+                android:text="0" />
+        </TableRow>
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="10dip"
+                android:padding="3dip"
+                android:text="Latitude" />
+
+            <TextView
+                android:id="@+id/latitude"
+                android:layout_marginRight="15dip"
+                android:gravity="right"
+                android:padding="3dip"
+                android:text="0" />
+        </TableRow>
+
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="10dip"
+                android:padding="3dip"
+                android:text="Longitude" />
+
+            <TextView
+                android:id="@+id/longitude"
+                android:layout_marginRight="15dip"
+                android:gravity="right"
+                android:padding="3dip"
+                android:text="0" />
+        </TableRow>
+
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_width="35dp"
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="10dip"
+                android:padding="3dip"
+                android:text="Distance" />
+
+            <TextView
+                android:id="@+id/totalDistance"
+                android:layout_marginRight="15dip"
+                android:gravity="right"
+                android:padding="3dip"
+                android:text="0" />
+        </TableRow>
+
+        <View
+            android:layout_height="2dip"
+            android:background="#FF909090" />
+
+        <TableRow android:layout_width="fill_parent">
+
+            <TextView
+                android:layout_height="match_parent"
+                android:layout_column="1"
+                android:layout_marginLeft="25dip"
+                android:padding="3dip"
+                android:text="Steps" />
+
+            <TextView
+                android:id="@+id/steps"
+                android:layout_marginRight="25dip"
+                android:gravity="right"
+                android:padding="3dip"
+                android:text="0" />
+        </TableRow>
+    </TableLayout>
+    </FrameLayout>
+</android.support.wear.widget.BoxInsetLayout>

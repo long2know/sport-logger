@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<android.support.wear.widget.BoxInsetLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:textSize="30pt"
+    tools:context=".MainActivity"
+    tools:deviceIds="wear"
+    android:padding="15dp">
+
+    <RelativeLayout android:id="@+id/start_relative_layout"
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent"
+        xmlns:android="http://schemas.android.com/apk/res/android">
+
+        <ImageButton android:id="@+id/btn_start_activity"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_centerInParent="true"
+            android:background="@drawable/ic_play_circle_outline_black_24dp">
+
+        </ImageButton>
+
+    </RelativeLayout>
+</android.support.wear.widget.BoxInsetLayout>
