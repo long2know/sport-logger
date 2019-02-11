@@ -1,0 +1,94 @@
+package com.long2know.utilities.tcxzpot.builders;
+
+import com.long2know.utilities.tcxzpot.AbstractSource;
+import com.long2know.utilities.tcxzpot.Activity;
+import com.long2know.utilities.tcxzpot.Lap;
+import com.long2know.utilities.tcxzpot.Notes;
+import com.long2know.utilities.tcxzpot.Sport;
+import com.long2know.utilities.tcxzpot.TCXDate;
+import com.long2know.utilities.tcxzpot.TCXExtension;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+public class ActivityBuilder {
+
+    private TCXExtension[] extensions;
+
+    public static ActivityBuilder activity(Sport sport) {
+        return new ActivityBuilder(sport);
+    }
+
+    private Sport sport;
+    private TCXDate id;
+    private List<Lap> laps;
+    private Notes notes;
+    private AbstractSource creator;
+
+    private ActivityBuilder(Sport sport) {
+        this.sport = sport;
+    }
+
+    public ActivityBuilder withID(TCXDate id) {
+        this.id = id;
+        return this;
+    }
+
+    public ActivityBuilder withLaps(Lap... laps) {
+        this.laps = new ArrayList<>();
+        Collections.addAll(this.laps, laps);
+        return this;
+    }
+
+    public ActivityBuilder withLaps(List<Lap> laps) {
+        this.laps = laps;
+        return this;
+    }
+
+    public ActivityBuilder withLaps(LapBuilder... laps) {
+        this.laps = new ArrayList<>();
+        for(LapBuilder lapBuilder : laps) {
+            this.laps.add(lapBuilder.build());
+        }
+        return this;
+    }
+
+    public ActivityBuilder withNotes(Notes notes) {
+        this.notes = notes;
+        return this;
+    }
+
+    public ActivityBuilder withCreator(AbstractSource creator) {
+        this.creator = creator;
+        return this;
+    }
+
+    public ActivityBuilder withCreator(AbstractSourceBuilder creatorBuilder) {
+        this.creator = creatorBuilder.build();
+        return this;
+    }
+
+    public ActivityBuilder withExtensions(TCXExtension... extensions) {
+        this.extensions = extensions;
+        return this;
+    }
+
+    public Activity build() {
+        validateArguments();
+        return new Activity(id, laps, notes, creator, sport, extensions);
+    }
+
+    private void validateArguments() {
+        if(sport == null) {
+            throw new IllegalArgumentException("Activity must have a Sport");
+        }
+        if(id == null) {
+            throw new IllegalArgumentException("Activity must have an Id");
+        }
+        if(laps == null || laps.size() == 0) {
+            throw new IllegalArgumentException("Activity must have at least one Lap");
+        }
+    }
+
+}
