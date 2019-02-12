@@ -2,8 +2,10 @@ package com.long2know.sportlogger;
 
 public class SharedData {
     private LocationData data;
-
+    public String Duration;
     public boolean IsRecording;
+    public boolean IsPaused;
+
     public int ActivityId;
 
     private static class Loader {
@@ -42,7 +44,6 @@ public class SharedData {
     public void setHeartRate(float heartRate) {
         this.data.HeartRate = heartRate;
     }
-
     public void setSteps(int steps) {
         this.data.Steps = steps;
     }

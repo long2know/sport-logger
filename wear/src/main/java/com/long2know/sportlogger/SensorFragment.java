@@ -25,10 +25,7 @@ public class SensorFragment extends Fragment {
     private TextView _totalDistance;
     private TextView _steps;
     private TextView _duration;
-
-    long _millisecondTime, _startTime, _timeBuff, _updateTime = 0L ;
     Handler _handler;
-    int _seconds, _minutes, _hours, _milliSeconds ;
 
     public SensorFragment() {
         // Empty constructor required for fragment subclasses
@@ -52,7 +49,20 @@ public class SensorFragment extends Fragment {
         _totalDistance = rootView.findViewById(R.id.totalDistance);
         _steps = rootView.findViewById(R.id.steps);
         _duration = rootView.findViewById(R.id.tvTimer);
+
+        if (SharedData.getInstance().IsRecording) {
+            refresh();
+        }
+
         return rootView;
+    }
+
+    public void refresh() {
+        _duration.setText(SharedData.getInstance().Duration);
+        updateHeartRate(SharedData.getInstance().getData().HeartRate);
+        updateLocation(SharedData.getInstance().getData());
+        updateSteps(SharedData.getInstance().getData().Steps);
+        startTImer();
     }
 
     public void updateHeartRate(float heartRate) {
@@ -76,23 +86,16 @@ public class SensorFragment extends Fragment {
     }
 
     public void startTImer() {
-        _startTime = SystemClock.uptimeMillis();
         _handler.postDelayed(runnable, 200);
     }
 
     public void resetTimer() {
-        _millisecondTime = 0L ;
-        _startTime = 0L ;
-        _timeBuff = 0L ;
-        _updateTime = 0L ;
-        _seconds = 0 ;
-        _minutes = 0 ;
-        _milliSeconds = 0 ;
-        _duration.setText("00:00:00");
+        if (_duration != null) {
+            _duration.setText("00:00:00");
+        }
     }
 
     public void pauseTimer() {
-        _timeBuff += _millisecondTime;
         _handler.removeCallbacks(runnable);
     }
 
@@ -113,21 +116,7 @@ public class SensorFragment extends Fragment {
 
     public Runnable runnable = new Runnable() {
         public void run() {
-            _millisecondTime = SystemClock.uptimeMillis() - _startTime;
-            _updateTime = _timeBuff + _millisecondTime;
-            _seconds = (int) (_updateTime / 1000);
-            _hours = _seconds / 3600;
-            _minutes = (_seconds / 60) % 60; // we want hh:mm:ss format .. not mm:ss:ms format
-            _seconds = _seconds % 60;
-            _milliSeconds = (int) (_updateTime % 1000);
-//            _duration.setText("" + _minutes + ":"
-//                    + String.format("%02d", _seconds) + ":"
-//                    + String.format("%03d", _milliSeconds));
-
-            _duration.setText("" + String.format("%02d", _hours) + ":"
-                + String.format("%02d", _minutes) + ":"
-                + String.format("%02d", _seconds));
-
+            _duration.setText(SharedData.getInstance().Duration);
             handler.postDelayed(this, 0);
         }
 

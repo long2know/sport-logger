@@ -1,8 +1,9 @@
 package com.long2know.utilities;
 
+import java.io.Serializable;
 import java.util.Date;
 
-public class SportTrackPoint {
+public class SportTrackPoint implements Serializable {
     public int Id;
     public int SportActivityId;
     public Date TimeStampUTC;
