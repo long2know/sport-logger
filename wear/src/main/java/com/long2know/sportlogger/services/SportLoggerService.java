@@ -6,8 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.hardware.Sensor;
-import android.hardware.SensorEvent;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Handler;
@@ -18,12 +16,11 @@ import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.widget.Toast;
 
-import com.long2know.sportlogger.Config;
-import com.long2know.sportlogger.LocationData;
+import com.long2know.utilities.models.Config;
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
-import com.long2know.sportlogger.SharedData;
-import com.long2know.sportlogger.SqlLogger;
+import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.data_access.SqlLogger;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;

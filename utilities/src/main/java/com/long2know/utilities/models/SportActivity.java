@@ -1,6 +1,4 @@
-package com.long2know.utilities;
-
-import com.long2know.utilities.tcxzpot.Sport;
+package com.long2know.utilities.models;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;

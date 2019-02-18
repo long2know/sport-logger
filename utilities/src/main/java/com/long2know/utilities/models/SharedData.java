@@ -1,4 +1,4 @@
-package com.long2know.sportlogger;
+package com.long2know.utilities.models;
 
 public class SharedData {
     private LocationData data;

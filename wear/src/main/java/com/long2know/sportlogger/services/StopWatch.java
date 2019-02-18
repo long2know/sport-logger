@@ -1,13 +1,9 @@
 package com.long2know.sportlogger.services;
 
 import android.os.Handler;
-import android.os.Looper;
 import android.os.SystemClock;
 
-import com.long2know.sportlogger.Config;
-import com.long2know.sportlogger.SharedData;
-
-import static com.long2know.sportlogger.Config.handler;
+import com.long2know.utilities.models.SharedData;
 
 public class StopWatch {
     long _millisecondTime, _startTime, _timeBuff, _updateTime = 0L ;

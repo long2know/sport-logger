@@ -9,8 +9,8 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
-import com.long2know.sportlogger.Config;
-import com.long2know.sportlogger.SharedData;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.SharedData;
 
 import java.util.concurrent.ScheduledExecutorService;
 import static android.content.Context.SENSOR_SERVICE;

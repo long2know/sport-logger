@@ -19,9 +19,9 @@ import android.location.LocationManager;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
 
-import com.long2know.sportlogger.Config;
-import com.long2know.sportlogger.LocationData;
-import com.long2know.sportlogger.SharedData;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.LocationData;
+import com.long2know.utilities.models.SharedData;
 
 import java.util.Calendar;
 import java.util.GregorianCalendar;

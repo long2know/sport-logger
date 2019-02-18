@@ -1,4 +1,4 @@
-package com.long2know.utilities;
+package com.long2know.utilities.models;
 
 import java.io.Serializable;
 import java.util.Date;

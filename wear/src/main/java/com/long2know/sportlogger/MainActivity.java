@@ -9,7 +9,6 @@ import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
@@ -17,36 +16,32 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.content.ContextCompat;
-import android.support.wear.ambient.AmbientMode;
 import android.support.wear.ambient.AmbientModeSupport;
 import android.support.wear.widget.drawer.WearableActionDrawerView;
 import android.support.wear.widget.drawer.WearableNavigationDrawerView;
 import android.util.Log;
 import static android.support.constraint.Constraints.TAG;
-import static com.google.android.gms.wearable.Wearable.DataApi;
 
 import android.view.MenuItem;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.Toast;
-import android.widget.ToggleButton;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wearable.Asset;
 import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
 import com.google.android.gms.wearable.Wearable;
 import com.long2know.sportlogger.services.ISportLoggerServiceClient;
 import com.long2know.sportlogger.services.SportLoggerService;
-import com.long2know.utilities.SportActivity;
-import com.long2know.utilities.SportTrackPoint;
-import com.long2know.utilities.tcxzpot.Sport;
+import com.long2know.utilities.data_access.SqlLogger;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.LocationData;
+import com.long2know.utilities.models.Session;
+import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.models.SportActivity;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends FragmentActivity implements
         AmbientModeSupport.AmbientCallbackProvider,
@@ -254,9 +249,14 @@ public class MainActivity extends FragmentActivity implements
             // TODO: mark the transmission as complete
             byte[] bytes = SportActivity.serialize(activity);
             Asset asset = Asset.createFromBytes(bytes);
-            PutDataRequest request = PutDataRequest.create(getString(R.string.wear_path));
-            request.putAsset("sportActivity", asset);
+            PutDataMapRequest dataMap = PutDataMapRequest.create(getString(R.string.wear_path));
+            dataMap.getDataMap().putAsset("sportActivity", asset);
+            PutDataRequest request = dataMap.asPutDataRequest();
             Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
+
+//            PutDataRequest request = PutDataRequest.create(getString(R.string.wear_path));
+//            request.putAsset("sportActivity", asset);
+//            Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
         }
         catch (Exception e) {
             Log.e(TAG,"Could not serialize activity");
