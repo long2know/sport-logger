@@ -1,45 +1,54 @@
 package com.long2know.sportlogger;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
-import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.os.Message;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.app.FragmentManager;
-import android.support.wear.ambient.AmbientMode;
+import android.support.v4.content.ContextCompat;
 import android.support.wear.ambient.AmbientModeSupport;
 import android.support.wear.widget.drawer.WearableActionDrawerView;
 import android.support.wear.widget.drawer.WearableNavigationDrawerView;
-
 import android.util.Log;
 import static android.support.constraint.Constraints.TAG;
+
 import android.view.MenuItem;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.Toast;
 
-import com.long2know.utilities.SportActivity;
-import com.long2know.utilities.SportTrackPoint;
+import com.google.android.gms.tasks.Task;
+import com.google.android.gms.wearable.Asset;
+import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
+import com.long2know.sportlogger.services.ISportLoggerServiceClient;
+import com.long2know.sportlogger.services.SportLoggerService;
+import com.long2know.utilities.data_access.SqlLogger;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.LocationData;
+import com.long2know.utilities.models.Session;
+import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.models.SportActivity;
 
-import java.util.List;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends FragmentActivity implements
         AmbientModeSupport.AmbientCallbackProvider,
         MenuItem.OnMenuItemClickListener,
         WearableNavigationDrawerView.OnItemSelectedListener,
-        ActivityCompat.OnRequestPermissionsResultCallback {
-
-    private Thread _sensorThread;
-    private Thread _locationThread;
+        ActivityCompat.OnRequestPermissionsResultCallback,
+        ISportLoggerServiceClient {
 
     private SensorFragment _sensorFragment;
     private StartActivityFragment _startFragment;
@@ -48,8 +57,12 @@ public class MainActivity extends FragmentActivity implements
     private WearableNavigationDrawerView _wearableNavigationDrawer;
     private WearableActionDrawerView _wearableActionDrawer;
 
-    private SensorListener _sensorListener;
-    private GpsListener _locationListener;
+    private SportLoggerService _loggingService;
+    private ServiceConnection _loggingServiceConnection;
+    private static Intent _serviceIntent;
+
+//    private S _sensorListener;
+//    private GpsListener _locationListener;
     private ScheduledExecutorService _scheduler;
 
     @Override
@@ -59,7 +72,7 @@ public class MainActivity extends FragmentActivity implements
 
         // Enables Ambient mode.
          AmbientModeSupport.attach(this);
-        Config.context = this;
+//        Config.context = this;
 
         // Initialize the fragments and set set initial content.
         Bundle sargs = new Bundle();
@@ -74,7 +87,6 @@ public class MainActivity extends FragmentActivity implements
         _fragmentManager = this.getSupportFragmentManager();
 
 //        _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
 
         // Top Navigation Drawer
         _wearableNavigationDrawer = findViewById(R.id.top_navigation_drawer);
@@ -93,7 +105,7 @@ public class MainActivity extends FragmentActivity implements
 
         // Create a handler for the UI thread
         // Defines a Handler object that's attached to the UI thread
-        Config.handler = new Handler(Looper.getMainLooper()) {
+        Config.activityHandler = new Handler(Looper.getMainLooper()) {
             public void handleMessage(Message msg) {
                 int messageType = msg.what;
 
@@ -136,107 +148,142 @@ public class MainActivity extends FragmentActivity implements
                     Manifest.permission.ACCESS_FINE_LOCATION
             }, 1);
         }
+
+        // If the service indicates that a recording is in progress, continue
+        SharedData shared = SharedData.getInstance();
+        if (shared.IsRecording && !shared.IsPaused) {
+            _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
+            _wearableActionDrawer.getController().peekDrawer();
+        } else if (shared.IsPaused) {
+            _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
+        } else {
+            _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
+        }
+
+        _loggingServiceConnection = new ServiceConnection() {
+            public void onServiceDisconnected(ComponentName name)            {
+                _loggingService = null;
+            }
+            public void onServiceConnected(ComponentName name, IBinder service)            {
+                _loggingService = ((SportLoggerService.LocalBinder) service).getService();
+                SportLoggerService.setServiceClient(MainActivity.this);
+            }
+        };
     }
 
     @Override
-    public void onDestroy () {
-        super.onDestroy ();
+    protected void onStart() {
+        super.onStart();
+        startAndBindService();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        startAndBindService();
+    }
+
+    @Override
+    public void onDestroy() {
+        if (SharedData.getInstance().IsRecording) {
+            if (_loggingServiceConnection != null) {
+                unbindService(_loggingServiceConnection);
+            }
+        } else {
+            stopAndUnbindServiceIfRequired();
+        }
+
+        super.onDestroy();
+    }
+
+    public void onLoggerUpdate(SharedData data) {
+
+    }
+
+    // Start the logger service and bind the activity to the service
+    private void startAndBindService() {
+        _serviceIntent = new Intent(this, SportLoggerService.class);
+
+        // Start the service in case it isn't already running
+//        startForegroundService(_serviceIntent);
+//        startService(_serviceIntent);
+        ContextCompat.startForegroundService(this, _serviceIntent);
+
+        // Now bind to service
+        bindService(_serviceIntent, _loggingServiceConnection, Context.BIND_AUTO_CREATE);
+        Session.setBoundToService(true);
+    }
+
+    // Start the logger service and bind the activity to the service
+    private void stopAndUnbindServiceIfRequired() {
+        if(Session.isBoundToService())        {
+            unbindService(_loggingServiceConnection);
+            Session.setBoundToService(false);
+        }
+
+        if(!Session.isStarted()) {
+            //serviceIntent = new Intent(this, GpsLoggingService.class);
+            stopService(_serviceIntent);
+        }
+    }
 
     public void startNewActivity() {
-        // We can force reading at specific intervals like this
-        _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
-
-        SqlLogger.initDatabase();
-        SharedData.getInstance().ActivityId = SqlLogger.createActivity();
-        SharedData.getInstance().IsRecording = true;
-        CharSequence text = "Starting new activity";
-        Toast.makeText(Config.context, text, Toast.LENGTH_SHORT).show();
-
+        _loggingService.startNewActivity();
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
         _wearableActionDrawer.getController().peekDrawer();
     }
 
     public void stopActivity() {
-        // We don't want to block the UI
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                }
-            }
-        });
-
-        CharSequence text = "Stopped activity";
-        Toast.makeText(Config.context, text, Toast.LENGTH_SHORT).show();
-
-        SharedData.getInstance().IsRecording = false;
+        _loggingService.stopActivity();
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
+
+        // Send the activity to the phone
+        SqlLogger sqlLogger = new SqlLogger();
+        SportActivity activity = sqlLogger.getSportActivity(SharedData.getInstance().ActivityId);
+        activity.SportTrackPoints = sqlLogger.getTrackPointsByActivity(SharedData.getInstance().ActivityId);
+
+        try {
+            // Transmit the activity to the phone
+            // TODO: mark the transmission as complete
+            byte[] bytes = SportActivity.serialize(activity);
+            Asset asset = Asset.createFromBytes(bytes);
+            PutDataMapRequest dataMap = PutDataMapRequest.create(getString(R.string.wear_path));
+            dataMap.getDataMap().putAsset("sportActivity", asset);
+            PutDataRequest request = dataMap.asPutDataRequest();
+            Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
+
+//            PutDataRequest request = PutDataRequest.create(getString(R.string.wear_path));
+//            request.putAsset("sportActivity", asset);
+//            Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
+        }
+        catch (Exception e) {
+            Log.e(TAG,"Could not serialize activity");
+        }
+
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
         _wearableActionDrawer.getController().closeDrawer();
     }
 
     public void pauseActivity() {
-        // We don't want to block the UI
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                }
-            }
-        });
-
-        CharSequence text = "Paused activity";
-        Toast.makeText(Config.context, text, Toast.LENGTH_SHORT).show();
-
+        _loggingService.pauseActivity();
         _sensorFragment.pauseTimer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
         _wearableActionDrawer.getController().closeDrawer();
     }
 
     public void resumeActivity() {
-        // We can force reading at specific intervals like this
-        _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
-
-        CharSequence text = "Resuming activity";
-        Toast.makeText(Config.context, text, Toast.LENGTH_SHORT).show();
-
+        _loggingService.resumeActivity();
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
         _wearableActionDrawer.getController().peekDrawer();
     }
 
     public void discardActivity() {
-        // We don't want to block the UI
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                }
-                int id = SharedData.getInstance().ActivityId;
-                SharedData.getInstance().IsRecording = false;
-                _sensorFragment.pauseTimer();
-                _sensorFragment.resetTimer();
-
-                SqlLogger sqlLogger = new SqlLogger();
-                sqlLogger.deleteActivity(id);
-            }
-        });
-
-        CharSequence text = "Discarded activity";
-        Toast.makeText(Config.context, text, Toast.LENGTH_SHORT).show();
-
+        _loggingService.discardActivity();
+        _sensorFragment.pauseTimer();
+        _sensorFragment.resetTimer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
         _wearableActionDrawer.getController().closeDrawer();
     }
@@ -251,13 +298,13 @@ public class MainActivity extends FragmentActivity implements
         }
 
         if (flag) {
-            _sensorListener = new SensorListener();
-            _locationListener = new GpsListener();
-
-            _sensorThread = new Thread(new SensorListener());
-            _locationThread = new Thread(new GpsListener());
-            _sensorThread.start();
-            _locationThread.start();
+//            _sensorListener = new SensorListener();
+//            _locationListener = new GpsListener();
+//
+//            _sensorThread = new Thread(new SensorListener());
+//            _locationThread = new Thread(new GpsListener());
+//            _sensorThread.start();
+//            _locationThread.start();
         }
     }
 
@@ -379,6 +426,23 @@ public class MainActivity extends FragmentActivity implements
 //                    getResources().getIdentifier(navigationIcon, "drawable", getPackageName());
 //
 //            return _context.getDrawable(drawableNavigationIconId);
+        }
+
+        /**
+         * Stops the service if it isn't logging. Also unbinds.
+         */
+        private void stopAndUnbindServiceIfRequired() {
+            if(Session.isBoundToService())
+            {
+                unbindService(_loggingServiceConnection);
+                Session.setBoundToService(false);
+            }
+
+            if(!Session.isStarted())            {
+                //serviceIntent = new Intent(this, GpsLoggingService.class);
+                stopService(_serviceIntent);
+            }
+
         }
     }
 }

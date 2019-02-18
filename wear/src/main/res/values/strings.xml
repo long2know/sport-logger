@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">SportLogger</string>
+    <string name="service_name">SportLoggerService</string>
+    <string name="wear_path">/sportactivity</string>
     <!--
     This string is used for square devices and overridden by hello_world in
     values-round/strings.xml for round devices.

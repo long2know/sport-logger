@@ -1,5 +1,6 @@
-package com.long2know.sportlogger;
+package com.long2know.utilities.data_access;
 
+import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
@@ -10,24 +11,27 @@ import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.TimeZone;
 import java.util.Date;
-import java.util.UUID;
+
 import android.util.Log;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.LocationData;
+import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.models.SportActivity;
+import com.long2know.utilities.models.SportTrackPoint;
+import com.long2know.utilities.tcxzpot.Trackpoint;
 
-import com.long2know.utilities.SportActivity;
-import com.long2know.utilities.SportTrackPoint;
-
-import static android.support.constraint.Constraints.TAG;
 
 public class SqlLogger implements Runnable {
 
+    public static final String TAG = "SqlLogger";
     public static final String DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW";
-
     public static final String ACTIVITY_TABLE_NAME = "ACTIVITY";
 
     public static final String A_ROWID="ID";
     public static final String A_NAME="NAME";
     public static final String A_DESCRIPTION="DESCRIPTION";
     public static final String A_START_TIME_UTC="GMTSTART";
+    public static final String A_END_TIME_UTC="GMTEND";
     public static final String A_DISTANCE="DISTANCE";
     public static final String A_TIME="TIME";
     public static final String A_PACE="PACE";
@@ -98,6 +102,22 @@ public class SqlLogger implements Runnable {
         _db.execSQL(queryBuf.toString());
     }
 
+
+    public static void initDatabase() {
+        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
+                SQLiteDatabase.OPEN_READWRITE, null);
+
+        db.execSQL("CREATE TABLE IF NOT EXISTS " + ACTIVITY_TABLE_NAME
+                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,"
+                + "DISTANCE REAL, TIME REAL, PACE REAL);");
+
+        db.execSQL("CREATE TABLE IF NOT EXISTS " + GPS_TABLE_NAME
+                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,"
+                + "ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);");
+        db.close();
+        Log.i(TAG, "Database opened ok");
+    }
+
     public static int createActivity() {
         // Get a timestamp
         GregorianCalendar greg = new GregorianCalendar();
@@ -138,19 +158,23 @@ public class SqlLogger implements Runnable {
         return idLastInsertedRow;
     }
 
-    public static void initDatabase() {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+    public int createActivity(SportActivity sportAcitvity) {
+        // Create a new map of values, where column names are the keys
+        ContentValues values = new ContentValues();
+        values.put(A_NAME, sportAcitvity.Name);
+        values.put(A_DESCRIPTION, sportAcitvity.Description);
+        values.put(A_START_TIME_UTC, Config.TimestampFormat.format(sportAcitvity.StartTimeUTC));
+        values.put(A_END_TIME_UTC, Config.TimestampFormat.format(sportAcitvity.EndTimeUTC));
+        values.put(A_DISTANCE, sportAcitvity.Distance);
+        values.put(A_TIME, sportAcitvity.Time);
+        values.put(A_PACE, sportAcitvity.Pace);
 
-        db.execSQL("CREATE TABLE IF NOT EXISTS " + ACTIVITY_TABLE_NAME
-                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,"
-                + "DISTANCE REAL, TIME REAL, PACE REAL);");
+        // Insert the new row, returning the primary key value of the new row
+        int newRowId = (int) _db.insert(ACTIVITY_TABLE_NAME, null, values);
+        sportAcitvity.Id = (int) newRowId;
 
-        db.execSQL("CREATE TABLE IF NOT EXISTS " + GPS_TABLE_NAME
-                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,"
-                + "ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);");
-        db.close();
-        Log.i(TAG, "Database opened ok");
+        createTrackPoints(sportAcitvity.SportTrackPoints, sportAcitvity.Id);
+        return newRowId;
     }
 
     public SportActivity getSportActivity(int id) {
@@ -165,6 +189,7 @@ public class SqlLogger implements Runnable {
         int iname = cursor.getColumnIndex(A_NAME);
         int idescription = cursor.getColumnIndex(A_DESCRIPTION);
         int istarttime = cursor.getColumnIndex(A_START_TIME_UTC);
+        int iendtime = cursor.getColumnIndex(A_END_TIME_UTC);
         int idistance = cursor.getColumnIndex(A_DISTANCE);
         int itime = cursor.getColumnIndex(A_TIME);
         int ipace = cursor.getColumnIndex(A_PACE);
@@ -181,6 +206,10 @@ public class SqlLogger implements Runnable {
                         retVal.StartTimeUTC = Config.TimestampFormat.parse(cursor.getString(istarttime));
                     } catch (ParseException e) {}
 
+                    try {
+                        retVal.EndTimeUTC = Config.TimestampFormat.parse(cursor.getString(iendtime));
+                    } catch (ParseException e) {}
+
                     retVal.Distance = cursor.getDouble(idistance);
                     retVal.Time = cursor.getDouble(itime);
                     retVal.Pace = cursor.getDouble(ipace);
@@ -191,6 +220,93 @@ public class SqlLogger implements Runnable {
         }
 
         return retVal;
+    }
+
+    public List<SportActivity> getSportActivities() {
+        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
+                SQLiteDatabase.OPEN_READWRITE, null);
+
+        String[] field = {A_ROWID, A_NAME, A_DESCRIPTION, A_START_TIME_UTC, A_DISTANCE, A_TIME, A_PACE};
+//        String whereClause = A_ROWID + "=?";
+//        String[] whereArgs = { Integer.toString(id) };
+
+        Cursor cursor = db.query(ACTIVITY_TABLE_NAME, field, null, null, null, null, null, null);
+
+        int iname = cursor.getColumnIndex(A_NAME);
+        int idescription = cursor.getColumnIndex(A_DESCRIPTION);
+        int istarttime = cursor.getColumnIndex(A_START_TIME_UTC);
+        int iendtime = cursor.getColumnIndex(A_END_TIME_UTC);
+        int idistance = cursor.getColumnIndex(A_DISTANCE);
+        int itime = cursor.getColumnIndex(A_TIME);
+        int ipace = cursor.getColumnIndex(A_PACE);
+
+        List<SportActivity> retVal =  new ArrayList<>();
+
+        if (cursor != null) {
+            try {
+
+                for (cursor.moveToFirst(); !cursor.isAfterLast(); cursor.moveToNext()){
+                    SportActivity sportActivity = new SportActivity();
+                    sportActivity.Name = cursor.getString(iname);
+                    sportActivity.Description = cursor.getString(idescription);
+
+                    try {
+                        sportActivity.StartTimeUTC = Config.TimestampFormat.parse(cursor.getString(istarttime));
+                    } catch (ParseException e) {}
+
+                    try {
+                        sportActivity.EndTimeUTC = Config.TimestampFormat.parse(cursor.getString(iendtime));
+                    } catch (ParseException e) {}
+
+                    sportActivity.Distance = cursor.getDouble(idistance);
+                    sportActivity.Time = cursor.getDouble(itime);
+                    sportActivity.Pace = cursor.getDouble(ipace);
+
+                    retVal.add(sportActivity);
+                }
+
+            } finally {
+                cursor.close();
+            }
+        }
+
+        return retVal;
+    }
+
+    public void updateSportActivity(SportActivity sportActivity) {
+        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
+                SQLiteDatabase.OPEN_READWRITE, null);
+
+        // Create a new map of values, where column names are the keys
+        ContentValues values = new ContentValues();
+        values.put(A_NAME, sportActivity.Name);
+        values.put(A_DESCRIPTION, sportActivity.Description);
+        values.put(A_START_TIME_UTC, Config.TimestampFormat.format(sportActivity.StartTimeUTC));
+        values.put(A_END_TIME_UTC, Config.TimestampFormat.format(sportActivity.EndTimeUTC));
+        values.put(A_DISTANCE, sportActivity.Distance);
+        values.put(A_TIME, sportActivity.Time);
+        values.put(A_PACE, sportActivity.Pace);
+
+        // Which row to update, based on the title
+        String whereClause = A_ROWID + "=?";
+        String[] whereArgs = { Integer.toString(sportActivity.Id) };
+
+        int count = db.update(ACTIVITY_TABLE_NAME, values, whereClause, whereArgs);
+    }
+
+    public void deleteActivity(int id) {
+        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
+                SQLiteDatabase.OPEN_READWRITE, null);
+
+        // Delete the track points
+        String whereClause = T_ACTIVITY_ID + "=?";
+        String[] whereArgs = { Integer.toString(id) };
+        db.delete(GPS_TABLE_NAME, whereClause, whereArgs);
+
+        // Delete the activity
+        whereClause = A_ROWID + "=?";
+        whereArgs = new String[] { Integer.toString(id) };
+        db.delete(ACTIVITY_TABLE_NAME, whereClause, whereArgs);
     }
 
     public List<SportTrackPoint> getTrackPointsByActivity(int activityId) {
@@ -248,18 +364,42 @@ public class SqlLogger implements Runnable {
         return retVal;
     }
 
-    public void deleteActivity(int id) {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+    public void createTrackPoints(List<SportTrackPoint> trackPoints, int activityId) {
+        for (SportTrackPoint trackPoint : trackPoints) {
+            createTrackPoint(trackPoint, activityId);
+        }
+    }
 
-        // Delete the track points
-        String whereClause = T_ACTIVITY_ID + "=?";
-        String[] whereArgs = { Integer.toString(id) };
-        db.delete(GPS_TABLE_NAME, whereClause, whereArgs);
+    public void createTrackPoint(SportTrackPoint trackPoint, int activityId) {
+        ContentValues values = getrackPointContentValues(trackPoint, activityId);
+        // Insert the new row, returning the primary key value of the new row
+        int newRowId = (int) _db.insert(GPS_TABLE_NAME, null, values);
+        trackPoint.Id = newRowId;
+    }
 
-        // Delete the activity
-        whereClause = A_ROWID + "=?";
-        whereArgs = new String[] { Integer.toString(id) };
-        db.delete(ACTIVITY_TABLE_NAME, whereClause, whereArgs);
+    public void updateTrackPoint(SportTrackPoint trackPoint, int activityId) {
+        // Create a new map of values, where column names are the keys
+        ContentValues values = getrackPointContentValues(trackPoint, activityId);
+        // Which row to update, based on the title
+        String whereClause = T_ROWID + "=?";
+        String[] whereArgs = {Integer.toString(trackPoint.Id)};
+
+        int count = _db.update(GPS_TABLE_NAME, values, whereClause, whereArgs);
+    }
+
+    private ContentValues getrackPointContentValues(SportTrackPoint trackPoint, int activityId) {
+        // Create a new map of values, where column names are the keys
+        ContentValues values = new ContentValues();
+        values.put(T_ACTIVITY_ID, activityId == 0 ? trackPoint.SportActivityId : activityId);
+        values.put(T_TIMESTAMP_UTC, Config.TimestampFormat.format(trackPoint.TimeStampUTC));
+        values.put(T_LATITUDE, trackPoint.Latitude);
+        values.put(T_LONGITUDE, trackPoint.Longitude);
+        values.put(T_ALTITUDE, trackPoint.Altitude);
+        values.put(T_ACCURACY, trackPoint.Accuracy);
+        values.put(T_SPEED, trackPoint.Speed);
+        values.put(T_BEARING, trackPoint.Bearing);
+        values.put(T_HEARTRATE, trackPoint.HeartRate);
+
+        return values;
     }
 }

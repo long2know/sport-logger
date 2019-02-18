@@ -1,4 +1,4 @@
-package com.long2know.sportlogger;
+package com.long2know.sportlogger.services;
 
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -8,9 +8,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
-import java.util.concurrent.Executors;
+
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.SharedData;
+
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import static android.content.Context.SENSOR_SERVICE;
 import static android.support.constraint.Constraints.TAG;
 

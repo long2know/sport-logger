@@ -1,4 +1,4 @@
-package com.long2know.sportlogger;
+package com.long2know.sportlogger.services;
 
 import android.Manifest;
 import android.content.Context;
@@ -18,6 +18,10 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
+
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.LocationData;
+import com.long2know.utilities.models.SharedData;
 
 import java.util.Calendar;
 import java.util.GregorianCalendar;
@@ -45,7 +49,6 @@ public class GpsListener implements Runnable {
     // Defines the code to run for this task.
     @Override
     public void run() {
-
         // Moves the current Thread into the background
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
 
@@ -74,8 +77,7 @@ public class GpsListener implements Runnable {
         int res = Config.context.checkCallingPermission(Manifest.permission.ACCESS_FINE_LOCATION);
         boolean hasPerms = res == PackageManager.PERMISSION_GRANTED;
 
-        if (!hasPerms)
-        {
+        if (!hasPerms) {
             startListeners();
         }
         else {

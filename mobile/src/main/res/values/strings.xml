@@ -1,3 +1,4 @@
 <resources tools:ignore="ExtraTranslation" xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">SportLogger</string>
+    <string name="wear_path">/sportactivity</string>
 </resources>

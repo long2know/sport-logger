@@ -1,4 +1,4 @@
-package com.long2know.sportlogger;
+package com.long2know.utilities.models;
 
 import android.location.Location;
 
