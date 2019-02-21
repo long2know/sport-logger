@@ -16,4 +16,6 @@ This process was cumbersome.  So, I decided to write my own WearOS app that woul
 
 * Integrate with sport tracker websites for storing data and analysis
 
+Tagged v0.11
+
 
