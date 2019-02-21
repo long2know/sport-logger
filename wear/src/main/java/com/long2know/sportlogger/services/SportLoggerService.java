@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 
 import static android.support.constraint.Constraints.TAG;
 
-public class SportLoggerService extends  Service {
+public class SportLoggerService extends Service {
 
     private NotificationManager _notificationManager;
     private final IBinder _binder = new LocalBinder();
@@ -88,6 +88,27 @@ public class SportLoggerService extends  Service {
 
     @Override
     public void onDestroy() {
+        if (_scheduler != null) {
+            AsyncTask.execute(new Runnable() {
+                @Override
+                public void run() {
+                try {
+                    _scheduler.awaitTermination(100, TimeUnit.MILLISECONDS);
+                    _scheduler.shutdownNow();
+                } catch (InterruptedException e) { }
+                }
+            });
+        }
+
+        Message lmsg = _sensorListener.WorkerHandler.obtainMessage(0);
+        _sensorListener.WorkerHandler.sendMessage(lmsg);
+
+        Message gmsg = _locationListener.WorkerHandler.obtainMessage(0);
+        _locationListener.WorkerHandler.sendMessage(gmsg);
+
+        _sensorThread.interrupt();
+        _locationThread.interrupt();
+
         _serviceClient = null;
         super.onDestroy();
     }
@@ -146,6 +167,7 @@ public class SportLoggerService extends  Service {
         SqlLogger.initDatabase();
         SharedData.getInstance().ActivityId = SqlLogger.createActivity();
         SharedData.getInstance().IsRecording = true;
+        SharedData.getInstance().IsPaused = false;
         CharSequence text = "Starting new activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
     }
@@ -157,6 +179,7 @@ public class SportLoggerService extends  Service {
             public void run() {
                 try {
                     _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
+                    _scheduler.shutdownNow();
                 } catch (InterruptedException e) {
                 }
             }
@@ -179,6 +202,7 @@ public class SportLoggerService extends  Service {
             public void run() {
                 try {
                     _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
+                    _scheduler.shutdownNow();
                 } catch (InterruptedException e) {
                 }
             }
@@ -200,16 +224,19 @@ public class SportLoggerService extends  Service {
     }
 
     public void discardActivity() {
+        SharedData.getInstance().IsRecording = false;
+        SharedData.getInstance().IsPaused = false;
+
         // We don't want to block the UI
         AsyncTask.execute(new Runnable() {
             @Override
             public void run() {
                 try {
                     _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
+                    _scheduler.shutdownNow();
                 } catch (InterruptedException e) {
                 }
                 int id = SharedData.getInstance().ActivityId;
-                SharedData.getInstance().IsRecording = false;
 
                 SqlLogger sqlLogger = new SqlLogger();
                 sqlLogger.deleteActivity(id);
@@ -218,9 +245,6 @@ public class SportLoggerService extends  Service {
 
         _stopWatch.pauseTimer();
         _stopWatch.resetTimer();
-
-        SharedData.getInstance().IsRecording = false;
-        SharedData.getInstance().IsPaused = false;
 
         CharSequence text = "Discarded activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();

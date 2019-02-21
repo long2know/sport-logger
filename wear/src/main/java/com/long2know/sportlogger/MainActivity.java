@@ -61,7 +61,7 @@ public class MainActivity extends FragmentActivity implements
     private ServiceConnection _loggingServiceConnection;
     private static Intent _serviceIntent;
 
-//    private S _sensorListener;
+//    private SensorListener _sensorListener;
 //    private GpsListener _locationListener;
     private ScheduledExecutorService _scheduler;
 
@@ -72,7 +72,7 @@ public class MainActivity extends FragmentActivity implements
 
         // Enables Ambient mode.
          AmbientModeSupport.attach(this);
-//        Config.context = this;
+        Config.activityContext = this;
 
         // Initialize the fragments and set set initial content.
         Bundle sargs = new Bundle();
@@ -291,7 +291,7 @@ public class MainActivity extends FragmentActivity implements
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         boolean flag = true;
-        for (int i = 0, len = permissions.length; i < len; i++) {
+        for (int i = 0; i < permissions.length; i++) {
             if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                 flag = false;
             }
@@ -432,8 +432,7 @@ public class MainActivity extends FragmentActivity implements
          * Stops the service if it isn't logging. Also unbinds.
          */
         private void stopAndUnbindServiceIfRequired() {
-            if(Session.isBoundToService())
-            {
+            if(Session.isBoundToService()) {
                 unbindService(_loggingServiceConnection);
                 Session.setBoundToService(false);
             }

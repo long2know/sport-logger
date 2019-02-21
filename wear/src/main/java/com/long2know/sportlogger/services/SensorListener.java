@@ -47,6 +47,7 @@ public class SensorListener implements Runnable {
                     // The sensors are started by default
                     if (_isStarted) {
                         stopListeners();
+                        Looper.myLooper().quit();
                         _isStarted = false;
                     }
                 } else {

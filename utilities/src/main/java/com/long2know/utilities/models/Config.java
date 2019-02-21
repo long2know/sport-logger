@@ -9,6 +9,7 @@ import java.text.SimpleDateFormat;
 
 public final class Config {
     public static Context context = null;
+    public static Context activityContext = null;
     public static Handler handler = null;
     public static Handler activityHandler = null;
     public static final DecimalFormat SevenSigDigits = new DecimalFormat("0.#######");

@@ -3,6 +3,9 @@ package com.long2know.sportlogger.services;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.GnssMeasurementsEvent;
+import android.location.GnssStatus;
+import android.location.LocationProvider;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,7 +31,7 @@ import java.util.GregorianCalendar;
 import java.util.TimeZone;
 import java.util.UUID;
 
-public class GpsListener implements Runnable {
+public class GpsListener implements Runnable  {
     public static Handler WorkerHandler;
     private Handler _handler;
     private ScheduledExecutorService _scheduler;
@@ -40,12 +43,18 @@ public class GpsListener implements Runnable {
 
     private LocationManager _locationManager;
     private LocationListener _locationListener;
-    private boolean _isGPSEnabled;
+    private GnssStatus.Callback _gnssStatusListener;
+    private GnssMeasurementsEvent.Callback _gnssMeasurementsListener;
+    private GnssStatus _gnssStatus;
+
+    private boolean _isGpsEnabled;
     private boolean _isNetworkEnabled;
+    private boolean _isGpsLocked = false;
 
     private static String _uniqueId = null;
     private static final String PREF_UNIQUE_ID = "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
     private boolean _isStarted = true;
+
     // Defines the code to run for this task.
     @Override
     public void run() {
@@ -63,6 +72,7 @@ public class GpsListener implements Runnable {
                     // The sensors are started by default
                     if (_isStarted) {
                         stopListeners();
+                        Looper.myLooper().quit();
                         _isStarted = false;
                     }
                 } else {
@@ -105,10 +115,10 @@ public class GpsListener implements Runnable {
         if (ContextCompat.checkSelfPermission(Config.context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
 
             // Get GPS and network status
-            _isGPSEnabled = _locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+            _isGpsEnabled = _locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
             _isNetworkEnabled = _locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
 
-            if (_isGPSEnabled) {
+            if (_isGpsEnabled) {
                 // Get the last location
                 _locationManager.getLastKnownLocation(provider);
             }
@@ -122,7 +132,9 @@ public class GpsListener implements Runnable {
     }
 
     public void stopListeners()    {
-        _locationManager.removeUpdates(_locationListener);
+        if (_locationManager != null && _locationListener != null) {
+            _locationManager.removeUpdates(_locationListener);
+        }
         SharedData singleton = SharedData.getInstance();
         singleton.setLocation(new LocationData());
     }
@@ -160,7 +172,7 @@ public class GpsListener implements Runnable {
                             String ts = Config.DotnetTimestampFormat.format(greg.getTime());
                             double distance = calculateDistance(_lastLocation, location);
                             _totalDistance += distance;
-                            LocationData data = new LocationData(location, distance, _totalDistance);
+                            LocationData data = new LocationData(location, _totalDistance, distance);
                             Message completeMessage = _handler.obtainMessage(0, 1, 1, data);
                             completeMessage.sendToTarget();
                             _lastLocation = location;
@@ -178,21 +190,86 @@ public class GpsListener implements Runnable {
 
             @Override
             public void onStatusChanged(String provider, int status, Bundle extras) {
-
+                if (provider.equalsIgnoreCase("gps")) {
+                    if (status == LocationProvider.OUT_OF_SERVICE || status == LocationProvider.TEMPORARILY_UNAVAILABLE) {
+                        // We lost our lock
+                        _isGpsLocked = false;
+                    }
+                }
             }
 
             @Override
             public void onProviderEnabled(String provider) {
-
+                if (provider.equalsIgnoreCase("gps")) {
+                    // Our provider is enabled
+                    _isGpsLocked = true;
+                }
             }
 
             @Override
             public void onProviderDisabled(String provider) {
-
+                if (provider.equalsIgnoreCase("gps")) {
+                    // We lost our lock
+                    _isGpsLocked = false;
+                }
             }
         };
 
         return listener;
+    }
+
+    @SuppressWarnings({"MissingPermission"})
+    private void addGnssStatusListener() {
+        _gnssStatusListener = new GnssStatus.Callback() {
+            @Override
+            public void onStarted() {
+            }
+
+            @Override
+            public void onStopped() {
+            }
+
+            @Override
+            public void onFirstFix(int ttffMillis) {
+            }
+
+            @Override
+            public void onSatelliteStatusChanged(GnssStatus status) {
+                _gnssStatus = status;
+            }
+        };
+
+        _locationManager.registerGnssStatusCallback(_gnssStatusListener);
+    }
+
+    @SuppressWarnings({"MissingPermission"})
+    private void addGnssMeasurementsListener() {
+        _gnssMeasurementsListener = new GnssMeasurementsEvent.Callback() {
+            @Override
+            public void onGnssMeasurementsReceived(GnssMeasurementsEvent event) {
+            }
+
+            @Override
+            public void onStatusChanged(int status) {
+                final String statusMessage;
+                switch (status) {
+                    case STATUS_LOCATION_DISABLED:
+                        statusMessage = "disabled";
+                        break;
+                    case STATUS_NOT_SUPPORTED:
+                        statusMessage = "not supported";
+                        break;
+                    case STATUS_READY:
+                        statusMessage = "ready";
+                        break;
+                    default:
+                        statusMessage = "unknown";
+                }
+                Log.d(TAG, "GnssMeasurementsEvent.Callback.onStatusChanged() - " + statusMessage);
+            }
+        };
+
+        _locationManager.registerGnssMeasurementsCallback(_gnssMeasurementsListener);
     }
 
     public double calculateDistance(Location start, Location end)    {
