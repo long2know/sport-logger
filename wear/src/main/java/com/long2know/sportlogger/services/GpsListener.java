@@ -11,16 +11,17 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 
-import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import java.util.concurrent.ScheduledExecutorService;
-import static android.support.constraint.Constraints.TAG;
+import static androidx.constraintlayout.widget.Constraints.TAG;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
+
+import androidx.core.content.ContextCompat;
 
 import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;

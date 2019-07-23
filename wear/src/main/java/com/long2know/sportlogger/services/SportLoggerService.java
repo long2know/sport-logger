@@ -12,21 +12,22 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
-import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.widget.Toast;
 
-import com.long2know.utilities.models.Config;
+import androidx.core.app.NotificationCompat;
+
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
-import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.data_access.SqlLogger;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.SharedData;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static android.support.constraint.Constraints.TAG;
+import static androidx.constraintlayout.widget.Constraints.TAG;
 
 public class SportLoggerService extends Service {
 

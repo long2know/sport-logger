@@ -3,14 +3,14 @@ package com.long2know.sportlogger;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.os.Bundle;
-import android.support.v4.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
+import androidx.fragment.app.Fragment;
+import static androidx.constraintlayout.widget.Constraints.TAG;
 
-import static android.support.constraint.Constraints.TAG;
 
 /**
  * Fragment that appears in the "content_frame", just shows the currently selected planet.

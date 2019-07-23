@@ -12,19 +12,20 @@ import android.hardware.SensorEvent;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.FragmentActivity;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.content.ContextCompat;
-import android.support.wear.ambient.AmbientModeSupport;
-import android.support.wear.widget.drawer.WearableActionDrawerView;
-import android.support.wear.widget.drawer.WearableNavigationDrawerView;
 import android.util.Log;
-import static android.support.constraint.Constraints.TAG;
 
 import android.view.MenuItem;
 import android.os.Handler;
 import android.os.Looper;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.fragment.app.FragmentActivity;
+import androidx.fragment.app.FragmentManager;
+import static androidx.constraintlayout.widget.Constraints.TAG;
+import androidx.wear.ambient.AmbientModeSupport;
+import androidx.wear.widget.drawer.WearableActionDrawerView;
+import androidx.wear.widget.drawer.WearableNavigationDrawerView;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wearable.Asset;

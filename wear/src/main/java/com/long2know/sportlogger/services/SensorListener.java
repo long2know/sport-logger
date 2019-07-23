@@ -14,7 +14,7 @@ import com.long2know.utilities.models.SharedData;
 
 import java.util.concurrent.ScheduledExecutorService;
 import static android.content.Context.SENSOR_SERVICE;
-import static android.support.constraint.Constraints.TAG;
+import static androidx.constraintlayout.widget.Constraints.TAG;
 
 public class SensorListener implements Runnable {
     public static Handler WorkerHandler;
