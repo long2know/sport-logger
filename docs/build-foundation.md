@@ -118,7 +118,9 @@ The clean build produces:
 - `utilities/build/outputs/aar/utilities-debug.aar`
 
 The same tasks run in `.github/workflows/android.yml`, which installs API 36/build tools 36.0.0,
-uses Temurin 17.0.20+8, and validates the checked-in wrapper before building.
+uses Temurin 17.0.20+8, and validates the checked-in wrapper before building. Workflow actions are
+pinned to the release commits for Checkout 7.0.1, Setup Java 5.6.0, Setup Android 4.0.1, and Gradle
+Actions 6.2.0.
 
 ## Known behavior intentionally not modernized
 
