@@ -1,20 +1,22 @@
 package com.long2know.sportlogger.services;
 
-import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
-import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.widget.Toast;
+
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 
 import com.long2know.utilities.models.Config;
 import com.long2know.sportlogger.MainActivity;
@@ -26,9 +28,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static android.support.constraint.Constraints.TAG;
-
 public class SportLoggerService extends Service {
+    private static final String NOTIFICATION_CHANNEL_ID = "long2know_sport_logger";
+    private static final int NOTIFICATION_ID = 1;
+    private static final String TAG = "SportLoggerService";
 
     private NotificationManager _notificationManager;
     private final IBinder _binder = new LocalBinder();
@@ -59,6 +62,7 @@ public class SportLoggerService extends Service {
         };
 
         _notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        showNotification();
 
         _sensorListener = new SensorListener();
         _locationListener = new GpsListener();
@@ -67,12 +71,6 @@ public class SportLoggerService extends Service {
         _locationThread = new Thread(new GpsListener());
         _sensorThread.start();
         _locationThread.start();
-
-//        startLoggerService();
-//
-//        // Display a notification about us starting. We put an icon in the
-//        // status bar.
-        showNotification();
     }
 
     @Override
@@ -117,32 +115,37 @@ public class SportLoggerService extends Service {
         // Open the app when notification is clicked
         Intent contentIntent = new Intent(this, MainActivity.class);
         contentIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        PendingIntent pending = PendingIntent.getActivity(getBaseContext(), 0, contentIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent pending = PendingIntent.getActivity(
+                this,
+                0,
+                contentIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        String channelId = "long2know_sport_logger";
-        CharSequence name = "long2know_channel";
-        NotificationChannel channel = new NotificationChannel(channelId, name,NotificationManager.IMPORTANCE_DEFAULT);
+        NotificationChannel channel = new NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription(getString(R.string.notification_channel_description));
         _notificationManager.createNotificationChannel(channel);
-        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, channelId);
+        NotificationCompat.Builder notificationBuilder =
+                new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
         notificationBuilder.setAutoCancel(true)
-                .setDefaults(Notification.DEFAULT_ALL)
                 .setWhen(System.currentTimeMillis())
-                .setTicker("Hearty365")
-                .setContentTitle("SportLogger is running")
-                .setContentText("Running in the background - tap notification to return to app.")
-                .setContentInfo("Info")
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_text))
                 .setSmallIcon(R.drawable.ic_play_circle_outline_black_24dp)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
                 .setAutoCancel(false)
                 .setContentIntent(pending);
 
-        try {
-            startForeground(1, notificationBuilder.build());
-//            _notificationManager.notify(1, notificationBuilder.build());
-        } catch (Exception e) {
-            Log.e(TAG, e.toString());
-        }
+        int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+                | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+        ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notificationBuilder.build(),
+                serviceTypes);
     }
 
     public static void setServiceClient(ISportLoggerServiceClient client) {

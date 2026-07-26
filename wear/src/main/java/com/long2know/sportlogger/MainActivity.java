@@ -1,6 +1,5 @@
 package com.long2know.sportlogger;
 
-import android.Manifest;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -10,21 +9,22 @@ import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.Message;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.FragmentActivity;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.content.ContextCompat;
-import android.support.wear.ambient.AmbientModeSupport;
-import android.support.wear.widget.drawer.WearableActionDrawerView;
-import android.support.wear.widget.drawer.WearableNavigationDrawerView;
 import android.util.Log;
-import static android.support.constraint.Constraints.TAG;
 
 import android.view.MenuItem;
 import android.os.Handler;
 import android.os.Looper;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.fragment.app.FragmentActivity;
+import androidx.fragment.app.FragmentManager;
+import androidx.wear.ambient.AmbientModeSupport;
+import androidx.wear.widget.drawer.WearableActionDrawerView;
+import androidx.wear.widget.drawer.WearableNavigationDrawerView;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wearable.Asset;
@@ -41,6 +41,8 @@ import com.long2know.utilities.models.Session;
 import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.models.SportActivity;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
 
 public class MainActivity extends FragmentActivity implements
@@ -49,6 +51,8 @@ public class MainActivity extends FragmentActivity implements
         WearableNavigationDrawerView.OnItemSelectedListener,
         ActivityCompat.OnRequestPermissionsResultCallback,
         ISportLoggerServiceClient {
+    private static final int PERMISSION_REQUEST_CODE = 1;
+    private static final String TAG = "MainActivity";
 
     private SensorFragment _sensorFragment;
     private StartActivityFragment _startFragment;
@@ -137,17 +141,7 @@ public class MainActivity extends FragmentActivity implements
             }
         };
 
-        int res = (int) (checkCallingPermission(Manifest.permission.BODY_SENSORS) ^
-                checkCallingPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ^
-                checkCallingPermission(Manifest.permission.ACCESS_FINE_LOCATION));
-
-        if (res == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(this, new String[]{
-                    Manifest.permission.BODY_SENSORS,
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-            }, 1);
-        }
+        requestMissingPermissions();
 
         // If the service indicates that a recording is in progress, continue
         SharedData shared = SharedData.getInstance();
@@ -163,6 +157,7 @@ public class MainActivity extends FragmentActivity implements
         _loggingServiceConnection = new ServiceConnection() {
             public void onServiceDisconnected(ComponentName name)            {
                 _loggingService = null;
+                Session.setBoundToService(false);
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
                 _loggingService = ((SportLoggerService.LocalBinder) service).getService();
@@ -174,20 +169,21 @@ public class MainActivity extends FragmentActivity implements
     @Override
     protected void onStart() {
         super.onStart();
-        startAndBindService();
+        startAndBindServiceIfPermitted();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        startAndBindService();
+        startAndBindServiceIfPermitted();
     }
 
     @Override
     public void onDestroy() {
         if (SharedData.getInstance().IsRecording) {
-            if (_loggingServiceConnection != null) {
+            if (Session.isBoundToService() && _loggingServiceConnection != null) {
                 unbindService(_loggingServiceConnection);
+                Session.setBoundToService(false);
             }
         } else {
             stopAndUnbindServiceIfRequired();
@@ -201,7 +197,11 @@ public class MainActivity extends FragmentActivity implements
     }
 
     // Start the logger service and bind the activity to the service
-    private void startAndBindService() {
+    private void startAndBindServiceIfPermitted() {
+        if (!hasRequiredRecordingPermissions() || Session.isBoundToService()) {
+            return;
+        }
+
         _serviceIntent = new Intent(this, SportLoggerService.class);
 
         // Start the service in case it isn't already running
@@ -210,8 +210,11 @@ public class MainActivity extends FragmentActivity implements
         ContextCompat.startForegroundService(this, _serviceIntent);
 
         // Now bind to service
-        bindService(_serviceIntent, _loggingServiceConnection, Context.BIND_AUTO_CREATE);
-        Session.setBoundToService(true);
+        boolean bound = bindService(
+                _serviceIntent,
+                _loggingServiceConnection,
+                Context.BIND_AUTO_CREATE);
+        Session.setBoundToService(bound);
     }
 
     // Start the logger service and bind the activity to the service
@@ -221,13 +224,16 @@ public class MainActivity extends FragmentActivity implements
             Session.setBoundToService(false);
         }
 
-        if(!Session.isStarted()) {
+        if (!Session.isStarted() && _serviceIntent != null) {
             //serviceIntent = new Intent(this, GpsLoggingService.class);
             stopService(_serviceIntent);
         }
     }
 
     public void startNewActivity() {
+        if (!ensureLoggingService()) {
+            return;
+        }
         _loggingService.startNewActivity();
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
@@ -235,6 +241,9 @@ public class MainActivity extends FragmentActivity implements
     }
 
     public void stopActivity() {
+        if (!ensureLoggingService()) {
+            return;
+        }
         _loggingService.stopActivity();
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
@@ -267,6 +276,9 @@ public class MainActivity extends FragmentActivity implements
     }
 
     public void pauseActivity() {
+        if (!ensureLoggingService()) {
+            return;
+        }
         _loggingService.pauseActivity();
         _sensorFragment.pauseTimer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
@@ -274,6 +286,9 @@ public class MainActivity extends FragmentActivity implements
     }
 
     public void resumeActivity() {
+        if (!ensureLoggingService()) {
+            return;
+        }
         _loggingService.resumeActivity();
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
@@ -281,6 +296,9 @@ public class MainActivity extends FragmentActivity implements
     }
 
     public void discardActivity() {
+        if (!ensureLoggingService()) {
+            return;
+        }
         _loggingService.discardActivity();
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
@@ -290,21 +308,51 @@ public class MainActivity extends FragmentActivity implements
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
-        boolean flag = true;
-        for (int i = 0; i < permissions.length; i++) {
-            if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
-                flag = false;
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE && hasRequiredRecordingPermissions()) {
+            startAndBindServiceIfPermitted();
+        }
+    }
+
+    private boolean hasRequiredRecordingPermissions() {
+        for (String permission :
+                RecordingPermissions.requiredForRecording(
+                        Build.VERSION.SDK_INT,
+                        getApplicationInfo().targetSdkVersion)) {
+            if (ContextCompat.checkSelfPermission(this, permission)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean ensureLoggingService() {
+        if (_loggingService != null) {
+            return true;
+        }
+        requestMissingPermissions();
+        startAndBindServiceIfPermitted();
+        return false;
+    }
+
+    private void requestMissingPermissions() {
+        List<String> missingPermissions = new ArrayList<>();
+        for (String permission :
+                RecordingPermissions.requestedOnStartup(
+                        Build.VERSION.SDK_INT,
+                        getApplicationInfo().targetSdkVersion)) {
+            if (ContextCompat.checkSelfPermission(this, permission)
+                    != PackageManager.PERMISSION_GRANTED) {
+                missingPermissions.add(permission);
             }
         }
 
-        if (flag) {
-//            _sensorListener = new SensorListener();
-//            _locationListener = new GpsListener();
-//
-//            _sensorThread = new Thread(new SensorListener());
-//            _locationThread = new Thread(new GpsListener());
-//            _sensorThread.start();
-//            _locationThread.start();
+        if (!missingPermissions.isEmpty()) {
+            ActivityCompat.requestPermissions(
+                    this,
+                    missingPermissions.toArray(new String[0]),
+                    PERMISSION_REQUEST_CODE);
         }
     }
 
@@ -313,11 +361,8 @@ public class MainActivity extends FragmentActivity implements
         Log.d(TAG, "onMenuItemClick(): " + menuItem);
         final int itemId = menuItem.getItemId();
 
-        switch (itemId) {
-            case R.id.menu_pause: {
-                this.pauseActivity();
-                break;
-            }
+        if (itemId == R.id.menu_pause) {
+            this.pauseActivity();
         }
 
 //        String toastMessage = "";

@@ -11,10 +11,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 
-import android.support.v4.content.ContextCompat;
 import android.util.Log;
+
+import androidx.core.content.ContextCompat;
+
 import java.util.concurrent.ScheduledExecutorService;
-import static android.support.constraint.Constraints.TAG;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
@@ -32,6 +33,8 @@ import java.util.TimeZone;
 import java.util.UUID;
 
 public class GpsListener implements Runnable  {
+    private static final String TAG = "GpsListener";
+
     public static Handler WorkerHandler;
     private Handler _handler;
     private ScheduledExecutorService _scheduler;
@@ -84,10 +87,11 @@ public class GpsListener implements Runnable  {
             }
         };
 
-        int res = Config.context.checkCallingPermission(Manifest.permission.ACCESS_FINE_LOCATION);
-        boolean hasPerms = res == PackageManager.PERMISSION_GRANTED;
+        boolean hasPerms = ContextCompat.checkSelfPermission(
+                Config.context,
+                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
 
-        if (!hasPerms) {
+        if (hasPerms) {
             startListeners();
         }
         else {
@@ -109,7 +113,8 @@ public class GpsListener implements Runnable  {
 //        criteria.setPowerRequirement(Criteria.POWER_LOW);
 
         // Use the LocationManager class to obtain GPS locations---
-        _locationManager = (LocationManager) Config.context.getSystemService(Config.context.LOCATION_SERVICE);
+        _locationManager =
+                (LocationManager) Config.context.getSystemService(Context.LOCATION_SERVICE);
         String provider = _locationManager.getBestProvider(criteria, true);
 
         if (ContextCompat.checkSelfPermission(Config.context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
