@@ -1,0 +1,78 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:precision:v1",
+  "fixture": "precision",
+  "format_version": 1,
+  "idempotency": null,
+  "orphan_track_points": [],
+  "rejected_rows": [],
+  "sessions": [
+    {
+      "description": "Values are chosen to expose integer and float narrowing.",
+      "deterministic_id": "cb1ea97c-264f-575d-b949-45b72c2d152d",
+      "distance": 12345.678901234567,
+      "gmt_end": "20240229012345",
+      "gmt_start": "20240229010203",
+      "legacy_id": 1,
+      "name": "Synthetic Precision Session",
+      "pace": 4.3210987654321,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:1",
+      "time": 987.654321098765
+    },
+    {
+      "description": "Exercises SQLite INTEGER values above Java int range.",
+      "deterministic_id": "e7f40c3b-bb5c-5d77-a307-803767b38cc9",
+      "distance": 1.23456789e-07,
+      "gmt_end": "20240301000001",
+      "gmt_start": "20240301000000",
+      "legacy_id": 2147483648,
+      "name": "Synthetic 64-bit ID Session",
+      "pace": 1.234567889e-07,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:2147483648",
+      "time": 1.000000000000001
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 2,
+    "source_activity_rows": 2,
+    "source_track_point_rows": 2,
+    "track_points": 2
+  },
+  "track_points": [
+    {
+      "accuracy": 0.1234567890123,
+      "activity_legacy_id": 1,
+      "altitude": -12.3456789012345,
+      "bearing": 359.9876543210987,
+      "deterministic_id": "96221f48-ddce-5579-ba63-9667ce2d052f",
+      "gmt_timestamp": "20240229010203",
+      "heart_rate": 147.625,
+      "latitude": 89.99999912345677,
+      "legacy_id": 1,
+      "longitude": -179.9999998765432,
+      "session_id": "cb1ea97c-264f-575d-b949-45b72c2d152d",
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:1",
+      "speed": 5.6789012345678
+    },
+    {
+      "accuracy": 1.00000011920929,
+      "activity_legacy_id": 2147483648,
+      "altitude": 8848.860123456,
+      "bearing": 0.0001220703125,
+      "deterministic_id": "b128817d-69d7-591c-a051-566651aeade9",
+      "gmt_timestamp": "20240301000000",
+      "heart_rate": 63.875,
+      "latitude": -45.1234567890123,
+      "legacy_id": 2147483648,
+      "longitude": 170.9876543210987,
+      "session_id": "e7f40c3b-bb5c-5d77-a307-803767b38cc9",
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:2147483648",
+      "speed": 0.0009765625
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
+  "fixture": "orphan",
+  "format_version": 1,
+  "idempotency": null,
+  "orphan_track_points": [
+    {
+      "accuracy": 3.25,
+      "activity_legacy_id": 999,
+      "altitude": 15.5,
+      "bearing": 46.0,
+      "deterministic_id": "70632fa2-55a5-5b7d-9cbf-9585f6d7a481",
+      "gmt_timestamp": "20240401090001",
+      "heart_rate": 111.0,
+      "latitude": 51.5008,
+      "legacy_id": 2,
+      "longitude": -0.1245,
+      "reason": "missing_activity",
+      "session_id": null,
+      "source_key": "synthetic:sport-logger:legacy:orphan:v1:GPS_POINTS:2",
+      "speed": 2.625
+    }
+  ],
+  "rejected_rows": [],
+  "sessions": [
+    {
+      "description": "Parent row for the non-orphan control point.",
+      "deterministic_id": "8d863b09-7094-5ef4-a490-ab5278c45788",
+      "distance": 750.0,
+      "gmt_end": "20240401090500",
+      "gmt_start": "20240401090000",
+      "legacy_id": 1,
+      "name": "Synthetic Orphan Control",
+      "pace": 400.0,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:orphan:v1:ACTIVITY:1",
+      "time": 300.0
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 1,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 1,
+    "source_activity_rows": 1,
+    "source_track_point_rows": 2,
+    "track_points": 1
+  },
+  "track_points": [
+    {
+      "accuracy": 3.0,
+      "activity_legacy_id": 1,
+      "altitude": 15.25,
+      "bearing": 45.0,
+      "deterministic_id": "a2372c7d-b56c-571f-adf4-36cea93877f5",
+      "gmt_timestamp": "20240401090000",
+      "heart_rate": 110.0,
+      "latitude": 51.5007,
+      "legacy_id": 1,
+      "longitude": -0.1246,
+      "session_id": "8d863b09-7094-5ef4-a490-ab5278c45788",
+      "source_key": "synthetic:sport-logger:legacy:orphan:v1:GPS_POINTS:1",
+      "speed": 2.5
+    }
+  ]
+}

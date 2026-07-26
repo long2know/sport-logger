@@ -1,0 +1,20 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:empty:v1",
+  "fixture": "empty",
+  "format_version": 1,
+  "idempotency": null,
+  "orphan_track_points": [],
+  "rejected_rows": [],
+  "sessions": [],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 0,
+    "source_activity_rows": 0,
+    "source_track_point_rows": 0,
+    "track_points": 0
+  },
+  "track_points": []
+}

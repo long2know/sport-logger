@@ -1,0 +1,535 @@
+{
+  "database_name": "GPSLOGGERDB_LONG2KNOW",
+  "fixture_namespace_uuid": "8f13caf0-f046-575f-b2cb-fa4a5fbd1ae6",
+  "fixtures": [
+    {
+      "database": "fixtures/empty.db",
+      "database_identity": "synthetic:sport-logger:legacy:empty:v1",
+      "description": "Schema-only database with no activities or track points.",
+      "expected": {
+        "activity_rows": 0,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 0,
+          "source_activity_rows": 0,
+          "source_track_point_rows": 0,
+          "track_points": 0
+        },
+        "canonical_output_logical_checksum": "229e689d80b5b6e3976d8ead976bcef8081fde6b3a514f59bab4f02756a41935",
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "74967907a879b2130adbb9b78a5c1fef9a09131d30d856626af145a28e932e8c",
+          "database": "97653e68591c0a1386e645dd2c172796c2db06c1cee2154cc59addfbb364bad4",
+          "gps_points": "1450f5ef4278f4fec32645f139ea3fe9127b6ef22bddadaf72f874fbf67c443f"
+        },
+        "physical_orphan_track_points": 0,
+        "points_per_activity": {},
+        "representative_values": [],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": null,
+            "min": null,
+            "null_count": 0,
+            "valid_count": 0
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": null,
+            "min": null,
+            "null_count": 0,
+            "valid_count": 0
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": null,
+            "min": null,
+            "null_count": 0,
+            "valid_count": 0
+          }
+        },
+        "track_point_rows": 0
+      },
+      "expected_output": "expected/empty.json",
+      "name": "empty"
+    },
+    {
+      "database": "fixtures/representative.db",
+      "database_identity": "synthetic:sport-logger:legacy:representative:v1",
+      "description": "Three synthetic activities with multiple points, nullable optional measurements, and a source-reachable unfinished activity.",
+      "expected": {
+        "activity_rows": 3,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 1,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 3,
+          "source_activity_rows": 3,
+          "source_track_point_rows": 6,
+          "track_points": 6
+        },
+        "canonical_output_logical_checksum": "251cb7590125534d98c2b774ab57eb1664b1638ec14e09c88d538bdd25f34eef",
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "41ad2a6d6f11c712bbeb2a36a5651efdb9079dcd55c35271602948b33bad61d8",
+          "database": "da0a46f8ce01b8e43394127eb2dc0abd2307a79ccff425b2c2256f7ad9a9d6f0",
+          "gps_points": "6168d588d58c1cc54d74a362969b909c7f5ec7771e603f9e188fe3b20ab57ee5"
+        },
+        "physical_orphan_track_points": 0,
+        "points_per_activity": {
+          "1": 3,
+          "2": 2,
+          "3": 1
+        },
+        "representative_values": [
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "20240102030405",
+            "legacy_id": 1,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "DISTANCE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 5123.75,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "ALTITUDE",
+            "comparison": "exact",
+            "expected": null,
+            "legacy_id": 2,
+            "storage_type": "null",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "LONGITUDE",
+            "comparison": "epsilon",
+            "epsilon": 0.0,
+            "expected": 0.0,
+            "legacy_id": 6,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240104101010",
+            "min": "20240102030405",
+            "null_count": 1,
+            "valid_count": 5
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240104101010",
+            "min": "20240102030405",
+            "null_count": 1,
+            "valid_count": 11
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240104101010",
+            "min": "20240102030405",
+            "null_count": 0,
+            "valid_count": 6
+          }
+        },
+        "track_point_rows": 6
+      },
+      "expected_output": "expected/representative.json",
+      "name": "representative"
+    },
+    {
+      "database": "fixtures/precision.db",
+      "database_identity": "synthetic:sport-logger:legacy:precision:v1",
+      "description": "Precision-sensitive REAL values, leap-day timestamps, fractional heart rate, and IDs beyond signed 32-bit range.",
+      "expected": {
+        "activity_rows": 2,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 2,
+          "source_activity_rows": 2,
+          "source_track_point_rows": 2,
+          "track_points": 2
+        },
+        "canonical_output_logical_checksum": "383edca52f33b18006d122bbe0324de142a67c40274b14619f2587af9cb6790c",
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "b59a872d1ce8e3388f6f1505f0c79001b65fc757e0d714cbe12795c9ed15adda",
+          "database": "bcc282c4db542d7e8dda2647d2b7cfbc0520ef525162e6da4a089b255a7569a7",
+          "gps_points": "803b90ebe4efda7deaf8de43dc12af7c5ea618d3908fadf1b8e2e2f42d177bff"
+        },
+        "physical_orphan_track_points": 0,
+        "points_per_activity": {
+          "1": 1,
+          "2147483648": 1
+        },
+        "representative_values": [
+          {
+            "column": "DISTANCE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 12345.678901234567,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "ID",
+            "comparison": "exact",
+            "expected": 2147483648,
+            "legacy_id": 2147483648,
+            "storage_type": "integer",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "LATITUDE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 89.99999912345677,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "LONGITUDE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": -179.9999998765432,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "ALTITUDE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": -12.3456789012345,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "SPEED",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 5.6789012345678,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "BEARING",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 359.9876543210987,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "HEARTRATE",
+            "comparison": "epsilon",
+            "epsilon": 1e-12,
+            "expected": 147.625,
+            "legacy_id": 1,
+            "storage_type": "real",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240301000001",
+            "min": "20240229010203",
+            "null_count": 0,
+            "valid_count": 4
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240301000001",
+            "min": "20240229010203",
+            "null_count": 0,
+            "valid_count": 6
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240301000000",
+            "min": "20240229010203",
+            "null_count": 0,
+            "valid_count": 2
+          }
+        },
+        "track_point_rows": 2
+      },
+      "expected_output": "expected/precision.json",
+      "name": "precision"
+    },
+    {
+      "database": "fixtures/orphan.db",
+      "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
+      "description": "A valid activity plus one valid point and one point referencing a missing activity, which the legacy schema permits.",
+      "expected": {
+        "activity_rows": 1,
+        "canonical": {
+          "orphan_track_points": 1,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 1,
+          "source_activity_rows": 1,
+          "source_track_point_rows": 2,
+          "track_points": 1
+        },
+        "canonical_output_logical_checksum": "9d6679c00883d5e264235429c45066995d6e77f46668eccdd0cd5cc220cae32b",
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "0ed432f0ea7896494a568eaa98c4032d62d024aa50dfeba7e3238b8d2a36b82d",
+          "database": "1704a13df6cccc21fb930cc15540401c7e1116ee964fb6ce61faa33d023cceb2",
+          "gps_points": "8e8e86e41e0d86c942d8dbe840b8c74c24d21db44057a506b14d5f7a3def4f41"
+        },
+        "physical_orphan_track_points": 1,
+        "points_per_activity": {
+          "1": 1,
+          "999": 1
+        },
+        "representative_values": [
+          {
+            "column": "ACTIVITYID",
+            "comparison": "exact",
+            "expected": 999,
+            "legacy_id": 2,
+            "storage_type": "integer",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240401090500",
+            "min": "20240401090000",
+            "null_count": 0,
+            "valid_count": 2
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240401090500",
+            "min": "20240401090000",
+            "null_count": 0,
+            "valid_count": 4
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240401090001",
+            "min": "20240401090000",
+            "null_count": 0,
+            "valid_count": 2
+          }
+        },
+        "track_point_rows": 2
+      },
+      "expected_output": "expected/orphan.json",
+      "name": "orphan"
+    },
+    {
+      "database": "fixtures/malformed_null_partial.db",
+      "database_identity": "synthetic:sport-logger:legacy:malformed_null_partial:v1",
+      "description": "A source-reachable partial activity plus constraint-permitted invalid timestamps, dynamic SQLite types, null ownership, and invalid ranges.",
+      "expected": {
+        "activity_rows": 2,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 1,
+          "rejected_activity_rows": 1,
+          "rejected_track_point_rows": 2,
+          "sessions": 1,
+          "source_activity_rows": 2,
+          "source_track_point_rows": 3,
+          "track_points": 1
+        },
+        "canonical_output_logical_checksum": "03223ac706d596b1bb96f33f115251eb3704ab3c2c4a8f26c39d40cc7693f72b",
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "d0731f5b0896d00ccc569042371f72aeaa049ac8a89818807f2911f9a506d60b",
+          "database": "a8d19414344042ac5c1db30768df8de0c6f35b3d229085b439a628fcf4c2167f",
+          "gps_points": "5f4b4cd0a651c70b1c567c30c9f59a3f6284b320cd57820c9bcb48e221fe83e2"
+        },
+        "physical_orphan_track_points": 0,
+        "points_per_activity": {
+          "1": 2,
+          "null": 1
+        },
+        "representative_values": [
+          {
+            "column": "DISTANCE",
+            "comparison": "exact",
+            "expected": "not-a-number",
+            "legacy_id": 2,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "LONGITUDE",
+            "comparison": "exact",
+            "expected": "west",
+            "legacy_id": 2,
+            "storage_type": "text",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "ACTIVITYID",
+            "comparison": "exact",
+            "expected": null,
+            "legacy_id": 3,
+            "storage_type": "null",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 2,
+            "max": "20240506070809",
+            "min": "20240506070809",
+            "null_count": 1,
+            "valid_count": 1
+          },
+          "all": {
+            "invalid_count": 3,
+            "max": "20240506070810",
+            "min": "20240506070809",
+            "null_count": 1,
+            "valid_count": 3
+          },
+          "track_point": {
+            "invalid_count": 1,
+            "max": "20240506070810",
+            "min": "20240506070809",
+            "null_count": 0,
+            "valid_count": 2
+          }
+        },
+        "track_point_rows": 3
+      },
+      "expected_output": "expected/malformed_null_partial.json",
+      "name": "malformed_null_partial"
+    },
+    {
+      "database": "fixtures/interrupted_idempotency.db",
+      "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
+      "description": "Three activity groups used by the reference simulator to commit a partial first pass and verify a duplicate-free deterministic rerun.",
+      "expected": {
+        "activity_rows": 3,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 3,
+          "source_activity_rows": 3,
+          "source_track_point_rows": 6,
+          "track_points": 6
+        },
+        "canonical_output_logical_checksum": "c08cea76ce8ab9b77cd277658739be62f51a3b1bb35ebc43d078b16c46004f7e",
+        "idempotency": {
+          "first_attempt": {
+            "migration_complete": false,
+            "sessions": 1,
+            "track_points": 2
+          },
+          "interrupt_after_sessions": 1,
+          "rerun": {
+            "duplicate_rows": 0,
+            "migration_complete": true,
+            "reused_deterministic_ids": 3,
+            "sessions": 3,
+            "state_logical_checksum": "495c250b5d7dbc538fe30b56fbf42760392f67e28e244c88d859e7369541b4e8",
+            "track_points": 6
+          }
+        },
+        "logical_checksums": {
+          "activity": "28284b62419d4b9c596d807a90e55e146600b4144633c1b2c756bd6120c02acb",
+          "database": "ec608f3de886678ce11db473a701dc0d45baddb4e47ee2f59ea35df208f4dd92",
+          "gps_points": "9b99c759052bdfe69af95fbcdf26a1e3d603a6335919b6d1d92e3048d69b009a"
+        },
+        "physical_orphan_track_points": 0,
+        "points_per_activity": {
+          "1": 2,
+          "2": 2,
+          "3": 2
+        },
+        "representative_values": [
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "20240601080000",
+            "legacy_id": 1,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTTIMESTAMP",
+            "comparison": "exact",
+            "expected": "20240603080001",
+            "legacy_id": 6,
+            "storage_type": "text",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "9184cb7764dba026cf2af8c7f75245626f8270a680ca62c7b8651e6808603f1a",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240603080030",
+            "min": "20240601080000",
+            "null_count": 0,
+            "valid_count": 6
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240603080030",
+            "min": "20240601080000",
+            "null_count": 0,
+            "valid_count": 12
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240603080001",
+            "min": "20240601080000",
+            "null_count": 0,
+            "valid_count": 6
+          }
+        },
+        "track_point_rows": 6
+      },
+      "expected_output": "expected/interrupted_idempotency.json",
+      "name": "interrupted_idempotency"
+    }
+  ],
+  "format_version": 1,
+  "logical_checksum_algorithm": "SHA-256 over ordered table rows; each SQLite value is type-tagged, REAL values use exact IEEE-754 float.hex(), and table hashes are combined in ACTIVITY/GPS_POINTS order",
+  "source_schema": {
+    "activity_ddl": "CREATE TABLE IF NOT EXISTS ACTIVITY (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,DISTANCE REAL, TIME REAL, PACE REAL);",
+    "foreign_keys_declared": false,
+    "gps_points_ddl": "CREATE TABLE IF NOT EXISTS GPS_POINTS (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);",
+    "user_version": 0
+  },
+  "synthetic_data_only": true
+}

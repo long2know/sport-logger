@@ -1,0 +1,119 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:malformed_null_partial:v1",
+  "fixture": "malformed_null_partial",
+  "format_version": 1,
+  "idempotency": null,
+  "orphan_track_points": [],
+  "rejected_rows": [
+    {
+      "legacy_id": 2,
+      "raw": {
+        "DESCRIPTION": null,
+        "DISTANCE": "not-a-number",
+        "GMTEND": "not-a-timestamp",
+        "GMTSTART": "20240230010101",
+        "ID": 2,
+        "NAME": "Synthetic Malformed Session",
+        "PACE": -3.5,
+        "TIME": null
+      },
+      "reasons": [
+        "invalid_gmtend",
+        "invalid_gmtstart",
+        "negative_pace",
+        "non_numeric_distance"
+      ],
+      "source_key": "synthetic:sport-logger:legacy:malformed_null_partial:v1:ACTIVITY:2",
+      "table": "ACTIVITY"
+    },
+    {
+      "legacy_id": 2,
+      "raw": {
+        "ACCURACY": -5.0,
+        "ACTIVITYID": 1,
+        "ALTITUDE": "high",
+        "BEARING": 721.25,
+        "GMTTIMESTAMP": "2024050607080",
+        "HEARTRATE": "fast",
+        "ID": 2,
+        "LATITUDE": null,
+        "LONGITUDE": "west",
+        "SPEED": -1.0
+      },
+      "reasons": [
+        "bearing_out_of_range",
+        "invalid_gmttimestamp",
+        "missing_or_non_numeric_latitude",
+        "missing_or_non_numeric_longitude",
+        "negative_accuracy",
+        "negative_speed",
+        "non_numeric_altitude",
+        "non_numeric_heartrate"
+      ],
+      "source_key": "synthetic:sport-logger:legacy:malformed_null_partial:v1:GPS_POINTS:2",
+      "table": "GPS_POINTS"
+    },
+    {
+      "legacy_id": 3,
+      "raw": {
+        "ACCURACY": 4.0,
+        "ACTIVITYID": null,
+        "ALTITUDE": 100.0,
+        "BEARING": 90.0,
+        "GMTTIMESTAMP": "20240506070810",
+        "HEARTRATE": 80.0,
+        "ID": 3,
+        "LATITUDE": 34.0001,
+        "LONGITUDE": -118.0001,
+        "SPEED": 1.0
+      },
+      "reasons": [
+        "missing_or_invalid_activity_id"
+      ],
+      "source_key": "synthetic:sport-logger:legacy:malformed_null_partial:v1:GPS_POINTS:3",
+      "table": "GPS_POINTS"
+    }
+  ],
+  "sessions": [
+    {
+      "description": null,
+      "deterministic_id": "5bbfaf14-dfef-5e75-84ab-4dcb5592b534",
+      "distance": null,
+      "gmt_end": null,
+      "gmt_start": "20240506070809",
+      "legacy_id": 1,
+      "name": null,
+      "pace": null,
+      "partial": true,
+      "source_key": "synthetic:sport-logger:legacy:malformed_null_partial:v1:ACTIVITY:1",
+      "time": null
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 1,
+    "rejected_activity_rows": 1,
+    "rejected_track_point_rows": 2,
+    "sessions": 1,
+    "source_activity_rows": 2,
+    "source_track_point_rows": 3,
+    "track_points": 1
+  },
+  "track_points": [
+    {
+      "accuracy": null,
+      "activity_legacy_id": 1,
+      "altitude": null,
+      "bearing": null,
+      "deterministic_id": "5c53c183-05cd-5157-a96a-c4d53fdc8812",
+      "gmt_timestamp": "20240506070809",
+      "heart_rate": 0.0,
+      "latitude": 0.0,
+      "legacy_id": 1,
+      "longitude": 0.0,
+      "session_id": "5bbfaf14-dfef-5e75-84ab-4dcb5592b534",
+      "source_key": "synthetic:sport-logger:legacy:malformed_null_partial:v1:GPS_POINTS:1",
+      "speed": null
+    }
+  ]
+}

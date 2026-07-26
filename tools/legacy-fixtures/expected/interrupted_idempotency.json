@@ -1,0 +1,166 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
+  "fixture": "interrupted_idempotency",
+  "format_version": 1,
+  "idempotency": {
+    "first_attempt": {
+      "migration_complete": false,
+      "sessions": 1,
+      "track_points": 2
+    },
+    "interrupt_after_sessions": 1,
+    "rerun": {
+      "duplicate_rows": 0,
+      "migration_complete": true,
+      "reused_deterministic_ids": 3,
+      "sessions": 3,
+      "state_logical_checksum": "495c250b5d7dbc538fe30b56fbf42760392f67e28e244c88d859e7369541b4e8",
+      "track_points": 6
+    }
+  },
+  "orphan_track_points": [],
+  "rejected_rows": [],
+  "sessions": [
+    {
+      "description": "First committed group before interruption.",
+      "deterministic_id": "dc02c118-ae81-5331-8d78-7def82325160",
+      "distance": 100.125,
+      "gmt_end": "20240601080030",
+      "gmt_start": "20240601080000",
+      "legacy_id": 1,
+      "name": "Synthetic Interrupted A",
+      "pace": 299.625468,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:1",
+      "time": 30.0
+    },
+    {
+      "description": "First group processed after restart.",
+      "deterministic_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
+      "distance": 101.25,
+      "gmt_end": "20240602080030",
+      "gmt_start": "20240602080000",
+      "legacy_id": 2,
+      "name": "Synthetic Interrupted B",
+      "pace": 296.296296,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:2",
+      "time": 30.0
+    },
+    {
+      "description": "Final group processed after restart.",
+      "deterministic_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
+      "distance": 102.5,
+      "gmt_end": "20240603080030",
+      "gmt_start": "20240603080000",
+      "legacy_id": 3,
+      "name": "Synthetic Interrupted C",
+      "pace": 292.682927,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:3",
+      "time": 30.0
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 3,
+    "source_activity_rows": 3,
+    "source_track_point_rows": 6,
+    "track_points": 6
+  },
+  "track_points": [
+    {
+      "accuracy": 2.1,
+      "activity_legacy_id": 1,
+      "altitude": 5.1,
+      "bearing": 4.1,
+      "deterministic_id": "320e04b2-6402-54df-9c2b-43d781978285",
+      "gmt_timestamp": "20240601080000",
+      "heart_rate": 101.1,
+      "latitude": 10.0001,
+      "legacy_id": 1,
+      "longitude": 20.0001,
+      "session_id": "dc02c118-ae81-5331-8d78-7def82325160",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:1",
+      "speed": 3.1
+    },
+    {
+      "accuracy": 2.2,
+      "activity_legacy_id": 1,
+      "altitude": 5.2,
+      "bearing": 4.2,
+      "deterministic_id": "c0484780-4c39-570e-bff8-1861670e4481",
+      "gmt_timestamp": "20240601080001",
+      "heart_rate": 101.2,
+      "latitude": 10.0002,
+      "legacy_id": 2,
+      "longitude": 20.0002,
+      "session_id": "dc02c118-ae81-5331-8d78-7def82325160",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:2",
+      "speed": 3.2
+    },
+    {
+      "accuracy": 2.1,
+      "activity_legacy_id": 2,
+      "altitude": 6.1,
+      "bearing": 5.1,
+      "deterministic_id": "77a8d40c-5f43-5715-9306-b4797b779fd4",
+      "gmt_timestamp": "20240602080000",
+      "heart_rate": 102.1,
+      "latitude": 11.0001,
+      "legacy_id": 3,
+      "longitude": 21.0001,
+      "session_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:3",
+      "speed": 3.1
+    },
+    {
+      "accuracy": 2.2,
+      "activity_legacy_id": 2,
+      "altitude": 6.2,
+      "bearing": 5.2,
+      "deterministic_id": "62c9794b-411e-55a5-87ec-7e96f49917d0",
+      "gmt_timestamp": "20240602080001",
+      "heart_rate": 102.2,
+      "latitude": 11.0002,
+      "legacy_id": 4,
+      "longitude": 21.0002,
+      "session_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:4",
+      "speed": 3.2
+    },
+    {
+      "accuracy": 2.1,
+      "activity_legacy_id": 3,
+      "altitude": 7.1,
+      "bearing": 6.1,
+      "deterministic_id": "a475883b-3ba0-53a3-9887-3681e198d9c6",
+      "gmt_timestamp": "20240603080000",
+      "heart_rate": 103.1,
+      "latitude": 12.0001,
+      "legacy_id": 5,
+      "longitude": 22.0001,
+      "session_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:5",
+      "speed": 3.1
+    },
+    {
+      "accuracy": 2.2,
+      "activity_legacy_id": 3,
+      "altitude": 7.2,
+      "bearing": 6.2,
+      "deterministic_id": "2cc43175-70ef-50cd-ab10-37769203280f",
+      "gmt_timestamp": "20240603080001",
+      "heart_rate": 103.2,
+      "latitude": 12.0002,
+      "legacy_id": 6,
+      "longitude": 22.0002,
+      "session_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
+      "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:6",
+      "speed": 3.2
+    }
+  ]
+}
