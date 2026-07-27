@@ -22,7 +22,7 @@ Tagged v0.11
 
 `tools/legacy-fixtures/` contains the synthetic, executable contract for the
 watch SQLite database. Its 18 fixtures use byte-pinned API26/API36 Android
-formatter evidence, cover all 10 emitted decimal digit blocks, and model Thai
+formatter evidence, cover all 37 emitted decimal digit blocks, and model Thai
 and other localized timestamps with Android's Gregorian semantics. They also
 cover WAL snapshots, capability-selected schema preflight down to Android API
 26, safe FTS4/FTS5 module probes, explicit N/A reporting for unsupported

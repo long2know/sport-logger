@@ -27,30 +27,73 @@ TOOL_ROOT = Path(__file__).resolve().parent
 ANDROID_FORMATTER_PROBE_SOURCE_PATH = (
     TOOL_ROOT / "AndroidLocaleTimestampProbeTest.java"
 )
+ANDROID_FORMATTER_PROBE_RUNNER_PATH = (
+    TOOL_ROOT / "run_android_formatter_probe.py"
+)
 ANDROID_FORMATTER_EVIDENCE_PATHS = (
     TOOL_ROOT / "AndroidLocaleTimestampProbe.api26.tsv",
     TOOL_ROOT / "AndroidLocaleTimestampProbe.api36.tsv",
 )
 ANDROID_FORMATTER_PROBE_SOURCE_SHA256 = (
-    "dc9cec0cdf72e975fe19ed97779ba1fe75563fc94574cc2c02b446920f4c0998"
+    "3ad88ddd9ec4f061bfdd041aba2f55973c00e78b973abd7a33105bd6831735e4"
+)
+ANDROID_FORMATTER_PROBE_RUNNER_SHA256 = (
+    "738a95f767ed23d82f1bb1dfeea51ec3e41b9f836225f7348aa6e648e1b812d3"
 )
 ANDROID_FORMATTER_EVIDENCE_SHA256 = {
-    26: "c0132a43f9a23a2a2856e848e7ee5d10f5185932043f202bbd3016fa95f7a23d",
-    36: "eb060dc423c9eb7a29221205faa0b576c550eab1d5c5b2eef38825cabad24810",
+    26: "2e6d916117c7050c5702f269cc387af9f1db5286cbe65eddbfd3f2b02467e2e7",
+    36: "c05aa33dd782cab7146b1c04847d2f2f358945fa482584ffeed3bbdbee51840a",
 }
 ANDROID_FORMATTER_EXPECTED_METADATA = {
     26: {
-        "format_version": "1",
+        "format_version": "2",
         "platform": "Android",
+        "system_image_package": "system-images;android-26;google_apis;x86_64",
+        "system_image_revision": "16.0.0",
+        "emulator_package": "emulator",
+        "emulator_package_revision": "36.6.11",
+        "emulator_version": "36.6.11.0",
+        "emulator_acceleration": "off",
+        "compile_sdk_package": "platforms;android-36",
+        "compile_sdk_revision": "2.0.0",
+        "build_tools_package": "build-tools;36.0.0",
+        "build_tools_revision": "36.0.0",
+        "probe_runner": "run_android_formatter_probe.py",
+        "probe_runner_version": "1",
+        "probe_runner_command": (
+            "python3 tools/legacy-fixtures/run_android_formatter_probe.py --compare"
+        ),
         "api_level": "26",
         "release": "8.0.0",
+        "build_fingerprint": (
+            "Android/sdk_gphone_x86_64/generic_x86_64:8.0.0/"
+            "OSR1.180418.026/6741039:userdebug/dev-keys"
+        ),
+        "abi": "x86_64",
+        "supported_abis": "x86_64,x86",
+        "java_version": "0",
+        "java_runtime_version": "0.9",
+        "java_vm_name": "Dalvik",
+        "java_vm_version": "2.1.0",
+        "icu_version": "58.2.0.0",
+        "unicode_version": "9.0.0.0",
+        "cldr_version": "30.0.3.0",
         "pattern": "yyyy-MM-dd HH:mm:ss.SSS",
         "legacy_pattern": "yyyyMMddHHmmss",
         "timezone": "UTC",
         "available_locale_count": "710",
         "locale_rows_sha256": (
-            "12ff0cc92e4de3e03534b7c42b502b99e8d7ac588c752b263824dc4e6c8467c6"
+            "d11a12e4c3dd62ec7e2fca5ecefe61f368ecd1c13d185b0959e2fdc3e929d924"
         ),
+        "numbering_candidate_source": (
+            "android.icu.text.NumberingSystem.getAvailableNames"
+        ),
+        "numbering_candidate_version": "ICU-58.2.0.0",
+        "numbering_candidate_count": "77",
+        "numbering_candidate_names_sha256": (
+            "0db8f4ff3f214e86b2e11647143aaed0c72c5cbd63d22750a8117c50e3243a8a"
+        ),
+        "numbering_candidate_instant_utc": "2024-07-08T09:10:11.123Z",
         "fixed_instants_utc": (
             "2000-02-29T12:34:56.789Z,"
             "2024-07-08T09:10:11.123Z,"
@@ -59,17 +102,54 @@ ANDROID_FORMATTER_EXPECTED_METADATA = {
         ),
     },
     36: {
-        "format_version": "1",
+        "format_version": "2",
         "platform": "Android",
+        "system_image_package": "system-images;android-36;google_apis;x86_64",
+        "system_image_revision": "7.0.0",
+        "emulator_package": "emulator",
+        "emulator_package_revision": "36.6.11",
+        "emulator_version": "36.6.11.0",
+        "emulator_acceleration": "off",
+        "compile_sdk_package": "platforms;android-36",
+        "compile_sdk_revision": "2.0.0",
+        "build_tools_package": "build-tools;36.0.0",
+        "build_tools_revision": "36.0.0",
+        "probe_runner": "run_android_formatter_probe.py",
+        "probe_runner_version": "1",
+        "probe_runner_command": (
+            "python3 tools/legacy-fixtures/run_android_formatter_probe.py --compare"
+        ),
         "api_level": "36",
         "release": "16",
+        "build_fingerprint": (
+            "google/sdk_gphone64_x86_64/emu64xa:16/"
+            "BE2A.250530.026.F3/13894323:userdebug/dev-keys"
+        ),
+        "abi": "x86_64",
+        "supported_abis": "x86_64,arm64-v8a",
+        "java_version": "0",
+        "java_runtime_version": "0.9",
+        "java_vm_name": "Dalvik",
+        "java_vm_version": "2.1.0",
+        "icu_version": "76.1.0.0",
+        "unicode_version": "16.0.0.0",
+        "cldr_version": "46.0.0.0",
         "pattern": "yyyy-MM-dd HH:mm:ss.SSS",
         "legacy_pattern": "yyyyMMddHHmmss",
         "timezone": "UTC",
         "available_locale_count": "881",
         "locale_rows_sha256": (
-            "b53a8fb0f2686af24f282eafaaf82b43dd6f7ee4b4b311c1820d130cb7f4fd62"
+            "68c1f18354c6163af1b5cfd27613c7b373bb06e10d5c3b39984c226e621e222e"
         ),
+        "numbering_candidate_source": (
+            "android.icu.text.NumberingSystem.getAvailableNames"
+        ),
+        "numbering_candidate_version": "ICU-76.1.0.0",
+        "numbering_candidate_count": "96",
+        "numbering_candidate_names_sha256": (
+            "3e5f3860817d257311d2ec33fe547abff81de3269cda749d334cdafc1c3ad202"
+        ),
+        "numbering_candidate_instant_utc": "2024-07-08T09:10:11.123Z",
         "fixed_instants_utc": (
             "2000-02-29T12:34:56.789Z,"
             "2024-07-08T09:10:11.123Z,"
@@ -88,6 +168,20 @@ ANDROID_FORMATTER_THAI_CONTROL_TAGS = (
     "th-TH-u-ca-buddhist",
     "th-TH-u-ca-buddhist-nu-thai",
     "th-TH-u-ca-gregory-nu-thai",
+)
+ANDROID_FORMATTER_LEGACY_TEN_ZEROES = frozenset(
+    (
+        0x0030,
+        0x0660,
+        0x06F0,
+        0x07C0,
+        0x0966,
+        0x09E6,
+        0x0E50,
+        0x0F20,
+        0x1040,
+        0x1C50,
+    )
 )
 FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
@@ -412,28 +506,76 @@ def parse_code_point(value: str) -> int:
     return int(value[2:], 16)
 
 
-def normalize_matrix_digits(value: str, zero_code_point: int) -> str:
+def parse_control_layout(value: str) -> Tuple[Tuple[int, int], ...]:
+    if not value:
+        return ()
+    result: List[Tuple[int, int]] = []
+    for item in value.split(","):
+        match = re.fullmatch(r"(0|[1-9][0-9]*):(U\+[0-9A-F]{4,6})", item)
+        if match is None:
+            raise FixtureValidationError(
+                "Invalid formatter control layout {!r}".format(value)
+            )
+        position = int(match.group(1))
+        if position > 14:
+            raise FixtureValidationError(
+                "Formatter control position exceeds 14 digits"
+            )
+        result.append((position, parse_code_point(match.group(2))))
+    if [position for position, _ in result] != sorted(
+        position for position, _ in result
+    ):
+        raise FixtureValidationError("Formatter control layout is not ordered")
+    return tuple(result)
+
+
+def normalize_matrix_digits(
+    value: str,
+    zero_code_point: int,
+    control_layout: str = "",
+) -> str:
     normalized: List[str] = []
+    controls: List[Tuple[int, int]] = []
     for character in value:
-        if unicodedata.category(character) != "Nd":
-            raise FixtureValidationError(
-                "Formatter evidence contains non-Nd numeric text"
-            )
-        decimal = unicodedata.decimal(character)
-        if ord(character) - decimal != zero_code_point:
-            raise FixtureValidationError(
-                "Formatter evidence mixes numbering systems"
-            )
-        normalized.append(str(decimal))
+        code_point = ord(character)
+        decimal = code_point - zero_code_point
+        if 0 <= decimal <= 9:
+            normalized.append(str(decimal))
+        else:
+            controls.append((len(normalized), code_point))
+    if tuple(controls) != parse_control_layout(control_layout):
+        raise FixtureValidationError(
+            "Formatter evidence contains an unproven control layout"
+        )
     return "".join(normalized)
 
 
-def matrix_timestamp_source_year(value: str, zero_code_point: int) -> int:
-    if len(value) != 14:
+def matrix_timestamp_source_year(
+    value: str,
+    zero_code_point: int,
+    control_layout: str = "",
+) -> int:
+    normalized = normalize_matrix_digits(
+        value,
+        zero_code_point,
+        control_layout,
+    )
+    if len(normalized) != 14:
         raise FixtureValidationError(
             "Formatter evidence candidate timestamp must contain 14 digits"
         )
-    return int(normalize_matrix_digits(value, zero_code_point)[:4])
+    return int(normalized[:4])
+
+
+def decimal_definition_zero(value: str) -> Optional[int]:
+    if len(value) != 10:
+        return None
+    zero_code_point = ord(value[0])
+    if tuple(ord(character) for character in value) != tuple(
+        zero_code_point + offset for offset in range(10)
+    ):
+        return None
+    return zero_code_point
 
 
 def formatter_instant_fields(instant_utc: str) -> Tuple[str, ...]:
@@ -522,7 +664,10 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
 
     metadata: Dict[str, str] = {}
     signatures: List[Mapping[str, Any]] = []
+    definitions: List[Mapping[str, Any]] = []
     candidates: List[Mapping[str, Any]] = []
+    candidate_failures: List[Mapping[str, str]] = []
+    candidate_outcomes: List[str] = []
     controls: List[Mapping[str, Any]] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         fields = line.split("\t")
@@ -538,49 +683,97 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
                 )
             metadata[fields[1]] = fields[2]
             continue
-        if kind == "signature" and len(fields) == 9:
+        if kind == "signature" and len(fields) == 10:
             signatures.append(
                 {
                     "zero_code_point": parse_code_point(fields[1]),
-                    "calendar_class": fields[2],
-                    "calendar": fields[3],
-                    "formatted": fields[4],
-                    "legacy_formatted": fields[5],
-                    "number_digits": fields[6],
-                    "locale_count": int(fields[7]),
-                    "first_locale": fields[8],
+                    "control_layout": fields[2],
+                    "calendar_class": fields[3],
+                    "calendar": fields[4],
+                    "formatted": fields[5],
+                    "legacy_formatted": fields[6],
+                    "number_digits": fields[7],
+                    "locale_count": int(fields[8]),
+                    "first_locale": fields[9],
                 }
             )
             continue
-        if kind in ("candidate", "thai_control") and len(fields) == 17:
-            zero_code_point = parse_code_point(fields[1])
-            legacy_formatted = fields[10]
+        if kind == "candidate_definition" and len(fields) in (3, 7):
+            definition_fields = (
+                fields[3:] if len(fields) == 7 else ("", "", "", "")
+            )
+            radix = int(definition_fields[1]) if definition_fields[1] else None
+            algorithmic = (
+                definition_fields[2] == "true"
+                if definition_fields[2]
+                else None
+            )
+            description_zero = (
+                decimal_definition_zero(definition_fields[3])
+                if radix == 10 and algorithmic is False
+                else None
+            )
+            definitions.append(
+                {
+                    "name": fields[1],
+                    "definition_status": fields[2],
+                    "definition_name": definition_fields[0],
+                    "radix": radix,
+                    "algorithmic": algorithmic,
+                    "description": definition_fields[3],
+                    "definition_zero_code_point": description_zero,
+                }
+            )
+            continue
+        if kind == "candidate_failure" and len(fields) == 3:
+            candidate_failures.append(
+                {
+                    "name": fields[1],
+                    "status": fields[2],
+                }
+            )
+            candidate_outcomes.append(fields[1])
+            continue
+        if kind in ("numbering_candidate", "thai_control") and len(fields) == 25:
+            zero_code_point = parse_code_point(fields[8])
+            control_layout = fields[9]
+            legacy_formatted = fields[18]
             source_year = matrix_timestamp_source_year(
                 legacy_formatted,
                 zero_code_point,
+                control_layout,
             )
             detailed = {
                 "kind": kind,
+                "candidate_name": fields[1],
+                "definition_name": fields[2],
+                "definition_status": fields[3],
+                "observation_status": fields[4],
+                "radix": int(fields[5]) if fields[5] else None,
+                "algorithmic": fields[6] == "true" if fields[6] else None,
+                "description": fields[7],
                 "zero_code_point": zero_code_point,
-                "locale_tag": fields[2],
-                "locale_string": fields[3],
-                "numbering_system": fields[4],
-                "calendar_keyword": fields[5],
-                "calendar_class": fields[6],
-                "calendar": fields[7],
-                "instant_utc": fields[8],
-                "formatted": fields[9],
+                "control_layout": control_layout,
+                "locale_tag": fields[10],
+                "locale_string": fields[11],
+                "numbering_system": fields[12],
+                "calendar_keyword": fields[13],
+                "calendar_class": fields[14],
+                "calendar": fields[15],
+                "instant_utc": fields[16],
+                "formatted": fields[17],
                 "legacy_formatted": legacy_formatted,
-                "number_digits": fields[11],
-                "strict_round_trip": fields[12],
-                "parsed_epoch_millis": fields[13],
-                "default_constructor_matches": fields[14],
-                "default_calendar_class": fields[15],
-                "default_calendar": fields[16],
+                "number_digits": fields[19],
+                "strict_round_trip": fields[20],
+                "parsed_epoch_millis": fields[21],
+                "default_constructor_matches": fields[22],
+                "default_calendar_class": fields[23],
+                "default_calendar": fields[24],
                 "source_year": source_year,
             }
-            if kind == "candidate":
+            if kind == "numbering_candidate":
                 candidates.append(detailed)
+                candidate_outcomes.append(fields[1])
             else:
                 controls.append(detailed)
             continue
@@ -613,10 +806,13 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
     for instant_utc in fixed_instants:
         formatter_instant_fields(instant_utc)
         epoch_millis_for_instant(instant_utc)
-    signature_zeroes = [row["zero_code_point"] for row in signatures]
+    signature_keys = [
+        (row["zero_code_point"], row["control_layout"])
+        for row in signatures
+    ]
     if (
-        signature_zeroes != sorted(signature_zeroes)
-        or len(signature_zeroes) != len(set(signature_zeroes))
+        signature_keys != sorted(signature_keys)
+        or len(signature_keys) != len(set(signature_keys))
         or sum(row["locale_count"] for row in signatures)
         != int(metadata["available_locale_count"])
     ):
@@ -643,6 +839,7 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
         or matrix_timestamp_source_year(
             row["legacy_formatted"],
             row["zero_code_point"],
+            row["control_layout"],
         )
         != 2024
         or normalize_matrix_digits(
@@ -656,25 +853,70 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
             "{} contains a non-Gregorian or malformed signature".format(path.name)
         )
 
-    candidates_by_zero: Dict[int, List[Mapping[str, Any]]] = {}
-    for row in candidates:
-        candidates_by_zero.setdefault(row["zero_code_point"], []).append(row)
-    if set(candidates_by_zero) != set(signature_zeroes):
+    candidate_names = [row["name"] for row in definitions]
+    if (
+        candidate_names != sorted(candidate_names)
+        or len(candidate_names) != len(set(candidate_names))
+        or len(candidate_names) != int(metadata["numbering_candidate_count"])
+    ):
         raise FixtureValidationError(
-            "{} candidates do not cover every signature digit block".format(
+            "{} numbering candidate definitions changed".format(path.name)
+        )
+    candidate_digest = hashlib.sha256()
+    for name in candidate_names:
+        candidate_digest.update((name + "\n").encode("utf-8"))
+    if (
+        candidate_digest.hexdigest()
+        != metadata["numbering_candidate_names_sha256"]
+    ):
+        raise FixtureValidationError(
+            "{} numbering candidate list hash changed".format(path.name)
+        )
+    for definition in definitions:
+        if definition["definition_status"] == "ok":
+            if (
+                definition["definition_name"] != definition["name"]
+                or definition["radix"] is None
+                or definition["algorithmic"] is None
+                or not definition["description"]
+            ):
+                raise FixtureValidationError(
+                    "{} has malformed numbering definition {!r}".format(
+                        path.name,
+                        definition["name"],
+                    )
+                )
+        elif any(
+            definition[key] not in (None, "")
+            for key in (
+                "definition_name",
+                "radix",
+                "algorithmic",
+                "description",
+                "definition_zero_code_point",
+            )
+        ):
+            raise FixtureValidationError(
+                "{} failed numbering definition {!r} contains data".format(
+                    path.name,
+                    definition["name"],
+                )
+            )
+    if candidate_outcomes != candidate_names:
+        raise FixtureValidationError(
+            "{} did not probe every numbering candidate exactly once".format(
                 path.name
             )
         )
-    for zero_code_point, rows in candidates_by_zero.items():
-        if (
-            [row["instant_utc"] for row in rows] != list(fixed_instants)
-            or len({row["locale_tag"] for row in rows}) != 1
-        ):
+    if len(candidate_outcomes) != len(set(candidate_outcomes)):
+        raise FixtureValidationError(
+            "{} duplicates a numbering candidate outcome".format(path.name)
+        )
+    definitions_by_name = {row["name"]: row for row in definitions}
+    for failure in candidate_failures:
+        if not failure["status"] or failure["name"] not in definitions_by_name:
             raise FixtureValidationError(
-                "{} U+{:04X} candidate coverage changed".format(
-                    path.name,
-                    zero_code_point,
-                )
+                "{} contains a malformed candidate failure".format(path.name)
             )
 
     controls_by_tag: Dict[str, List[Mapping[str, Any]]] = {}
@@ -702,9 +944,35 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
         normalized_legacy = normalize_matrix_digits(
             row["legacy_formatted"],
             row["zero_code_point"],
+            row["control_layout"],
         )
+        if row["kind"] == "numbering_candidate":
+            definition = definitions_by_name[row["candidate_name"]]
+            expected_locale_tag = "en-US-u-nu-{}".format(
+                row["candidate_name"]
+            )
+            definition_matches = (
+                row["definition_name"] == definition["definition_name"]
+                and row["definition_status"] == definition["definition_status"]
+                and row["radix"] == definition["radix"]
+                and row["algorithmic"] == definition["algorithmic"]
+                and row["description"] == definition["description"]
+                and row["numbering_system"] == row["candidate_name"]
+                and row["locale_tag"] == expected_locale_tag
+            )
+        else:
+            definition_matches = (
+                not row["candidate_name"]
+                and not row["definition_name"]
+                and row["definition_status"] == "not_applicable"
+                and row["radix"] is None
+                and row["algorithmic"] is None
+                and not row["description"]
+            )
         if (
-            row["calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
+            not definition_matches
+            or row["observation_status"] != "ok"
+            or row["calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
             or row["calendar"] != ANDROID_FORMATTER_CALENDAR_TYPE
             or row["default_calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
             or row["default_calendar"] != ANDROID_FORMATTER_CALENDAR_TYPE
@@ -737,31 +1005,56 @@ def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
                 )
             )
 
+    successful_zeroes = {row["zero_code_point"] for row in candidates}
+    if not {
+        row["zero_code_point"] for row in signatures
+    }.issubset(successful_zeroes):
+        raise FixtureValidationError(
+            "{} explicit numbering candidates do not cover locale outputs".format(
+                path.name
+            )
+        )
+
     return {
         "path": path,
         "sha256": expected_sha256,
         "api_level": api_level,
         "metadata": metadata,
         "signatures": tuple(signatures),
+        "candidate_definitions": tuple(definitions),
         "candidates": tuple(candidates),
+        "candidate_failures": tuple(candidate_failures),
         "thai_controls": tuple(controls),
     }
 
 
 @lru_cache(maxsize=1)
 def formatter_probe_matrix() -> Mapping[str, Any]:
-    if not ANDROID_FORMATTER_PROBE_SOURCE_PATH.is_file():
-        raise FixtureValidationError(
-            "Missing Android instrumentation probe {}".format(
-                ANDROID_FORMATTER_PROBE_SOURCE_PATH
+    for artifact in (
+        ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        ANDROID_FORMATTER_PROBE_RUNNER_PATH,
+    ):
+        if not artifact.is_file():
+            raise FixtureValidationError(
+                "Missing Android formatter probe artifact {}".format(artifact)
             )
-        )
     source_sha256 = hashlib.sha256(
         ANDROID_FORMATTER_PROBE_SOURCE_PATH.read_bytes()
     ).hexdigest()
     if source_sha256 != ANDROID_FORMATTER_PROBE_SOURCE_SHA256:
         raise FixtureValidationError(
             "Android instrumentation probe source bytes changed"
+        )
+    runner_sha256 = hashlib.sha256(
+        ANDROID_FORMATTER_PROBE_RUNNER_PATH.read_bytes()
+    ).hexdigest()
+    if not (ANDROID_FORMATTER_PROBE_RUNNER_PATH.stat().st_mode & 0o111):
+        raise FixtureValidationError(
+            "Android formatter probe runner is not executable"
+        )
+    if runner_sha256 != ANDROID_FORMATTER_PROBE_RUNNER_SHA256:
+        raise FixtureValidationError(
+            "Android formatter probe runner bytes changed"
         )
     platforms = tuple(
         parse_android_formatter_evidence(path)
@@ -774,7 +1067,19 @@ def formatter_probe_matrix() -> Mapping[str, Any]:
 
     representative_by_zero: Dict[int, Mapping[str, Any]] = {}
     api_levels_by_zero: Dict[int, set[int]] = {}
+    control_layouts_by_zero: Dict[int, set[str]] = {}
+    definition_api_levels_by_zero: Dict[int, set[int]] = {}
     for platform in platforms:
+        definitions = {
+            row["name"]: row for row in platform["candidate_definitions"]
+        }
+        for definition in definitions.values():
+            definition_zero = definition["definition_zero_code_point"]
+            if definition_zero is not None:
+                definition_api_levels_by_zero.setdefault(
+                    definition_zero,
+                    set(),
+                ).add(platform["api_level"])
         for row in platform["candidates"]:
             if row["instant_utc"] != ANDROID_FORMATTER_SIGNATURE_INSTANT:
                 continue
@@ -782,22 +1087,37 @@ def formatter_probe_matrix() -> Mapping[str, Any]:
             api_levels_by_zero.setdefault(zero_code_point, set()).add(
                 platform["api_level"]
             )
-            representative_by_zero.setdefault(zero_code_point, row)
-        for row in platform["thai_controls"]:
+            control_layouts_by_zero.setdefault(
+                zero_code_point,
+                set(),
+            ).add(row["control_layout"])
+            definition = definitions[row["candidate_name"]]
             if (
-                row["locale_tag"] != "th-TH-u-nu-thai"
-                or row["instant_utc"] != ANDROID_FORMATTER_SIGNATURE_INSTANT
+                definition["definition_zero_code_point"] == zero_code_point
+                and definition["algorithmic"] is False
             ):
-                continue
+                representative_by_zero.setdefault(zero_code_point, row)
+        for row in (
+            *platform["signatures"],
+            *platform["thai_controls"],
+        ):
             zero_code_point = row["zero_code_point"]
-            api_levels_by_zero.setdefault(zero_code_point, set()).add(
-                platform["api_level"]
-            )
-            representative_by_zero.setdefault(zero_code_point, row)
+            control_layouts_by_zero.setdefault(
+                zero_code_point,
+                set(),
+            ).add(row["control_layout"])
+
+    if set(representative_by_zero) != set(api_levels_by_zero):
+        raise FixtureValidationError(
+            "Every emitted Android digit block needs an exact decimal candidate"
+        )
 
     candidate_digit_blocks = tuple(
         {
             "zero_code_point": zero_code_point,
+            "numbering_system": representative_by_zero[zero_code_point][
+                "candidate_name"
+            ],
             "locale_tag": representative_by_zero[zero_code_point]["locale_tag"],
             "calendar": representative_by_zero[zero_code_point]["calendar"],
             "instant_utc": representative_by_zero[zero_code_point]["instant_utc"],
@@ -806,6 +1126,9 @@ def formatter_probe_matrix() -> Mapping[str, Any]:
             ],
             "source_year": representative_by_zero[zero_code_point]["source_year"],
             "api_levels": tuple(sorted(api_levels_by_zero[zero_code_point])),
+            "control_layouts": tuple(
+                sorted(control_layouts_by_zero[zero_code_point])
+            ),
         }
         for zero_code_point in sorted(representative_by_zero)
     )
@@ -819,8 +1142,19 @@ def formatter_probe_matrix() -> Mapping[str, Any]:
     return {
         "probe_source": ANDROID_FORMATTER_PROBE_SOURCE_PATH,
         "probe_source_sha256": source_sha256,
+        "probe_runner": ANDROID_FORMATTER_PROBE_RUNNER_PATH,
+        "probe_runner_sha256": runner_sha256,
         "platforms": platforms,
         "candidate_digit_blocks": candidate_digit_blocks,
+        "candidate_definition_digit_blocks": tuple(
+            {
+                "zero_code_point": zero_code_point,
+                "api_levels": tuple(
+                    sorted(definition_api_levels_by_zero[zero_code_point])
+                ),
+            }
+            for zero_code_point in sorted(definition_api_levels_by_zero)
+        ),
     }
 
 
@@ -834,6 +1168,20 @@ def formatter_source_emittable_zeroes() -> frozenset[int]:
     )
 
 
+def formatter_source_control_layouts() -> Mapping[int, frozenset[str]]:
+    return {
+        row["zero_code_point"]: frozenset(row["control_layouts"])
+        for row in formatter_candidate_digit_blocks()
+    }
+
+
+def formatter_candidate_definition_zeroes() -> frozenset[int]:
+    return frozenset(
+        row["zero_code_point"]
+        for row in formatter_probe_matrix()["candidate_definition_digit_blocks"]
+    )
+
+
 def formatter_oracle_manifest() -> Mapping[str, Any]:
     matrix = formatter_probe_matrix()
     return {
@@ -842,31 +1190,147 @@ def formatter_oracle_manifest() -> Mapping[str, Any]:
         "legacy_pattern": "yyyyMMddHHmmss",
         "probe_source": ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
         "probe_source_sha256": matrix["probe_source_sha256"],
+        "probe_runner": ANDROID_FORMATTER_PROBE_RUNNER_PATH.name,
+        "probe_runner_sha256": matrix["probe_runner_sha256"],
+        "probe_runner_command": (
+            "python3 tools/legacy-fixtures/"
+            "run_android_formatter_probe.py --compare"
+        ),
+        "probe_runner_update_command": (
+            "python3 tools/legacy-fixtures/"
+            "run_android_formatter_probe.py --update"
+        ),
+        "probe_runner_required_environment": [
+            "ANDROID_SDK_ROOT",
+            "ANDROID_AVD_HOME",
+            "JAVA_HOME",
+        ],
+        "probe_runner_exact_command_sequence_source": (
+            "the byte-pinned run_android_formatter_probe.py source"
+        ),
         "evidence": [
             {
                 "file": platform["path"].name,
                 "sha256": platform["sha256"],
                 "api_level": platform["api_level"],
                 "release": platform["metadata"]["release"],
+                "system_image_package": platform["metadata"][
+                    "system_image_package"
+                ],
+                "system_image_revision": platform["metadata"][
+                    "system_image_revision"
+                ],
+                "build_fingerprint": platform["metadata"][
+                    "build_fingerprint"
+                ],
+                "abi": platform["metadata"]["abi"],
+                "supported_abis": platform["metadata"]["supported_abis"],
+                "emulator_package": platform["metadata"]["emulator_package"],
+                "emulator_package_revision": platform["metadata"][
+                    "emulator_package_revision"
+                ],
+                "emulator_version": platform["metadata"]["emulator_version"],
+                "emulator_acceleration": platform["metadata"][
+                    "emulator_acceleration"
+                ],
+                "compile_sdk_package": platform["metadata"][
+                    "compile_sdk_package"
+                ],
+                "compile_sdk_revision": platform["metadata"][
+                    "compile_sdk_revision"
+                ],
+                "build_tools_package": platform["metadata"][
+                    "build_tools_package"
+                ],
+                "build_tools_revision": platform["metadata"][
+                    "build_tools_revision"
+                ],
+                "java_version": platform["metadata"]["java_version"],
+                "java_runtime_version": platform["metadata"][
+                    "java_runtime_version"
+                ],
+                "java_vm_name": platform["metadata"]["java_vm_name"],
+                "java_vm_version": platform["metadata"]["java_vm_version"],
+                "icu_version": platform["metadata"]["icu_version"],
+                "unicode_version": platform["metadata"]["unicode_version"],
+                "cldr_version": platform["metadata"]["cldr_version"],
+                "formatter_pattern": platform["metadata"]["pattern"],
+                "legacy_pattern": platform["metadata"]["legacy_pattern"],
+                "timezone": platform["metadata"]["timezone"],
+                "fixed_instants_utc": platform["metadata"][
+                    "fixed_instants_utc"
+                ].split(","),
+                "numbering_candidate_instant_utc": platform["metadata"][
+                    "numbering_candidate_instant_utc"
+                ],
                 "available_locale_count": int(
                     platform["metadata"]["available_locale_count"]
                 ),
                 "locale_rows_sha256": platform["metadata"][
                     "locale_rows_sha256"
                 ],
+                "numbering_candidate_source": platform["metadata"][
+                    "numbering_candidate_source"
+                ],
+                "numbering_candidate_version": platform["metadata"][
+                    "numbering_candidate_version"
+                ],
+                "numbering_candidate_count": len(
+                    platform["candidate_definitions"]
+                ),
+                "numbering_candidate_names_sha256": platform["metadata"][
+                    "numbering_candidate_names_sha256"
+                ],
+                "numbering_candidate_success_count": len(
+                    platform["candidates"]
+                ),
+                "numbering_candidate_failure_count": len(
+                    platform["candidate_failures"]
+                ),
+                "numbering_candidate_native_crash_count": sum(
+                    row["status"] == "native_process_crash"
+                    for row in platform["candidate_failures"]
+                ),
+                "emitted_digit_block_count": len(
+                    {
+                        row["zero_code_point"]
+                        for row in platform["candidates"]
+                    }
+                ),
             }
             for platform in matrix["platforms"]
         ],
         "calendar_class": ANDROID_FORMATTER_CALENDAR_CLASS,
         "calendar_type": ANDROID_FORMATTER_CALENDAR_TYPE,
         "platform_union_policy": (
-            "union_of_api26_api36_available_locale_outputs_plus_probed_"
-            "thai_numbering_control"
+            "union_of_decimal_blocks_actually_emitted_by_every_"
+            "android_icu_numbering_candidate_on_api26_and_api36"
         ),
         "source_emittable_digit_zero_code_points": [
             "U+{:04X}".format(row["zero_code_point"])
             for row in matrix["candidate_digit_blocks"]
         ],
+        "source_emittable_supplementary_zero_code_points": [
+            "U+{:04X}".format(row["zero_code_point"])
+            for row in matrix["candidate_digit_blocks"]
+            if row["zero_code_point"] > 0xFFFF
+        ],
+        "candidate_definition_supplementary_zero_code_points": [
+            "U+{:04X}".format(row["zero_code_point"])
+            for row in matrix["candidate_definition_digit_blocks"]
+            if row["zero_code_point"] > 0xFFFF
+        ],
+        "source_proven_format_control_layouts": {
+            "U+{:04X}".format(row["zero_code_point"]): list(
+                row["control_layouts"]
+            )
+            for row in matrix["candidate_digit_blocks"]
+            if any(row["control_layouts"])
+        },
+        "timestamp_parser": (
+            "code_point_aware_single_evidenced_contiguous_decimal_block_"
+            "with_only_source_proven_control_layouts"
+        ),
         "candidate_fixture": "formatter_digit_blocks",
     }
 
@@ -878,6 +1342,7 @@ def verify_android_formatter_evidence(
     matrix = formatter_probe_matrix()
     for source in (
         ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        ANDROID_FORMATTER_PROBE_RUNNER_PATH,
         *ANDROID_FORMATTER_EVIDENCE_PATHS,
     ):
         candidate = root / source.name
@@ -896,6 +1361,23 @@ def verify_android_formatter_evidence(
             platform["api_level"] for platform in matrix["platforms"]
         ],
         "digit_block_count": len(matrix["candidate_digit_blocks"]),
+        "numbering_candidate_count": sum(
+            len(platform["candidate_definitions"])
+            for platform in matrix["platforms"]
+        ),
+        "numbering_candidate_failure_count": sum(
+            len(platform["candidate_failures"])
+            for platform in matrix["platforms"]
+        ),
+        "numbering_candidate_native_crash_count": sum(
+            row["status"] == "native_process_crash"
+            for platform in matrix["platforms"]
+            for row in platform["candidate_failures"]
+        ),
+        "supplementary_emitted_digit_block_count": sum(
+            row["zero_code_point"] > 0xFFFF
+            for row in matrix["candidate_digit_blocks"]
+        ),
         "detailed_row_count": sum(
             len(platform["candidates"]) + len(platform["thai_controls"])
             for platform in matrix["platforms"]
@@ -1394,8 +1876,8 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             key="localized_timestamps",
             description=(
                 "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, "
-                "historical Bengali, and historical ASCII rows, plus strict "
-                "mixed-block and Unicode-format controls."
+                "historical Bengali, ASCII, and fullwidth rows, plus strict "
+                "mixed-block, unknown supplementary, and Unicode-format controls."
             ),
             activities=(
                 activity(
@@ -1502,10 +1984,24 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     11,
                     "２０２４０７０８０９１３１１",
                     None,
-                    "Synthetic Unsupported Fullwidth Digits",
+                    "Synthetic Fullwidth Digit Session",
                     (
-                        "Unicode Nd digits not emitted by the probed Android "
-                        "formatter platforms remain unsupported."
+                        "Fullwidth digits are emitted by explicit Android "
+                        "u-nu-fullwide formatter candidates."
+                    ),
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    12,
+                    "𐒢𐒠𐒢𐒤𐒠𐒧𐒠𐒨𐒠𐒩𐒡𐒤𐒡𐒡",
+                    None,
+                    "Synthetic Unsupported Supplementary Digits",
+                    (
+                        "Osmanya is an ICU candidate definition, but the pinned "
+                        "java.text formatter falls back to ASCII rather than "
+                        "emitting this supplementary-plane block."
                     ),
                     None,
                     None,
@@ -1659,7 +2155,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 ),
                 point(
                     13,
-                    1,
+                    11,
                     "２０２４０７０８０９１３１２",
                     30.0452,
                     31.2365,
@@ -1668,6 +2164,18 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                     None,
                     128.0,
+                ),
+                point(
+                    14,
+                    12,
+                    "𐒢𐒠𐒢𐒤𐒠𐒧𐒠𐒨𐒠𐒩𐒡𐒤𐒡𐒢",
+                    30.0453,
+                    31.2366,
+                    None,
+                    None,
+                    None,
+                    None,
+                    129.0,
                 ),
             ),
             representative_values=(
@@ -1706,6 +2214,20 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "expected": "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
                     "comparison": exact,
                 },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 11,
+                    "column": "GMTSTART",
+                    "expected": "２０２４０７０８０９１３１１",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 12,
+                    "column": "GMTSTART",
+                    "expected": "𐒢𐒠𐒢𐒤𐒠𐒧𐒠𐒨𐒠𐒩𐒡𐒤𐒡𐒡",
+                    "comparison": exact,
+                },
             ),
             android_locale=AR_EG_ANDROID_METADATA_LOCALE,
             default_calendar_evidence=CalendarEvidence(
@@ -1727,14 +2249,21 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                         locale_tag="en-US",
                     ),
                 ),
+                (
+                    11,
+                    CalendarEvidence(
+                        calendar=CALENDAR_GREGORIAN,
+                        locale_tag="en-US-u-nu-fullwide",
+                    ),
+                ),
             ),
         ),
         FixtureCase(
             key="formatter_digit_blocks",
             description=(
                 "One activity and point for every Unicode Nd digit block emitted "
-                "by Android java.text.SimpleDateFormat across the API26/API36 "
-                "available-locale union plus the probed Thai numbering control."
+                "by Android java.text.SimpleDateFormat after probing every ICU "
+                "numbering-system candidate on API26 and API36."
             ),
             activities=tuple(
                 activity(
@@ -1745,9 +2274,11 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                         block["zero_code_point"]
                     ),
                     (
-                        "Source-backed by Android API {} formatter evidence for {}."
+                        "Source-backed by Android API {} formatter evidence for "
+                        "numbering system {} ({})."
                     ).format(
                         "/".join(str(value) for value in block["api_levels"]),
+                        block["numbering_system"],
                         block["locale_tag"],
                     ),
                     None,
@@ -4451,59 +4982,78 @@ def point_calendar_evidence(
 
 def normalized_legacy_timestamp_digits(
     value: Any,
-    require_single_numbering_system: bool = False,
+    require_single_numbering_system: bool = True,
 ) -> Optional[str]:
-    """Map Unicode Nd digits to ASCII without changing the source string."""
-    if not isinstance(value, str) or len(value) != 14:
+    """Normalize one evidenced decimal block without changing the source string."""
+    del require_single_numbering_system
+    components = legacy_timestamp_digit_components(value)
+    return components[0] if components is not None else None
+
+
+def legacy_timestamp_digit_components(
+    value: Any,
+    allowed_zero_code_points: Optional[Iterable[int]] = None,
+    allowed_control_layouts: Optional[Mapping[int, Iterable[str]]] = None,
+) -> Optional[Tuple[str, int, str]]:
+    if not isinstance(value, str):
         return None
-    normalized: List[str] = []
-    zero_code_point: Optional[int] = None
-    for character in value:
-        if unicodedata.category(character) != "Nd":
-            return None
-        try:
-            decimal = unicodedata.decimal(character)
-        except ValueError:
-            return None
-        character_zero = ord(character) - decimal
-        if zero_code_point is None:
-            zero_code_point = character_zero
-        elif (
-            require_single_numbering_system
-            and zero_code_point != character_zero
-        ):
-            return None
-        normalized.append(chr(ord("0") + decimal))
-    return "".join(normalized)
+    zeroes = tuple(
+        sorted(
+            formatter_source_emittable_zeroes()
+            if allowed_zero_code_points is None
+            else set(allowed_zero_code_points)
+        )
+    )
+    layouts = (
+        formatter_source_control_layouts()
+        if allowed_control_layouts is None
+        else {
+            zero: frozenset(values)
+            for zero, values in allowed_control_layouts.items()
+        }
+    )
+    matches: List[Tuple[str, int, str]] = []
+    for zero_code_point in zeroes:
+        normalized: List[str] = []
+        controls: List[Tuple[int, int]] = []
+        for character in value:
+            code_point = ord(character)
+            decimal = code_point - zero_code_point
+            if 0 <= decimal <= 9:
+                normalized.append(str(decimal))
+            else:
+                controls.append((len(normalized), code_point))
+        if len(normalized) != 14:
+            continue
+        control_layout = ",".join(
+            "{}:U+{:04X}".format(position, code_point)
+            for position, code_point in controls
+        )
+        if control_layout not in frozenset(layouts.get(zero_code_point, ())):
+            continue
+        matches.append(
+            ("".join(normalized), zero_code_point, control_layout)
+        )
+    return matches[0] if len(matches) == 1 else None
 
 
 def timestamp_digit_zero_code_point(value: Any) -> Optional[int]:
-    normalized = normalized_legacy_timestamp_digits(
-        value,
-        require_single_numbering_system=True,
-    )
-    if normalized is None:
-        return None
-    return ord(value[0]) - unicodedata.decimal(value[0])
+    components = legacy_timestamp_digit_components(value)
+    return components[1] if components is not None else None
 
 
 def parse_evidenced_legacy_timestamp(
     value: Any,
     evidence: CalendarEvidence,
 ) -> Optional[datetime]:
-    normalized = normalized_legacy_timestamp_digits(
-        value,
-        require_single_numbering_system=True,
-    )
-    if normalized is None:
-        return None
     calendar_evidence_payload(evidence)
-    zero_code_point = ord(value[0]) - unicodedata.decimal(value[0])
-    if zero_code_point not in formatter_source_emittable_zeroes():
+    components = legacy_timestamp_digit_components(value)
+    if components is None:
         return None
+    normalized, _, _ = components
     source_year = int(normalized[0:4])
     try:
-        return datetime(
+        parsed = datetime(
             source_year,
             int(normalized[4:6]),
             int(normalized[6:8]),
@@ -4513,6 +5063,15 @@ def parse_evidenced_legacy_timestamp(
         )
     except ValueError:
         return None
+    round_trip = "{:04d}{:02d}{:02d}{:02d}{:02d}{:02d}".format(
+        parsed.year,
+        parsed.month,
+        parsed.day,
+        parsed.hour,
+        parsed.minute,
+        parsed.second,
+    )
+    return parsed if round_trip == normalized else None
 
 
 def parse_strict_gregorian_legacy_timestamp(value: Any) -> Optional[datetime]:
@@ -5643,6 +6202,7 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     formatter_probe_matrix()
     exact_formatter_artifacts = (
         ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        ANDROID_FORMATTER_PROBE_RUNNER_PATH,
         *ANDROID_FORMATTER_EVIDENCE_PATHS,
     )
     for source in exact_formatter_artifacts:
@@ -6689,13 +7249,26 @@ def run_storage_detection_tests(
             evidence: CalendarEvidence,
         ) -> Optional[datetime]:
             del evidence
-            normalized = normalized_legacy_timestamp_digits(
-                value,
-                require_single_numbering_system=True,
-            )
-            if normalized is None:
+            if not isinstance(value, str) or len(value) != 14:
                 return None
-            return parse_strict_gregorian_legacy_timestamp(normalized)
+            normalized: List[str] = []
+            zero_code_point: Optional[int] = None
+            for character in value:
+                if unicodedata.category(character) != "Nd":
+                    return None
+                try:
+                    decimal = unicodedata.decimal(character)
+                except ValueError:
+                    return None
+                character_zero = ord(character) - decimal
+                if zero_code_point is None:
+                    zero_code_point = character_zero
+                elif character_zero != zero_code_point:
+                    return None
+                normalized.append(str(decimal))
+            return parse_strict_gregorian_legacy_timestamp(
+                "".join(normalized)
+            )
 
         def parse_limited_digit_blocks(
             value: Any,
@@ -6703,16 +7276,14 @@ def run_storage_detection_tests(
             allowed_zero_code_points: Sequence[int],
         ) -> Optional[datetime]:
             del evidence
-            normalized = normalized_legacy_timestamp_digits(
+            components = legacy_timestamp_digit_components(
                 value,
-                require_single_numbering_system=True,
+                allowed_zero_code_points,
+                formatter_source_control_layouts(),
             )
-            if normalized is None:
+            if components is None:
                 return None
-            first_decimal = unicodedata.decimal(value[0])
-            zero_code_point = ord(value[0]) - first_decimal
-            if zero_code_point not in allowed_zero_code_points:
-                return None
+            normalized, _, _ = components
             return parse_strict_gregorian_legacy_timestamp(normalized)
 
         def parse_ascii_arabic_only(
@@ -6796,6 +7367,110 @@ def run_storage_detection_tests(
         formatter_zeroes = {
             row["zero_code_point"] for row in formatter_candidate_digit_blocks()
         }
+
+        def require_formatter_candidate_rejection(
+            detector_name: str,
+            timestamp_parser: TimestampParser,
+        ) -> None:
+            candidate = copy.deepcopy(expected_outputs)
+            candidate["formatter_digit_blocks"] = build_canonical_output(
+                formatter_case,
+                formatter_rows,
+                formatter_schema,
+                timestamp_parser,
+            )
+            try:
+                validate_candidate_outputs(expected_outputs, candidate)
+            except FixtureValidationError:
+                passed.append(detector_name)
+            else:
+                raise FixtureValidationError(
+                    "Validator self-test did not detect {}".format(
+                        detector_name
+                    )
+                )
+
+        require_formatter_candidate_rejection(
+            "hardcoded_ten_digit_block_oracle",
+            lambda value, evidence: parse_limited_digit_blocks(
+                value,
+                evidence,
+                tuple(ANDROID_FORMATTER_LEGACY_TEN_ZEROES),
+            ),
+        )
+        require_formatter_candidate_rejection(
+            "fullwidth_digit_block_omitted",
+            lambda value, evidence: parse_limited_digit_blocks(
+                value,
+                evidence,
+                tuple(formatter_zeroes - {0xFF10}),
+            ),
+        )
+
+        supplementary_definitions = {
+            row["definition_zero_code_point"]
+            for platform in formatter_probe_matrix()["platforms"]
+            for row in platform["candidate_definitions"]
+            if row["definition_zero_code_point"] is not None
+            and row["definition_zero_code_point"] > 0xFFFF
+        }
+        if not supplementary_definitions:
+            raise FixtureValidationError(
+                "Formatter candidate evidence lacks supplementary digit definitions"
+            )
+        supplementary_zero = 0x1E5F1
+        if supplementary_zero not in supplementary_definitions:
+            raise FixtureValidationError(
+                "Formatter evidence lacks the pinned Unicode 16 digit control"
+            )
+        supplementary_timestamp = localized_formatter_digits(
+            "20240708091011",
+            supplementary_zero,
+        )
+        supplementary_components = legacy_timestamp_digit_components(
+            supplementary_timestamp,
+            (supplementary_zero,),
+            {supplementary_zero: frozenset({""})},
+        )
+        if (
+            supplementary_components is None
+            or supplementary_components[0] != "20240708091011"
+            or len(supplementary_timestamp) != 14
+            or len(supplementary_timestamp.encode("utf-16-le")) // 2 != 28
+        ):
+            raise FixtureValidationError(
+                "Code-point timestamp parser cannot retain supplementary digits"
+            )
+        utf16_character_zeroes = {
+            ord(row["description"][0])
+            for platform in formatter_probe_matrix()["platforms"]
+            for row in platform["candidate_definitions"]
+            if row["definition_zero_code_point"] is not None
+            and len(row["description"].encode("utf-16-le")) // 2 == 10
+        }
+        if supplementary_definitions & utf16_character_zeroes:
+            raise FixtureValidationError(
+                "UTF-16 character detector unexpectedly retained supplementary blocks"
+            )
+        passed.append("utf16_character_only_candidate_parser")
+
+        bmp_only_definition_zeroes = {
+            row["definition_zero_code_point"]
+            for platform in formatter_probe_matrix()["platforms"]
+            for row in platform["candidate_definitions"]
+            if row["definition_zero_code_point"] is not None
+            and row["definition_zero_code_point"] <= 0xFFFF
+        }
+        if (
+            formatter_candidate_definition_zeroes()
+            - bmp_only_definition_zeroes
+            != supplementary_definitions
+        ):
+            raise FixtureValidationError(
+                "BMP-only candidate omission control did not isolate supplementary blocks"
+            )
+        passed.append("supplementary_numbering_candidate_omitted")
+
         for omitted_zero in sorted(formatter_zeroes):
             allowed_zeroes = formatter_zeroes - {omitted_zero}
 
@@ -8171,6 +8846,7 @@ def corpus_artifact_paths(root: Path) -> Mapping[str, Path]:
     paths = [
         root / "manifest.json",
         root / ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
+        root / ANDROID_FORMATTER_PROBE_RUNNER_PATH.name,
         *(
             root / evidence_path.name
             for evidence_path in ANDROID_FORMATTER_EVIDENCE_PATHS
@@ -8668,6 +9344,7 @@ def verify_deterministic_regeneration(
         expected_exact_artifact_paths.update(
             {
                 ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
+                ANDROID_FORMATTER_PROBE_RUNNER_PATH.name,
                 *(
                     evidence_path.name
                     for evidence_path in ANDROID_FORMATTER_EVIDENCE_PATHS

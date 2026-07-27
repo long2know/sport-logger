@@ -195,9 +195,9 @@ the alias-capable profile. Across canonical and malformed controls those are
 two, four, and six decisions respectively. Guards may disable a capability to
 exercise a subset; they never fabricate a missing capability.
 
-Representative FTS4/no-FTS5 builds produce 9 schema cases and 54 applicable /
+Representative FTS4/no-FTS5 builds produce 9 schema cases and 58 applicable /
 2 N/A detectors on 3.18.2 and 3.26. Representative FTS4+FTS5 builds produce
-11 cases and 56 applicable / 0 N/A detectors on 3.32 and 3.33+, with four and
+11 cases and 60 applicable / 0 N/A detectors on 3.32 and 3.33+, with four and
 six real profile decisions respectively. These counts are derived outcomes;
 another build's compile options may legitimately change only the applicable/N/A
 split.
@@ -295,47 +295,75 @@ default time zone, and default lenient parsing (`Config.java:15-18`). The
 one-argument constructor is locale-sensitive. The executable oracle derives the
 result from Android rather than desktop Java. The exact
 `AndroidLocaleTimestampProbeTest.java` source enumerates Android's available
-locales and calls
+locales and every sorted
+`android.icu.text.NumberingSystem.getAvailableNames()` candidate. Each
+candidate runs in an isolated instrumentation process so an API26 native ICU
+crash cannot truncate the matrix; an otherwise empty instrumentation result or
+timed-out APK install gets one bounded retry. The probe calls
 `SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", locale)` plus the legacy pattern
 for fixed UTC instants in years 2000, 2024, 2032, and 2567. Detailed rows record
-locale/Unicode keywords, zero digit, localized `1234567890`, calendar
-class/type, full and legacy timestamp text, the no-locale constructor result,
-and strict full-consumption parse round-trip epoch milliseconds.
+candidate definitions and failures, locale/Unicode keywords, code-point digit
+blocks and format-control layouts, localized `1234567890`, calendar class/type,
+full and legacy timestamp text, the no-locale constructor result, and strict
+full-consumption parse round-trip epoch milliseconds.
 
-The sanitized TSVs were reproduced byte-for-byte on Android 8.0.0 / API 26 and
-Android 16 / API 36 software-emulated AVDs run sequentially with `-accel off`.
-They contain no serial, AVD name, host path, username, device data, or
-non-deterministic instant. Source/evidence SHA-256 values, locale counts, and
-full available-locale hashes are pinned in `manifest.json`.
+The sanitized TSVs were reproduced byte-for-byte on these sequential
+software-emulated platforms:
+
+| API | System image / revision | Build fingerprint | ABI | ICU / Unicode / CLDR |
+|---|---|---|---|---|
+| 26 | `system-images;android-26;google_apis;x86_64` / `16.0.0` | `Android/sdk_gphone_x86_64/generic_x86_64:8.0.0/OSR1.180418.026/6741039:userdebug/dev-keys` | `x86_64` | `58.2.0.0` / `9.0.0.0` / `30.0.3.0` |
+| 36 | `system-images;android-36;google_apis;x86_64` / `7.0.0` | `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys` | `x86_64` | `76.1.0.0` / `16.0.0.0` / `46.0.0.0` |
+
+Both use emulator package revision `36.6.11` (reported version `36.6.11.0`),
+compile SDK revision `2.0.0`, build tools `36.0.0`, UTC, and `-accel off`.
+The TSVs additionally pin supported ABIs, Java VM/runtime, candidate-set
+count/version/hash, locale count/hash, patterns, and fixed instants. They
+contain no serial, AVD name, host path, username, device data, wall-clock
+capture time, credential, or other volatile identifier. Source, runner, and
+evidence SHA-256 values are pinned in `manifest.json`.
 
 Every available-locale signature is `java.util.GregorianCalendar` / `gregory`.
 This remains true for Thai controls requesting `ca-buddhist`; Android ignores
-that extension for this formatter. The finite API26/API36 union is:
+that extension for this formatter. API26 probes 77 candidates (37 successful,
+40 failed, including 18 isolated native crashes); API36 probes 96 (76
+successful, 20 failed). Both actually emit the same finite union:
 
-| Zero | Representative locale | APIs | Calendar | Checked output |
-|---|---|---|---|---|
-| `U+0030` | `af` | 26, 36 | Gregorian | `20240708091011` |
-| `U+0660` | `ar` | 26, 36 | Gregorian | `٢٠٢٤٠٧٠٨٠٩١٠١١` |
-| `U+06F0` | `fa` | 26, 36 | Gregorian | `۲۰۲۴۰۷۰۸۰۹۱۰۱۱` |
-| `U+07C0` | `nqo` | 36 | Gregorian | `߂߀߂߄߀߇߀߈߀߉߁߀߁߁` |
-| `U+0966` | `mr` | 26, 36 | Gregorian | `२०२४०७०८०९१०११` |
-| `U+09E6` | `as` | 26, 36 | Gregorian | `২০২৪০৭০৮০৯১০১১` |
-| `U+0E50` | `th-TH-u-nu-thai` | 26, 36 | Gregorian | `๒๐๒๔๐๗๐๘๐๙๑๐๑๑` |
-| `U+0F20` | `dz` | 26, 36 | Gregorian | `༢༠༢༤༠༧༠༨༠༩༡༠༡༡` |
-| `U+1040` | `my` | 26, 36 | Gregorian | `၂၀၂၄၀၇၀၈၀၉၁၀၁၁` |
-| `U+1C50` | `sat` | 36 | Gregorian | `᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑` |
+```text
+U+0030 U+0660 U+06F0 U+07C0 U+0966 U+09E6 U+0A66 U+0AE6 U+0B66 U+0BE6
+U+0C66 U+0CE6 U+0D66 U+0DE6 U+0E50 U+0ED0 U+0F20 U+1040 U+1090 U+17E0
+U+1810 U+1946 U+19D0 U+1A80 U+1A90 U+1B50 U+1BB0 U+1C40 U+1C50 U+A620
+U+A8D0 U+A900 U+A9D0 U+A9F0 U+AA50 U+ABF0 U+FF10
+```
 
-`formatter_digit_blocks.db` commits one activity and point for each block.
-Fullwidth and other arbitrary `Nd` blocks are rejected because neither platform
-emits them. An omission detector removes each represented block in turn.
+`formatter_digit_blocks.db` commits one activity and point for each of these 37
+blocks, including fullwidth. API36 defines 39 supplementary-plane decimal
+blocks, including Osmanya, but `java.text.SimpleDateFormat` falls back to ASCII
+for them; neither pinned platform emits a supplementary block. The parser is
+code-point-aware for future evidenced supplementary output and derives digit
+values from evidenced ranges rather than the host Unicode database. The
+`localized_timestamps` Osmanya control proves that a defined-but-not-emitted
+block remains rejected. An omission detector removes each emitted block in
+turn.
 `android_thai_gregorian.db` adds ordinary and Thai-digit controls across years
 2000, 2024, 2032, and 2567.
 
 Validate the source and both evidence files with:
 
 ```bash
+ANDROID_SDK_ROOT=/path/to/android-sdk \
+ANDROID_AVD_HOME=/path/to/avd-home \
+JAVA_HOME=/path/to/jdk-17-or-newer \
+  python3 tools/legacy-fixtures/run_android_formatter_probe.py --compare
+
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-formatter-evidence
 ```
+
+The byte-pinned runner is the exact build/install/run command sequence. It
+verifies package revisions, discovers AVDs by pinned system image rather than
+recording host-specific names, builds disposable APKs, boots API26 then API36
+with `-read-only -accel off`, compares exact TSV bytes, uninstalls, shuts down,
+and removes all generated artifacts. Use `--update` only to regenerate evidence.
 
 Android documents that the one-argument constructor uses the default `FORMAT`
 locale, and `DecimalFormatSymbols.getZeroDigit()` varies with that locale. See
@@ -366,17 +394,21 @@ numbering selector because Android can update it when reopening a database.
 `localized_timestamps` therefore combines current `ar_EG` metadata with
 historical Bengali and ASCII rows; a metadata-coupled parser fails.
 
-Validation maps Unicode `Nd` digits to ASCII only in a temporary parse buffer,
-requires all 14 characters to come from one Android-emittable numbering block,
-and applies strict Gregorian field validation.
-ASCII may coexist with non-ASCII rows but cannot mix inside one timestamp.
-Separators, bidi/direction/format controls, non-`Nd` lookalikes, mixed numbering
-systems, impossible dates, and invalid times remain rejected. Valid interpreted
-values use the legacy UTC-like semantics without applying the current offset
-again, while original source text remains unchanged in canonical rows,
-rejected-row diagnostics, representative values, and checksums. Candidate
-detectors also prove omitted Android digit blocks, unsupported-block acceptance,
-mixed-block acceptance, metadata coupling, and stripped format controls fail.
+Validation maps only one known contiguous source-emitted decimal block to ASCII
+in a temporary parse buffer, counts Unicode code points rather than UTF-16
+characters, requires exactly 14 digits, permits only source-proven
+format-control layouts (none are emitted by the pinned matrix), and applies
+strict Gregorian field validation. ASCII may coexist with non-ASCII rows but
+cannot mix inside one timestamp. Separators, unproven bidi/direction controls,
+digit-like non-decimal characters, mixed numbering systems, impossible dates,
+and invalid times remain rejected. Valid interpreted values use the legacy
+UTC-like semantics without applying the current offset again, while original
+source text remains unchanged in canonical rows, rejected-row diagnostics,
+representative values, and checksums. Candidate detectors independently prove
+the old hardcoded 10-block oracle, fullwidth omission,
+UTF-16-character/BMP-only handling, supplementary-definition omission, omission
+of every emitted Android block, unsupported-block acceptance, mixed-block
+acceptance, metadata coupling, and stripped format controls fail.
 
 ## Source-backed defects that migration must not reproduce
 
@@ -431,10 +463,11 @@ schema, payload, WAL frames, and the intentional damage location remain
 checked. Tests prove writer-version-only variation passes while invalid header
 semantics and real page, schema, payload, WAL, or corruption drift fail.
 
-The 18 `expected/*.json` files, `manifest.json`, the exact probe source, and two
-Android evidence TSVs are the 22 true exact-byte artifacts. Generation writes
-explicit UTF-8 bytes with LF and one terminal newline; `.gitattributes` enforces
-LF for fixture JSON/source/docs. A CRLF mutation is an explicit defect detector.
+The 18 `expected/*.json` files, `manifest.json`, the exact probe source and
+runner, and two Android evidence TSVs are the 23 true exact-byte artifacts.
+Generation writes explicit UTF-8 bytes with LF and one terminal newline;
+`.gitattributes` enforces LF for fixture JSON/source/docs. A CRLF mutation is an
+explicit defect detector.
 
 The committed cases are:
 
@@ -449,8 +482,8 @@ The committed cases are:
 | `representative.db` | Multi-activity data, multiple points, optional nulls, zero/default coordinates, and a normal partial live row. |
 | `timestamp_ordering.db` | Duplicate and non-monotonic timestamps in required ascending 64-bit point-ID order. |
 | `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
-| `localized_timestamps.db` | Current `ar_EG` metadata with Gregorian Arabic-Indic, historical Bengali, and historical ASCII rows preserved losslessly; mixed/unsupported digit blocks and malformed control/date rows remain rejected. |
-| `formatter_digit_blocks.db` | One activity and point for each of the 10 `Nd` blocks emitted by the API26/API36 Android union. |
+| `localized_timestamps.db` | Current `ar_EG` metadata with Gregorian Arabic-Indic, historical Bengali/ASCII, and fullwidth rows preserved losslessly; mixed blocks, unproven controls, non-decimal lookalikes, and unsupported supplementary Osmanya rows remain rejected. |
+| `formatter_digit_blocks.db` | One activity and point for each of the 37 decimal blocks emitted by the complete API26/API36 Android numbering-candidate union. |
 | `android_thai_gregorian.db` | Android-proven ordinary and Thai-digit Gregorian timestamps across years 2000, 2024, 2032, and 2567; no Buddhist conversion is reachable. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
@@ -508,11 +541,11 @@ python3 tools/legacy-fixtures/legacy_fixtures.py large \
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-large
 ```
 
-The counted corpus is 18 fixtures and 42 regeneration artifacts: 22 exact-byte
+The counted corpus is 18 fixtures and 43 regeneration artifacts: 23 exact-byte
 UTF-8/LF text files, 14 logical standard databases, and 6 canonical
 non-standard SQLite artifacts. The standard-library suite contains 24 tests.
 
-The verifier defines 56 detectors, running every detector supported by the
+The verifier defines 60 detectors, running every detector supported by the
 connected SQLite engine and reporting unsupported feature detectors as N/A.
 They cover integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
@@ -524,11 +557,12 @@ database drift, capability-gated generated-column rejection, API26-compatible
 FTS4 virtual/shadow rejection, optional FTS5 rejection,
 literal `sqlite_` filtering with `sqliteX...` table/index/trigger/view controls,
 desktop-JDK Buddhist assumptions, year-magnitude/fixed-offset and one-year
-calendar conversion, omission of any source-emittable digit block,
-unsupported-block acceptance, current-metadata coupling, destructive timestamp
-normalization, mixed-numbering acceptance, Unicode format-control stripping,
-CRLF JSON drift, and malformed/truncated/corrupt preflight side-effect
-prevention.
+calendar conversion, the hardcoded 10-block oracle, fullwidth omission,
+UTF-16/BMP-only candidate handling, supplementary-definition omission, omission
+of any source-emittable digit block, unsupported-block acceptance,
+current-metadata coupling, destructive timestamp normalization, mixed-numbering
+acceptance, Unicode format-control stripping, CRLF JSON drift, and
+malformed/truncated/corrupt preflight side-effect prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

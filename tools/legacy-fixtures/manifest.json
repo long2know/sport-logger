@@ -1590,9 +1590,9 @@
       ],
       "database": "fixtures/localized_timestamps.db",
       "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
-      "description": "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, historical Bengali, and historical ASCII rows, plus strict mixed-block and Unicode-format controls.",
+      "description": "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, historical Bengali, ASCII, and fullwidth rows, plus strict mixed-block, unknown supplementary, and Unicode-format controls.",
       "expected": {
-        "activity_rows": 11,
+        "activity_rows": 12,
         "calendar_evidence": {
           "calendar": "gregory",
           "calendar_class": "java.util.GregorianCalendar",
@@ -1664,6 +1664,12 @@
             {
               "calendar": "gregory",
               "legacy_activity_id": 11,
+              "locale_tag": "en-US-u-nu-fullwide",
+              "source": "android_java_text_gregorian_invariant"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 12,
               "locale_tag": "ar-EG",
               "source": "android_java_text_gregorian_invariant"
             }
@@ -1674,15 +1680,15 @@
         },
         "canonical": {
           "orphan_track_points": 0,
-          "partial_sessions": 0,
+          "partial_sessions": 1,
           "rejected_activity_rows": 8,
           "rejected_track_point_rows": 7,
-          "sessions": 3,
-          "source_activity_rows": 11,
-          "source_track_point_rows": 13,
-          "track_points": 6
+          "sessions": 4,
+          "source_activity_rows": 12,
+          "source_track_point_rows": 14,
+          "track_points": 7
         },
-        "canonical_output_logical_checksum": "1cb64ade89436d1ef6b523fd6b3e78038a9bdf3b7e0245d6183e9a20fbe9bd99",
+        "canonical_output_logical_checksum": "adf4ad18607c90b4a2d32cc05ca12cd309d67c2e0d290cb4d890d5501b101598",
         "diagnostics": {
           "calendar": {
             "calendar": "gregory",
@@ -1755,6 +1761,12 @@
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 11,
+                "locale_tag": "en-US-u-nu-fullwide",
+                "source": "android_java_text_gregorian_invariant"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 12,
                 "locale_tag": "ar-EG",
                 "source": "android_java_text_gregorian_invariant"
               }
@@ -1802,9 +1814,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "7ccf8f226b4f477f06f35db63ff6d06b5987d551a3033bce12a56bf4618dd4cf",
-          "database": "6dd0634bf6c7c64259524f46b560b4a2bf76fd8aa078835a55e78d394df7a7ef",
-          "gps_points": "d2263d157c38723e243f6ad7661423b5dc51be69cbc095339d9bf3959a0d31ab"
+          "activity": "5913c2199fa6717b70be91b6f4f772b3e9149e115c5243b419f71d6faf45aaeb",
+          "database": "89ad702ee9609b0f9a9b27b46a825f752b3122f26ead7881525bf4ab16f2572c",
+          "gps_points": "f1c064ac25adbfad27f770cc83d997cdef8290c5176e69914169daa7453b6fd7"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -1819,7 +1831,9 @@
           }
         },
         "points_per_activity": {
-          "1": 9,
+          "1": 8,
+          "11": 1,
+          "12": 1,
           "2": 2,
           "3": 2
         },
@@ -1863,38 +1877,54 @@
             "legacy_id": 7,
             "storage_type": "text",
             "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "２０２４０７０８０９１３１１",
+            "legacy_id": 11,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "𐒢𐒠𐒢𐒤𐒠𐒧𐒠𐒨𐒠𐒩𐒡𐒤𐒡𐒡",
+            "legacy_id": 12,
+            "storage_type": "text",
+            "table": "ACTIVITY"
           }
         ],
         "schema_logical_checksum": "5f38f05f8365c78e630dbf3771f627e7d77270de21edf5b69f90d9a039e7936f",
         "timestamps": {
           "activity": {
             "invalid_count": 8,
-            "max": "20240708091213",
+            "max": "２０２４０７０８０９１３１１",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 8,
-            "valid_count": 6
+            "null_count": 9,
+            "valid_count": 7
           },
           "all": {
             "invalid_count": 15,
-            "max": "20240708091213",
+            "max": "２０２４０７０８０９１３１２",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 8,
-            "valid_count": 12
+            "null_count": 9,
+            "valid_count": 14
           },
           "track_point": {
             "invalid_count": 7,
-            "max": "20240708091212",
+            "max": "２０２４０７０８０９１３１２",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
             "null_count": 0,
-            "valid_count": 6
+            "valid_count": 7
           }
         },
-        "track_point_rows": 13
+        "track_point_rows": 14
       },
       "expected_output": "expected/localized_timestamps.json",
       "name": "localized_timestamps",
       "storage": "standard",
-      "storage_canonical_checksum": "5ea349effdc979f591f573f616e9d7d7c2432c6f4de34ece321a0a417eca92a5"
+      "storage_canonical_checksum": "204a4f443525717d8e854c59f4f641f11ef30665ea037986641fe2d77b442070"
     },
     {
       "android_locale": "en_US",
@@ -1907,9 +1937,9 @@
       ],
       "database": "fixtures/formatter_digit_blocks.db",
       "database_identity": "synthetic:sport-logger:legacy:formatter_digit_blocks:v1",
-      "description": "One activity and point for every Unicode Nd digit block emitted by Android java.text.SimpleDateFormat across the API26/API36 available-locale union plus the probed Thai numbering control.",
+      "description": "One activity and point for every Unicode Nd digit block emitted by Android java.text.SimpleDateFormat after probing every ICU numbering-system candidate on API26 and API36.",
       "expected": {
-        "activity_rows": 10,
+        "activity_rows": 37,
         "calendar_evidence": {
           "calendar": "gregory",
           "calendar_class": "java.util.GregorianCalendar",
@@ -1921,61 +1951,223 @@
             {
               "calendar": "gregory",
               "legacy_activity_id": 1,
-              "locale_tag": "af",
+              "locale_tag": "en-US-u-nu-latn",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
-              "locale_tag": "ar",
+              "locale_tag": "en-US-u-nu-arab",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 3,
-              "locale_tag": "fa",
+              "locale_tag": "en-US-u-nu-arabext",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 4,
-              "locale_tag": "nqo",
+              "locale_tag": "en-US-u-nu-nkoo",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 5,
-              "locale_tag": "mr",
+              "locale_tag": "en-US-u-nu-deva",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 6,
-              "locale_tag": "as",
+              "locale_tag": "en-US-u-nu-beng",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 7,
-              "locale_tag": "th-TH-u-nu-thai",
+              "locale_tag": "en-US-u-nu-guru",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 8,
-              "locale_tag": "dz",
+              "locale_tag": "en-US-u-nu-gujr",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 9,
-              "locale_tag": "my",
+              "locale_tag": "en-US-u-nu-orya",
               "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 10,
-              "locale_tag": "sat",
+              "locale_tag": "en-US-u-nu-tamldec",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 11,
+              "locale_tag": "en-US-u-nu-telu",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 12,
+              "locale_tag": "en-US-u-nu-knda",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 13,
+              "locale_tag": "en-US-u-nu-mlym",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 14,
+              "locale_tag": "en-US-u-nu-sinh",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 15,
+              "locale_tag": "en-US-u-nu-thai",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 16,
+              "locale_tag": "en-US-u-nu-laoo",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 17,
+              "locale_tag": "en-US-u-nu-tibt",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 18,
+              "locale_tag": "en-US-u-nu-mymr",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 19,
+              "locale_tag": "en-US-u-nu-mymrshan",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 20,
+              "locale_tag": "en-US-u-nu-khmr",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 21,
+              "locale_tag": "en-US-u-nu-mong",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 22,
+              "locale_tag": "en-US-u-nu-limb",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 23,
+              "locale_tag": "en-US-u-nu-talu",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 24,
+              "locale_tag": "en-US-u-nu-lana",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 25,
+              "locale_tag": "en-US-u-nu-lanatham",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 26,
+              "locale_tag": "en-US-u-nu-bali",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 27,
+              "locale_tag": "en-US-u-nu-sund",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 28,
+              "locale_tag": "en-US-u-nu-lepc",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 29,
+              "locale_tag": "en-US-u-nu-olck",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 30,
+              "locale_tag": "en-US-u-nu-vaii",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 31,
+              "locale_tag": "en-US-u-nu-saur",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 32,
+              "locale_tag": "en-US-u-nu-kali",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 33,
+              "locale_tag": "en-US-u-nu-java",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 34,
+              "locale_tag": "en-US-u-nu-mymrtlng",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 35,
+              "locale_tag": "en-US-u-nu-cham",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 36,
+              "locale_tag": "en-US-u-nu-mtei",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 37,
+              "locale_tag": "en-US-u-nu-fullwide",
               "source": "android_api26_api36_formatter_probe"
             }
           ],
@@ -1985,15 +2177,15 @@
         },
         "canonical": {
           "orphan_track_points": 0,
-          "partial_sessions": 10,
+          "partial_sessions": 37,
           "rejected_activity_rows": 0,
           "rejected_track_point_rows": 0,
-          "sessions": 10,
-          "source_activity_rows": 10,
-          "source_track_point_rows": 10,
-          "track_points": 10
+          "sessions": 37,
+          "source_activity_rows": 37,
+          "source_track_point_rows": 37,
+          "track_points": 37
         },
-        "canonical_output_logical_checksum": "cd2a46835b16c80720d07e22180cc49aeb67cbbc6d7762c03ea954579384bbed",
+        "canonical_output_logical_checksum": "3803bc9765baf12020ef8b18ae27abd6e722e9c408a60ef968e752d53f419e5e",
         "diagnostics": {
           "calendar": {
             "calendar": "gregory",
@@ -2006,61 +2198,223 @@
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
-                "locale_tag": "af",
+                "locale_tag": "en-US-u-nu-latn",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
-                "locale_tag": "ar",
+                "locale_tag": "en-US-u-nu-arab",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 3,
-                "locale_tag": "fa",
+                "locale_tag": "en-US-u-nu-arabext",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 4,
-                "locale_tag": "nqo",
+                "locale_tag": "en-US-u-nu-nkoo",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 5,
-                "locale_tag": "mr",
+                "locale_tag": "en-US-u-nu-deva",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 6,
-                "locale_tag": "as",
+                "locale_tag": "en-US-u-nu-beng",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 7,
-                "locale_tag": "th-TH-u-nu-thai",
+                "locale_tag": "en-US-u-nu-guru",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 8,
-                "locale_tag": "dz",
+                "locale_tag": "en-US-u-nu-gujr",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 9,
-                "locale_tag": "my",
+                "locale_tag": "en-US-u-nu-orya",
                 "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 10,
-                "locale_tag": "sat",
+                "locale_tag": "en-US-u-nu-tamldec",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 11,
+                "locale_tag": "en-US-u-nu-telu",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 12,
+                "locale_tag": "en-US-u-nu-knda",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 13,
+                "locale_tag": "en-US-u-nu-mlym",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 14,
+                "locale_tag": "en-US-u-nu-sinh",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 15,
+                "locale_tag": "en-US-u-nu-thai",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 16,
+                "locale_tag": "en-US-u-nu-laoo",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 17,
+                "locale_tag": "en-US-u-nu-tibt",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 18,
+                "locale_tag": "en-US-u-nu-mymr",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 19,
+                "locale_tag": "en-US-u-nu-mymrshan",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 20,
+                "locale_tag": "en-US-u-nu-khmr",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 21,
+                "locale_tag": "en-US-u-nu-mong",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 22,
+                "locale_tag": "en-US-u-nu-limb",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 23,
+                "locale_tag": "en-US-u-nu-talu",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 24,
+                "locale_tag": "en-US-u-nu-lana",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 25,
+                "locale_tag": "en-US-u-nu-lanatham",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 26,
+                "locale_tag": "en-US-u-nu-bali",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 27,
+                "locale_tag": "en-US-u-nu-sund",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 28,
+                "locale_tag": "en-US-u-nu-lepc",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 29,
+                "locale_tag": "en-US-u-nu-olck",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 30,
+                "locale_tag": "en-US-u-nu-vaii",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 31,
+                "locale_tag": "en-US-u-nu-saur",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 32,
+                "locale_tag": "en-US-u-nu-kali",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 33,
+                "locale_tag": "en-US-u-nu-java",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 34,
+                "locale_tag": "en-US-u-nu-mymrtlng",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 35,
+                "locale_tag": "en-US-u-nu-cham",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 36,
+                "locale_tag": "en-US-u-nu-mtei",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 37,
+                "locale_tag": "en-US-u-nu-fullwide",
                 "source": "android_api26_api36_formatter_probe"
               }
             ],
@@ -2071,7 +2425,7 @@
           "data_state": "contains_business_rows",
           "ordering": {
             "activity_rows_ordered_by_64_bit_id": true,
-            "duplicate_track_point_timestamp_rows": 9,
+            "duplicate_track_point_timestamp_rows": 36,
             "non_monotonic_track_point_timestamp_transitions": 0,
             "track_point_rows_ordered_by_64_bit_id": true
           },
@@ -2107,9 +2461,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "9ec226782db8f6e88bf0b3b34085c9f9e0709e7461c7c381b224ffa9c01f484c",
-          "database": "c0c1b77aee7a1ce9b268a967e8b2bfb9403472f2823e42f120325e205b0848bd",
-          "gps_points": "fbce236f2b1dc2ed983e87688e0ec05c3c33f26e1e95d2f9d9c21d839bf77c74"
+          "activity": "e4d441f2161e4eaad6e8e9d7b80d6a2833c2f6d07fd9621f79e182fe42091c70",
+          "database": "b5747fde77005c39f2028282642c7c87760a3b84582608c84a0797917ed94776",
+          "gps_points": "81090cef88f61b23153fb3d6fe5f8f12fe0bbe34ddf0a1a5f791d12097a045f4"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -2126,8 +2480,35 @@
         "points_per_activity": {
           "1": 1,
           "10": 1,
+          "11": 1,
+          "12": 1,
+          "13": 1,
+          "14": 1,
+          "15": 1,
+          "16": 1,
+          "17": 1,
+          "18": 1,
+          "19": 1,
           "2": 1,
+          "20": 1,
+          "21": 1,
+          "22": 1,
+          "23": 1,
+          "24": 1,
+          "25": 1,
+          "26": 1,
+          "27": 1,
+          "28": 1,
+          "29": 1,
           "3": 1,
+          "30": 1,
+          "31": 1,
+          "32": 1,
+          "33": 1,
+          "34": 1,
+          "35": 1,
+          "36": 1,
+          "37": 1,
           "4": 1,
           "5": 1,
           "6": 1,
@@ -2187,7 +2568,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+            "expected": "੨੦੨੪੦੭੦੮੦੯੧੦੧੧",
             "legacy_id": 7,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2195,7 +2576,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "༢༠༢༤༠༧༠༨༠༩༡༠༡༡",
+            "expected": "૨૦૨૪૦૭૦૮૦૯૧૦૧૧",
             "legacy_id": 8,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2203,7 +2584,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "၂၀၂၄၀၇၀၈၀၉၁၀၁၁",
+            "expected": "୨୦୨୪୦୭୦୮୦୯୧୦୧୧",
             "legacy_id": 9,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2211,8 +2592,224 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑",
+            "expected": "௨௦௨௪௦௭௦௮௦௯௧௦௧௧",
             "legacy_id": 10,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "౨౦౨౪౦౭౦౮౦౯౧౦౧౧",
+            "legacy_id": 11,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "೨೦೨೪೦೭೦೮೦೯೧೦೧೧",
+            "legacy_id": 12,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "൨൦൨൪൦൭൦൮൦൯൧൦൧൧",
+            "legacy_id": 13,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "෨෦෨෪෦෭෦෮෦෯෧෦෧෧",
+            "legacy_id": 14,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+            "legacy_id": 15,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "໒໐໒໔໐໗໐໘໐໙໑໐໑໑",
+            "legacy_id": 16,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "༢༠༢༤༠༧༠༨༠༩༡༠༡༡",
+            "legacy_id": 17,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "၂၀၂၄၀၇၀၈၀၉၁၀၁၁",
+            "legacy_id": 18,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "႒႐႒႔႐႗႐႘႐႙႑႐႑႑",
+            "legacy_id": 19,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "២០២៤០៧០៨០៩១០១១",
+            "legacy_id": 20,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᠒᠐᠒᠔᠐᠗᠐᠘᠐᠙᠑᠐᠑᠑",
+            "legacy_id": 21,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᥈᥆᥈᥊᥆᥍᥆᥎᥆᥏᥇᥆᥇᥇",
+            "legacy_id": 22,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᧒᧐᧒᧔᧐᧗᧐᧘᧐᧙᧑᧐᧑᧑",
+            "legacy_id": 23,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᪂᪀᪂᪄᪀᪇᪀᪈᪀᪉᪁᪀᪁᪁",
+            "legacy_id": 24,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᪒᪐᪒᪔᪐᪗᪐᪘᪐᪙᪑᪐᪑᪑",
+            "legacy_id": 25,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᭒᭐᭒᭔᭐᭗᭐᭘᭐᭙᭑᭐᭑᭑",
+            "legacy_id": 26,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᮲᮰᮲᮴᮰᮷᮰᮸᮰᮹᮱᮰᮱᮱",
+            "legacy_id": 27,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᱂᱀᱂᱄᱀᱇᱀᱈᱀᱉᱁᱀᱁᱁",
+            "legacy_id": 28,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑",
+            "legacy_id": 29,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꘢꘠꘢꘤꘠꘧꘠꘨꘠꘩꘡꘠꘡꘡",
+            "legacy_id": 30,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꣒꣐꣒꣔꣐꣗꣐꣘꣐꣙꣑꣐꣑꣑",
+            "legacy_id": 31,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꤂꤀꤂꤄꤀꤇꤀꤈꤀꤉꤁꤀꤁꤁",
+            "legacy_id": 32,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꧒꧐꧒꧔꧐꧗꧐꧘꧐꧙꧑꧐꧑꧑",
+            "legacy_id": 33,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꧲꧰꧲꧴꧰꧷꧰꧸꧰꧹꧱꧰꧱꧱",
+            "legacy_id": 34,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꩒꩐꩒꩔꩐꩗꩐꩘꩐꩙꩑꩐꩑꩑",
+            "legacy_id": 35,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "꯲꯰꯲꯴꯰꯷꯰꯸꯰꯹꯱꯰꯱꯱",
+            "legacy_id": 36,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "２０２４０７０８０９１０１１",
+            "legacy_id": 37,
             "storage_type": "text",
             "table": "ACTIVITY"
           }
@@ -2223,30 +2820,30 @@
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
-            "null_count": 10,
-            "valid_count": 10
+            "null_count": 37,
+            "valid_count": 37
           },
           "all": {
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
-            "null_count": 10,
-            "valid_count": 20
+            "null_count": 37,
+            "valid_count": 74
           },
           "track_point": {
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
             "null_count": 0,
-            "valid_count": 10
+            "valid_count": 37
           }
         },
-        "track_point_rows": 10
+        "track_point_rows": 37
       },
       "expected_output": "expected/formatter_digit_blocks.json",
       "name": "formatter_digit_blocks",
       "storage": "standard",
-      "storage_canonical_checksum": "f2bd5d34f9dea1b6c78fa3b31e7a4173a992630cd67f3d012a253dbafa858edd"
+      "storage_canonical_checksum": "8041c0ca111550d83a71b062929f2a7862afacdafce3c0c5a7fb99272da44cd3"
     },
     {
       "android_locale": "th_TH_#u-nu-thai",
@@ -3443,30 +4040,157 @@
   "formatter_oracle": {
     "calendar_class": "java.util.GregorianCalendar",
     "calendar_type": "gregory",
+    "candidate_definition_supplementary_zero_code_points": [
+      "U+104A0",
+      "U+10D30",
+      "U+10D40",
+      "U+11066",
+      "U+110F0",
+      "U+11136",
+      "U+111D0",
+      "U+112F0",
+      "U+11450",
+      "U+114D0",
+      "U+11650",
+      "U+116C0",
+      "U+116D0",
+      "U+116DA",
+      "U+11730",
+      "U+118E0",
+      "U+11950",
+      "U+11BF0",
+      "U+11C50",
+      "U+11D50",
+      "U+11DA0",
+      "U+11F50",
+      "U+16130",
+      "U+16A60",
+      "U+16AC0",
+      "U+16B50",
+      "U+16D70",
+      "U+1CCF0",
+      "U+1D7CE",
+      "U+1D7D8",
+      "U+1D7E2",
+      "U+1D7EC",
+      "U+1D7F6",
+      "U+1E140",
+      "U+1E2F0",
+      "U+1E4F0",
+      "U+1E5F1",
+      "U+1E950",
+      "U+1FBF0"
+    ],
     "candidate_fixture": "formatter_digit_blocks",
     "evidence": [
       {
+        "abi": "x86_64",
         "api_level": 26,
         "available_locale_count": 710,
+        "build_fingerprint": "Android/sdk_gphone_x86_64/generic_x86_64:8.0.0/OSR1.180418.026/6741039:userdebug/dev-keys",
+        "build_tools_package": "build-tools;36.0.0",
+        "build_tools_revision": "36.0.0",
+        "cldr_version": "30.0.3.0",
+        "compile_sdk_package": "platforms;android-36",
+        "compile_sdk_revision": "2.0.0",
+        "emitted_digit_block_count": 37,
+        "emulator_acceleration": "off",
+        "emulator_package": "emulator",
+        "emulator_package_revision": "36.6.11",
+        "emulator_version": "36.6.11.0",
         "file": "AndroidLocaleTimestampProbe.api26.tsv",
-        "locale_rows_sha256": "12ff0cc92e4de3e03534b7c42b502b99e8d7ac588c752b263824dc4e6c8467c6",
+        "fixed_instants_utc": [
+          "2000-02-29T12:34:56.789Z",
+          "2024-07-08T09:10:11.123Z",
+          "2032-02-29T23:59:59.999Z",
+          "2567-07-08T09:10:11.123Z"
+        ],
+        "formatter_pattern": "yyyy-MM-dd HH:mm:ss.SSS",
+        "icu_version": "58.2.0.0",
+        "java_runtime_version": "0.9",
+        "java_version": "0",
+        "java_vm_name": "Dalvik",
+        "java_vm_version": "2.1.0",
+        "legacy_pattern": "yyyyMMddHHmmss",
+        "locale_rows_sha256": "d11a12e4c3dd62ec7e2fca5ecefe61f368ecd1c13d185b0959e2fdc3e929d924",
+        "numbering_candidate_count": 77,
+        "numbering_candidate_failure_count": 40,
+        "numbering_candidate_instant_utc": "2024-07-08T09:10:11.123Z",
+        "numbering_candidate_names_sha256": "0db8f4ff3f214e86b2e11647143aaed0c72c5cbd63d22750a8117c50e3243a8a",
+        "numbering_candidate_native_crash_count": 18,
+        "numbering_candidate_source": "android.icu.text.NumberingSystem.getAvailableNames",
+        "numbering_candidate_success_count": 37,
+        "numbering_candidate_version": "ICU-58.2.0.0",
         "release": "8.0.0",
-        "sha256": "c0132a43f9a23a2a2856e848e7ee5d10f5185932043f202bbd3016fa95f7a23d"
+        "sha256": "2e6d916117c7050c5702f269cc387af9f1db5286cbe65eddbfd3f2b02467e2e7",
+        "supported_abis": "x86_64,x86",
+        "system_image_package": "system-images;android-26;google_apis;x86_64",
+        "system_image_revision": "16.0.0",
+        "timezone": "UTC",
+        "unicode_version": "9.0.0.0"
       },
       {
+        "abi": "x86_64",
         "api_level": 36,
         "available_locale_count": 881,
+        "build_fingerprint": "google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys",
+        "build_tools_package": "build-tools;36.0.0",
+        "build_tools_revision": "36.0.0",
+        "cldr_version": "46.0.0.0",
+        "compile_sdk_package": "platforms;android-36",
+        "compile_sdk_revision": "2.0.0",
+        "emitted_digit_block_count": 37,
+        "emulator_acceleration": "off",
+        "emulator_package": "emulator",
+        "emulator_package_revision": "36.6.11",
+        "emulator_version": "36.6.11.0",
         "file": "AndroidLocaleTimestampProbe.api36.tsv",
-        "locale_rows_sha256": "b53a8fb0f2686af24f282eafaaf82b43dd6f7ee4b4b311c1820d130cb7f4fd62",
+        "fixed_instants_utc": [
+          "2000-02-29T12:34:56.789Z",
+          "2024-07-08T09:10:11.123Z",
+          "2032-02-29T23:59:59.999Z",
+          "2567-07-08T09:10:11.123Z"
+        ],
+        "formatter_pattern": "yyyy-MM-dd HH:mm:ss.SSS",
+        "icu_version": "76.1.0.0",
+        "java_runtime_version": "0.9",
+        "java_version": "0",
+        "java_vm_name": "Dalvik",
+        "java_vm_version": "2.1.0",
+        "legacy_pattern": "yyyyMMddHHmmss",
+        "locale_rows_sha256": "68c1f18354c6163af1b5cfd27613c7b373bb06e10d5c3b39984c226e621e222e",
+        "numbering_candidate_count": 96,
+        "numbering_candidate_failure_count": 20,
+        "numbering_candidate_instant_utc": "2024-07-08T09:10:11.123Z",
+        "numbering_candidate_names_sha256": "3e5f3860817d257311d2ec33fe547abff81de3269cda749d334cdafc1c3ad202",
+        "numbering_candidate_native_crash_count": 0,
+        "numbering_candidate_source": "android.icu.text.NumberingSystem.getAvailableNames",
+        "numbering_candidate_success_count": 76,
+        "numbering_candidate_version": "ICU-76.1.0.0",
         "release": "16",
-        "sha256": "eb060dc423c9eb7a29221205faa0b576c550eab1d5c5b2eef38825cabad24810"
+        "sha256": "c05aa33dd782cab7146b1c04847d2f2f358945fa482584ffeed3bbdbee51840a",
+        "supported_abis": "x86_64,arm64-v8a",
+        "system_image_package": "system-images;android-36;google_apis;x86_64",
+        "system_image_revision": "7.0.0",
+        "timezone": "UTC",
+        "unicode_version": "16.0.0.0"
       }
     ],
     "legacy_pattern": "yyyyMMddHHmmss",
     "platform": "Android",
-    "platform_union_policy": "union_of_api26_api36_available_locale_outputs_plus_probed_thai_numbering_control",
+    "platform_union_policy": "union_of_decimal_blocks_actually_emitted_by_every_android_icu_numbering_candidate_on_api26_and_api36",
+    "probe_runner": "run_android_formatter_probe.py",
+    "probe_runner_command": "python3 tools/legacy-fixtures/run_android_formatter_probe.py --compare",
+    "probe_runner_exact_command_sequence_source": "the byte-pinned run_android_formatter_probe.py source",
+    "probe_runner_required_environment": [
+      "ANDROID_SDK_ROOT",
+      "ANDROID_AVD_HOME",
+      "JAVA_HOME"
+    ],
+    "probe_runner_sha256": "738a95f767ed23d82f1bb1dfeea51ec3e41b9f836225f7348aa6e648e1b812d3",
+    "probe_runner_update_command": "python3 tools/legacy-fixtures/run_android_formatter_probe.py --update",
     "probe_source": "AndroidLocaleTimestampProbeTest.java",
-    "probe_source_sha256": "dc9cec0cdf72e975fe19ed97779ba1fe75563fc94574cc2c02b446920f4c0998",
+    "probe_source_sha256": "3ad88ddd9ec4f061bfdd041aba2f55973c00e78b973abd7a33105bd6831735e4",
     "source_emittable_digit_zero_code_points": [
       "U+0030",
       "U+0660",
@@ -3474,11 +4198,41 @@
       "U+07C0",
       "U+0966",
       "U+09E6",
+      "U+0A66",
+      "U+0AE6",
+      "U+0B66",
+      "U+0BE6",
+      "U+0C66",
+      "U+0CE6",
+      "U+0D66",
+      "U+0DE6",
       "U+0E50",
+      "U+0ED0",
       "U+0F20",
       "U+1040",
-      "U+1C50"
+      "U+1090",
+      "U+17E0",
+      "U+1810",
+      "U+1946",
+      "U+19D0",
+      "U+1A80",
+      "U+1A90",
+      "U+1B50",
+      "U+1BB0",
+      "U+1C40",
+      "U+1C50",
+      "U+A620",
+      "U+A8D0",
+      "U+A900",
+      "U+A9D0",
+      "U+A9F0",
+      "U+AA50",
+      "U+ABF0",
+      "U+FF10"
     ],
+    "source_emittable_supplementary_zero_code_points": [],
+    "source_proven_format_control_layouts": {},
+    "timestamp_parser": "code_point_aware_single_evidenced_contiguous_decimal_block_with_only_source_proven_control_layouts",
     "writer": "java.text.SimpleDateFormat"
   },
   "logical_checksum_algorithm": "SHA-256 over ordered table rows; each SQLite value is type-tagged, REAL values use exact IEEE-754 float.hex(), and table hashes are combined in ACTIVITY/GPS_POINTS order",

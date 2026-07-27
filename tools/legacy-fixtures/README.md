@@ -15,7 +15,7 @@ python3 tools/legacy-fixtures/legacy_fixtures.py verify-formatter-evidence
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 56 declared defect detectors. Version- or build-specific detectors that
+# all 60 declared defect detectors. Version- or build-specific detectors that
 # cannot run on the connected SQLite engine are reported as not applicable.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
@@ -35,9 +35,9 @@ The fixture tool uses only Python's standard-library `sqlite3`, `json`,
 committed formatter evidence; normal generation and verification consume the
 sanitized TSVs and bundle no SQLite engine.
 
-Current counted reality is 18 fixtures and 42 regeneration artifacts: 22
+Current counted reality is 18 fixtures and 43 regeneration artifacts: 23
 exact-byte UTF-8/LF text artifacts, 14 logical standard databases, and 6
-canonical non-standard SQLite artifacts. The verifier defines 56 defect
+canonical non-standard SQLite artifacts. The verifier defines 60 defect
 detectors and reports separate applicable and not-applicable counts for the
 connected SQLite runtime. The standard-library suite contains 24 tests.
 
@@ -59,6 +59,9 @@ connected SQLite runtime. The standard-library suite contains 24 tests.
 - `AndroidLocaleTimestampProbeTest.java` — exact instrumentation source that
   records fixed instants, calendar class/type, numbering output, default
   constructor behavior, and strict parse round-trips.
+- `run_android_formatter_probe.py` — byte-pinned, repository-relative builder
+  and sequential software-emulator runner for regenerating or comparing both
+  evidence files.
 
 The JSON output is a test interchange format, not a production Room schema.
 Integer comparison is exact above `2^53`. Canonical JSON floating-point values
@@ -107,10 +110,10 @@ The representative build matrix used by the unit contract is:
 
 | Runtime/build capabilities | Schema cases | Real profile decisions | Applicable/N/A detectors |
 |---|---:|---:|---:|
-| 3.18.2 / API26-style FTS4, no FTS5 | 9 | 2 | 54 / 2 |
-| 3.26.0 / FTS4, no FTS5 | 9 | 4 | 54 / 2 |
-| 3.32.0 / FTS4 + FTS5 | 11 | 4 | 56 / 0 |
-| 3.33+ / FTS4 + FTS5 | 11 | 6 | 56 / 0 |
+| 3.18.2 / API26-style FTS4, no FTS5 | 9 | 2 | 58 / 2 |
+| 3.26.0 / FTS4, no FTS5 | 9 | 4 | 58 / 2 |
+| 3.32.0 / FTS4 + FTS5 | 11 | 4 | 60 / 0 |
+| 3.33+ / FTS4 + FTS5 | 11 | 6 | 60 / 0 |
 
 Those are capability-profile expectations, not assumptions about arbitrary
 desktop builds. For example, a 3.32 build without FTS5 reports that one
@@ -146,51 +149,76 @@ oracle is grounded in Android rather than desktop Java:
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-formatter-evidence
 ```
 
-`AndroidLocaleTimestampProbeTest.java` enumerates every available locale and
-uses Android
+`AndroidLocaleTimestampProbeTest.java` enumerates every available locale and the
+complete sorted result of
+`android.icu.text.NumberingSystem.getAvailableNames()`. Every numbering
+candidate is probed in its own instrumentation process, with one retry for an
+otherwise empty infrastructure result. APK installation also gets one bounded
+retry. An API26 native ICU crash or a transient software-emulator operation
+therefore cannot silently truncate the matrix. The test uses Android
 `SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", locale)` plus the legacy
-`yyyyMMddHHmmss` pattern at four fixed UTC instants (years 2000, 2024, 2032,
-and 2567). It records calendar class/type, localized decimal output,
-`1234567890`, the default-constructor result, and strict parse round-trip epoch.
-The committed TSVs were reproduced byte-for-byte on the software-emulated AVDs
-`SportLoggerPhoneApi26` and `SportLoggerPhoneApi36`, started sequentially with
-`-accel off`; their SHA-256 values are pinned in the generator. The files contain
-no serial, AVD name, host path, username, or wall-clock value.
+`yyyyMMddHHmmss` pattern at fixed UTC instants in years 2000, 2024, 2032, and
+2567. It records the candidate definition, calendar class/type, localized
+decimal output, `1234567890`, default-constructor behavior, and strict
+full-consumption parse round-trip epoch.
 
-To reproduce, copy the probe source unchanged into a disposable AndroidX
-instrumentation app, start one AVD at a time with:
+Pinned provenance:
+
+| API | System image package / revision | Build fingerprint | ABI | ICU / Unicode / CLDR |
+|---|---|---|---|---|
+| 26 | `system-images;android-26;google_apis;x86_64` / `16.0.0` | `Android/sdk_gphone_x86_64/generic_x86_64:8.0.0/OSR1.180418.026/6741039:userdebug/dev-keys` | `x86_64` | `58.2.0.0` / `9.0.0.0` / `30.0.3.0` |
+| 36 | `system-images;android-36;google_apis;x86_64` / `7.0.0` | `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys` | `x86_64` | `76.1.0.0` / `16.0.0.0` / `46.0.0.0` |
+
+Both runs use emulator package revision `36.6.11` (reported version
+`36.6.11.0`), compile SDK `platforms;android-36` revision `2.0.0`, build tools
+`36.0.0`, UTC, and software emulation. The TSV metadata also pins supported
+ABIs, Java VM/runtime versions, patterns, fixed instants, candidate-set count
+and hash, available-locale count and hash, and the exact repository command.
+
+`run_android_formatter_probe.py` is the byte-pinned command sequence. It
+verifies every SDK revision, requires exactly one AVD for each pinned image,
+builds and signs disposable target/test APKs without Gradle, boots API26 then
+API36 sequentially with `-read-only -accel off`, installs and runs the probe,
+compares exact TSV bytes, uninstalls the apps, stops each emulator, and removes
+all generated build material. No AVD name, serial, host path, wall-clock capture
+time, or device credential is written to the TSVs, and no APK, keystore,
+userdata, or emulator log is retained.
 
 ```bash
-ANDROID_AVD_HOME=/data/android-avd/sport-logger \
-  /data/android-sdk/emulator/emulator \
-  -avd SportLoggerPhoneApi26 -no-window -no-audio -no-boot-anim \
-  -no-snapshot-load -no-snapshot-save -accel off
+export ANDROID_SDK_ROOT=/path/to/android-sdk
+export ANDROID_AVD_HOME=/path/to/avd-home
+export JAVA_HOME=/path/to/jdk-17-or-newer
 
-# Run only AndroidLocaleTimestampProbeTest, then preserve the exact bytes:
-adb -s <serial> exec-out run-as <target-package> \
-  cat files/android-locale-timestamp-probe.tsv \
-  > tools/legacy-fixtures/AndroidLocaleTimestampProbe.api26.tsv
+# Rebuild/install/run and fail if either committed TSV differs.
+python3 tools/legacy-fixtures/run_android_formatter_probe.py --compare
+
+# Maintainer-only regeneration; verify and review the resulting bytes.
+python3 tools/legacy-fixtures/run_android_formatter_probe.py --update
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-formatter-evidence
 ```
 
-Repeat with `SportLoggerPhoneApi36` and the `.api36.tsv` destination, stop the
-first emulator before starting the second, then run the formatter-evidence
-gate. Disposable apps, APKs, keystores, and build output are not retained.
-
-API 26 exposes seven available-locale digit blocks; API 36 adds N'Ko and Ol
-Chiki; explicit Thai numbering controls add Thai digits on both. The conservative
-union is:
+API26 reports 77 candidates: 37 successful observations and 40 isolated
+failures, including 18 native process crashes. API36 reports 96 candidates: 76
+successful observations and 20 caught failures. Both platforms actually emit
+the same conservative union of 37 contiguous decimal blocks:
 
 ```text
-U+0030 U+0660 U+06F0 U+07C0 U+0966
-U+09E6 U+0E50 U+0F20 U+1040 U+1C50
+U+0030 U+0660 U+06F0 U+07C0 U+0966 U+09E6 U+0A66 U+0AE6 U+0B66 U+0BE6
+U+0C66 U+0CE6 U+0D66 U+0DE6 U+0E50 U+0ED0 U+0F20 U+1040 U+1090 U+17E0
+U+1810 U+1946 U+19D0 U+1A80 U+1A90 U+1B50 U+1BB0 U+1C40 U+1C50 U+A620
+U+A8D0 U+A900 U+A9D0 U+A9F0 U+AA50 U+ABF0 U+FF10
 ```
 
-`formatter_digit_blocks` commits one activity and point for every union member:
-ASCII, Arabic-Indic, Extended Arabic-Indic, N'Ko, Devanagari, Bengali, Thai,
-Tibetan, Myanmar, and Ol Chiki. Arbitrary Unicode `Nd` blocks such as fullwidth
-digits remain unsupported because neither probed Android platform emits them.
-The omission detector removes each represented block in turn and requires every
-candidate to fail.
+This includes fullwidth digits. API36 defines 39 supplementary-plane decimal
+blocks, including Osmanya, but this `java.text` formatter falls back to ASCII
+for them; no supplementary block is source-emitted on either pinned platform.
+The parser is nevertheless code-point-aware and its synthetic detector proves
+that a future evidenced supplementary block is handled without splitting
+surrogate pairs. Digit values come from evidenced contiguous ranges rather than
+the host Python Unicode database, so Unicode 16 definitions remain testable on
+a Unicode 15 host. `formatter_digit_blocks` commits one activity and point for
+each emitted block. A separate Osmanya row proves that a defined-but-not-emitted
+block remains unsupported.
 
 Every API26/API36 available-locale signature and every Thai control—including
 locale tags requesting `ca-buddhist`—uses
@@ -206,14 +234,18 @@ See
 and
 [`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
 contracts. Current `android_metadata` can change on reopen and is not used to
-select a row's digit block. Validation preserves source text, maps only the
-finite Android-emittable block to ASCII in a temporary buffer, requires exactly
-14 digits from one block, and applies strict Gregorian fields. Mixed blocks,
-separators, bidi/format controls, non-`Nd` lookalikes, impossible dates, invalid
-times, and unsupported `Nd` blocks remain rejected.
+select a row's digit block. Validation preserves source text, maps only one
+known contiguous source-emitted block to ASCII in a temporary buffer, requires
+exactly 14 digit code points, permits only source-proven format-control layouts
+(none are emitted by the pinned matrix), and applies strict Gregorian fields.
+Mixed blocks, separators, unproven bidi/format controls, digit-like non-decimal
+characters, impossible dates, invalid times, and unsupported `Nd` blocks remain
+rejected.
 
 Candidate detectors prove desktop-JDK Buddhist assumptions, year
-magnitude/fixed-offset conversion, a one-year lookup, omission of any Android
+magnitude/fixed-offset conversion, a one-year lookup, the old hardcoded
+10-block oracle, fullwidth omission, UTF-16-character/BMP-only candidate
+handling, supplementary-definition omission, omission of any emitted Android
 block, current-metadata coupling, mixed-block acceptance, unsupported-block
 acceptance, and format-control stripping all fail.
 
@@ -235,12 +267,13 @@ counter mismatches are corruption. The SQLite writer-version field alone is
 informational and may vary; structure, schema, page payload, and damage bytes
 remain contractual.
 
-The 18 expected JSON files, `manifest.json`, the probe source, and both Android
-evidence TSVs are the 22 true exact-byte artifacts. `write_json()` emits UTF-8
-bytes with LF and one terminal newline on every host, while `.gitattributes`
-enforces LF for fixture text. Determinism tests prove CRLF drift fails and
-harmless writer-version-only variation passes while illegal header semantics,
-page, schema, payload, WAL, formatter evidence, and corruption changes fail.
+The 18 expected JSON files, `manifest.json`, the probe source, runner, and both
+Android evidence TSVs are the 23 true exact-byte artifacts. `write_json()` emits
+UTF-8 bytes with LF and one terminal newline on every host, while
+`.gitattributes` enforces LF for fixture text. Determinism tests prove CRLF drift
+fails and harmless writer-version-only variation passes while illegal header
+semantics, page, schema, payload, WAL, formatter evidence, and corruption
+changes fail.
 
 ## Active WAL snapshot
 

@@ -3,6 +3,7 @@
 
 import copy
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -53,7 +54,9 @@ EXPECTED_DEFECT_DETECTORS = {
     "duplicate_timestamp_collapsed",
     "float_precision_round_trip",
     "fts5_virtual_table_shadow_substitution",
+    "fullwidth_digit_block_omitted",
     "generated_column_hidden_from_table_info",
+    "hardcoded_ten_digit_block_oracle",
     "integer_truncation",
     "integer_precision_above_2_53",
     "json_crlf_drift",
@@ -80,6 +83,7 @@ EXPECTED_DEFECT_DETECTORS = {
     "truncated_sqlite_target_write",
     "unicode_format_controls_stripped",
     "unsupported_android_digit_block_accepted",
+    "utf16_character_only_candidate_parser",
     "virtual_table_shadow_substitution",
     "standard_database_logical_drift",
     "sqlite_change_counter_mismatch",
@@ -93,10 +97,51 @@ EXPECTED_DEFECT_DETECTORS = {
     "sqliteX_user_trigger_not_hidden",
     "sqliteX_user_view_not_hidden",
     "source_emittable_digit_block_omitted",
+    "supplementary_numbering_candidate_omitted",
     "wal_inconsistent_snapshot",
     "wal_shm_omitted",
     "wal_sidecars_ignored",
 }
+
+EXPECTED_FORMATTER_ZEROES = (
+    0x0030,
+    0x0660,
+    0x06F0,
+    0x07C0,
+    0x0966,
+    0x09E6,
+    0x0A66,
+    0x0AE6,
+    0x0B66,
+    0x0BE6,
+    0x0C66,
+    0x0CE6,
+    0x0D66,
+    0x0DE6,
+    0x0E50,
+    0x0ED0,
+    0x0F20,
+    0x1040,
+    0x1090,
+    0x17E0,
+    0x1810,
+    0x1946,
+    0x19D0,
+    0x1A80,
+    0x1A90,
+    0x1B50,
+    0x1BB0,
+    0x1C40,
+    0x1C50,
+    0xA620,
+    0xA8D0,
+    0xA900,
+    0xA9D0,
+    0xA9F0,
+    0xAA50,
+    0xABF0,
+    0xFF10,
+)
 
 
 class LegacyFixtureTests(unittest.TestCase):
@@ -134,7 +179,7 @@ class LegacyFixtureTests(unittest.TestCase):
         self.assertEqual(EXPECTED_FIXTURES, manifest_names)
         self.assertEqual(manifest_artifacts, disk_artifacts)
         self.assertEqual(
-            42,
+            43,
             len(legacy_fixtures.corpus_artifact_paths(TOOL_ROOT)),
         )
         self.assertFalse(
@@ -1153,6 +1198,10 @@ class LegacyFixtureTests(unittest.TestCase):
         bengali_timestamp = "২০২৪০৭০৮০৯১০১১"
         persian_timestamp = "۲۰۲۴۰۷۰۸۰۹۱۰۱۱"
         fullwidth_timestamp = "２０２４０７０８０９１０１１"
+        osmanya_timestamp = legacy_fixtures.localized_formatter_digits(
+            ascii_timestamp,
+            0x104A0,
+        )
         expected = datetime(2024, 7, 8, 9, 10, 11)
         evidence = legacy_fixtures.DEFAULT_GREGORIAN_CALENDAR_EVIDENCE
         unicode_nd_digits = [
@@ -1195,17 +1244,23 @@ class LegacyFixtureTests(unittest.TestCase):
                 evidence,
             ),
         )
-        self.assertIsNone(
+        self.assertEqual(
+            expected,
             legacy_fixtures.parse_evidenced_legacy_timestamp(
                 fullwidth_timestamp,
                 evidence,
-            )
+            ),
         )
         self.assertEqual(
-            "20240708091011",
+            ascii_timestamp,
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                fullwidth_timestamp
+            ),
+        )
+        self.assertIsNone(
             legacy_fixtures.normalized_legacy_timestamp_digits(
                 "٢٠٢٤٠٧٠٨09١٠١١"
-            ),
+            )
         )
         self.assertIsNone(
             legacy_fixtures.normalized_legacy_timestamp_digits(
@@ -1223,13 +1278,101 @@ class LegacyFixtureTests(unittest.TestCase):
         for character in unicode_nd_digits:
             with self.subTest(character=character):
                 decimal = unicodedata.decimal(character)
+                zero_code_point = ord(character) - decimal
                 localized = character * 14
+                normalized = (
+                    legacy_fixtures.normalized_legacy_timestamp_digits(
+                        localized
+                    )
+                )
+                if zero_code_point in EXPECTED_FORMATTER_ZEROES:
+                    self.assertEqual(str(decimal) * 14, normalized)
+                else:
+                    self.assertIsNone(normalized)
+
+        for zero_code_point in EXPECTED_FORMATTER_ZEROES:
+            with self.subTest(zero_code_point=zero_code_point):
+                localized = legacy_fixtures.localized_formatter_digits(
+                    ascii_timestamp,
+                    zero_code_point,
+                )
                 self.assertEqual(
-                    str(decimal) * 14,
+                    ascii_timestamp,
                     legacy_fixtures.normalized_legacy_timestamp_digits(
                         localized
                     ),
                 )
+                self.assertEqual(
+                    expected,
+                    legacy_fixtures.parse_evidenced_legacy_timestamp(
+                        localized,
+                        evidence,
+                    ),
+                )
+
+        self.assertEqual(14, len(osmanya_timestamp))
+        self.assertEqual(
+            28,
+            len(osmanya_timestamp.encode("utf-16-le")) // 2,
+        )
+        self.assertEqual(
+            ("20240708091011", 0x104A0, ""),
+            legacy_fixtures.legacy_timestamp_digit_components(
+                osmanya_timestamp,
+                (0x104A0,),
+                {0x104A0: frozenset({""})},
+            ),
+        )
+        self.assertIsNone(
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                osmanya_timestamp
+            )
+        )
+        self.assertIsNone(
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                osmanya_timestamp,
+                evidence,
+            )
+        )
+        unicode16_timestamp = legacy_fixtures.localized_formatter_digits(
+            ascii_timestamp,
+            0x1E5F1,
+        )
+        self.assertIn(
+            0x1E5F1,
+            legacy_fixtures.formatter_candidate_definition_zeroes(),
+        )
+        self.assertEqual(
+            (ascii_timestamp, 0x1E5F1, ""),
+            legacy_fixtures.legacy_timestamp_digit_components(
+                unicode16_timestamp,
+                (0x1E5F1,),
+                {0x1E5F1: frozenset({""})},
+            ),
+        )
+        self.assertIsNone(
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                unicode16_timestamp
+            )
+        )
+        controlled_timestamp = (
+            arabic_indic_timestamp[:8]
+            + "\u200f"
+            + arabic_indic_timestamp[8:]
+        )
+        self.assertEqual(
+            (ascii_timestamp, 0x0660, "8:U+200F"),
+            legacy_fixtures.legacy_timestamp_digit_components(
+                controlled_timestamp,
+                (0x0660,),
+                {0x0660: frozenset({"8:U+200F"})},
+            ),
+        )
+        self.assertIsNone(
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                controlled_timestamp
+            )
+        )
 
         invalid_values = {
             "impossible localized date": "٢٠٢٤٠٢٣٠٠١٠١٠١",
@@ -1276,61 +1419,160 @@ class LegacyFixtureTests(unittest.TestCase):
             {
                 "platform_count": 2,
                 "api_levels": [26, 36],
-                "digit_block_count": 10,
-                "detailed_row_count": 112,
+                "digit_block_count": 37,
+                "detailed_row_count": 161,
+                "numbering_candidate_count": 173,
+                "numbering_candidate_failure_count": 60,
+                "numbering_candidate_native_crash_count": 18,
+                "supplementary_emitted_digit_block_count": 0,
             },
             evidence_result,
         )
         matrix = legacy_fixtures.formatter_probe_matrix()
         blocks = matrix["candidate_digit_blocks"]
-        expected_zeroes = [
-            0x0030,
-            0x0660,
-            0x06F0,
-            0x07C0,
-            0x0966,
-            0x09E6,
-            0x0E50,
-            0x0F20,
-            0x1040,
-            0x1C50,
-        ]
+        expected_zeroes = list(EXPECTED_FORMATTER_ZEROES)
         self.assertEqual(
             expected_zeroes,
             [block["zero_code_point"] for block in blocks],
         )
-        self.assertNotIn(0xFF10, expected_zeroes)
+        self.assertIn(0xFF10, expected_zeroes)
         self.assertEqual(
             set(expected_zeroes),
             {
                 row["zero_code_point"]
                 for platform in matrix["platforms"]
-                for row in (
-                    *platform["signatures"],
-                    *platform["thai_controls"],
-                )
+                for row in platform["candidates"]
             },
         )
         self.assertEqual(
-            {
-                0x0030: (26, 36),
-                0x0660: (26, 36),
-                0x06F0: (26, 36),
-                0x07C0: (36,),
-                0x0966: (26, 36),
-                0x09E6: (26, 36),
-                0x0E50: (26, 36),
-                0x0F20: (26, 36),
-                0x1040: (26, 36),
-                0x1C50: (36,),
-            },
+            {zero_code_point: (26, 36) for zero_code_point in expected_zeroes},
             {
                 block["zero_code_point"]: block["api_levels"]
                 for block in blocks
             },
         )
 
+        expected_provenance = {
+            26: {
+                "release": "8.0.0",
+                "build_fingerprint": (
+                    "Android/sdk_gphone_x86_64/generic_x86_64:8.0.0/"
+                    "OSR1.180418.026/6741039:userdebug/dev-keys"
+                ),
+                "supported_abis": "x86_64,x86",
+                "system_image_package": (
+                    "system-images;android-26;google_apis;x86_64"
+                ),
+                "system_image_revision": "16.0.0",
+                "icu_version": "58.2.0.0",
+                "unicode_version": "9.0.0.0",
+                "cldr_version": "30.0.3.0",
+                "numbering_candidate_count": "77",
+                "numbering_candidate_names_sha256": (
+                    "0db8f4ff3f214e86b2e11647143aaed0c72c5cbd63d22750"
+                    "a8117c50e3243a8a"
+                ),
+            },
+            36: {
+                "release": "16",
+                "build_fingerprint": (
+                    "google/sdk_gphone64_x86_64/emu64xa:16/"
+                    "BE2A.250530.026.F3/13894323:userdebug/dev-keys"
+                ),
+                "supported_abis": "x86_64,arm64-v8a",
+                "system_image_package": (
+                    "system-images;android-36;google_apis;x86_64"
+                ),
+                "system_image_revision": "7.0.0",
+                "icu_version": "76.1.0.0",
+                "unicode_version": "16.0.0.0",
+                "cldr_version": "46.0.0.0",
+                "numbering_candidate_count": "96",
+                "numbering_candidate_names_sha256": (
+                    "3e5f3860817d257311d2ec33fe547abff81de3269cda749d"
+                    "334cdafc1c3ad202"
+                ),
+            },
+        }
+        expected_candidate_outcomes = {
+            26: (37, 40, 18),
+            36: (76, 20, 0),
+        }
         for platform in matrix["platforms"]:
+            metadata = platform["metadata"]
+            for key, value in expected_provenance[platform["api_level"]].items():
+                self.assertEqual(value, metadata[key])
+            self.assertEqual("2", metadata["format_version"])
+            self.assertEqual("Android", metadata["platform"])
+            self.assertEqual("x86_64", metadata["abi"])
+            self.assertEqual("emulator", metadata["emulator_package"])
+            self.assertEqual("36.6.11", metadata["emulator_package_revision"])
+            self.assertEqual("36.6.11.0", metadata["emulator_version"])
+            self.assertEqual("off", metadata["emulator_acceleration"])
+            self.assertEqual(
+                "build-tools;36.0.0",
+                metadata["build_tools_package"],
+            )
+            self.assertEqual("36.0.0", metadata["build_tools_revision"])
+            self.assertEqual(
+                "platforms;android-36",
+                metadata["compile_sdk_package"],
+            )
+            self.assertEqual("2.0.0", metadata["compile_sdk_revision"])
+            self.assertEqual("Dalvik", metadata["java_vm_name"])
+            self.assertEqual("2.1.0", metadata["java_vm_version"])
+            self.assertEqual("0.9", metadata["java_runtime_version"])
+            self.assertEqual(
+                "android.icu.text.NumberingSystem.getAvailableNames",
+                metadata["numbering_candidate_source"],
+            )
+            self.assertEqual(
+                "ICU-{}".format(metadata["icu_version"]),
+                metadata["numbering_candidate_version"],
+            )
+            self.assertEqual(
+                len(platform["candidate_definitions"]),
+                int(metadata["numbering_candidate_count"]),
+            )
+            self.assertEqual(
+                len(platform["candidate_definitions"]),
+                len(platform["candidates"])
+                + len(platform["candidate_failures"]),
+            )
+            self.assertEqual(
+                expected_candidate_outcomes[platform["api_level"]],
+                (
+                    len(platform["candidates"]),
+                    len(platform["candidate_failures"]),
+                    sum(
+                        row["status"] == "native_process_crash"
+                        for row in platform["candidate_failures"]
+                    ),
+                ),
+            )
+            self.assertEqual(
+                sorted(row["name"] for row in platform["candidate_definitions"]),
+                [row["name"] for row in platform["candidate_definitions"]],
+            )
+            self.assertEqual(
+                "yyyy-MM-dd HH:mm:ss.SSS",
+                metadata["pattern"],
+            )
+            self.assertEqual("yyyyMMddHHmmss", metadata["legacy_pattern"])
+            self.assertEqual("UTC", metadata["timezone"])
+            self.assertEqual(
+                "2024-07-08T09:10:11.123Z",
+                metadata["numbering_candidate_instant_utc"],
+            )
+            self.assertEqual(
+                "run_android_formatter_probe.py",
+                metadata["probe_runner"],
+            )
+            self.assertEqual(
+                "python3 tools/legacy-fixtures/"
+                "run_android_formatter_probe.py --compare",
+                metadata["probe_runner_command"],
+            )
             self.assertEqual(
                 {legacy_fixtures.ANDROID_FORMATTER_CALENDAR_CLASS},
                 {
@@ -1393,6 +1635,49 @@ class LegacyFixtureTests(unittest.TestCase):
                         row["formatted"],
                     )
 
+        api36 = next(
+            platform
+            for platform in matrix["platforms"]
+            if platform["api_level"] == 36
+        )
+        supplementary_definitions = {
+            row["name"]: row
+            for row in api36["candidate_definitions"]
+            if row["definition_zero_code_point"] is not None
+            and row["definition_zero_code_point"] > 0xFFFF
+        }
+        self.assertEqual(39, len(supplementary_definitions))
+        self.assertEqual(
+            0x104A0,
+            supplementary_definitions["osma"]["definition_zero_code_point"],
+        )
+        supplementary_observations = {
+            row["candidate_name"]: row
+            for row in api36["candidates"]
+            if row["candidate_name"] in supplementary_definitions
+        }
+        self.assertEqual(
+            set(supplementary_definitions),
+            set(supplementary_observations),
+        )
+        self.assertEqual(
+            {0x0030},
+            {
+                row["zero_code_point"]
+                for row in supplementary_observations.values()
+            },
+        )
+        self.assertEqual(
+            {frozenset({""})},
+            set(legacy_fixtures.formatter_source_control_layouts().values()),
+        )
+        self.assertTrue(
+            os.access(
+                legacy_fixtures.ANDROID_FORMATTER_PROBE_RUNNER_PATH,
+                os.X_OK,
+            )
+        )
+
         output = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")[
             "formatter_digit_blocks"
         ]
@@ -1424,6 +1709,7 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         for path in (
             legacy_fixtures.ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+            legacy_fixtures.ANDROID_FORMATTER_PROBE_RUNNER_PATH,
             *legacy_fixtures.ANDROID_FORMATTER_EVIDENCE_PATHS,
         ):
             artifact_bytes = path.read_bytes()
@@ -1440,12 +1726,18 @@ class LegacyFixtureTests(unittest.TestCase):
         self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", case.activities[0][1])
         self.assertEqual("২০২৪০৭০৮০৯১১১১", case.activities[1][1])
         self.assertEqual("20240708091211", case.activities[2][1])
+        self.assertEqual("２０２４０７０８０９１３１１", case.activities[10][1])
+        self.assertEqual(14, len(case.activities[11][1]))
+        self.assertEqual(
+            28,
+            len(case.activities[11][1].encode("utf-16-le")) // 2,
+        )
 
         output = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")[
             "localized_timestamps"
         ]
-        self.assertEqual(3, output["summary"]["sessions"])
-        self.assertEqual(6, output["summary"]["track_points"])
+        self.assertEqual(4, output["summary"]["sessions"])
+        self.assertEqual(7, output["summary"]["track_points"])
         self.assertEqual(8, output["summary"]["rejected_activity_rows"])
         self.assertEqual(7, output["summary"]["rejected_track_point_rows"])
         self.assertEqual(
@@ -1453,6 +1745,7 @@ class LegacyFixtureTests(unittest.TestCase):
                 "٢٠٢٤٠٧٠٨٠٩١٠١١",
                 "২০২৪০৭০৮০৯১১১১",
                 "20240708091211",
+                "２０２４０７０８０９１３１１",
             ],
             [session["gmt_start"] for session in output["sessions"]],
         )
@@ -1461,6 +1754,7 @@ class LegacyFixtureTests(unittest.TestCase):
                 "٢٠٢٤٠٧٠٨٠٩١٠١٣",
                 "২০২৪০৭০৮০৯১১১৩",
                 "20240708091213",
+                None,
             ],
             [session["gmt_end"] for session in output["sessions"]],
         )
@@ -1472,6 +1766,7 @@ class LegacyFixtureTests(unittest.TestCase):
                 "২০২৪০৭০৮০৯১১১২",
                 "20240708091211",
                 "20240708091212",
+                "２０２４０７０８０９１３１２",
             ],
             [point["gmt_timestamp"] for point in output["track_points"]],
         )
@@ -1507,12 +1802,21 @@ class LegacyFixtureTests(unittest.TestCase):
             rejected_points[12]["raw"]["GMTTIMESTAMP"],
         )
         self.assertEqual(
-            "２０２４０７０８０９１３１１",
-            rejected_activities[11]["raw"]["GMTSTART"],
+            case.activities[11][1],
+            rejected_activities[12]["raw"]["GMTSTART"],
         )
         self.assertEqual(
-            "２０２４０７０８０９１３１２",
-            rejected_points[13]["raw"]["GMTTIMESTAMP"],
+            14,
+            len(rejected_points[14]["raw"]["GMTTIMESTAMP"]),
+        )
+        self.assertEqual(
+            28,
+            len(
+                rejected_points[14]["raw"]["GMTTIMESTAMP"].encode(
+                    "utf-16-le"
+                )
+            )
+            // 2,
         )
 
         manifest = legacy_fixtures.load_json(TOOL_ROOT / "manifest.json")
@@ -1528,7 +1832,7 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         timestamps = entry["expected"]["timestamps"]
         self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", timestamps["all"]["min"])
-        self.assertEqual("20240708091213", timestamps["all"]["max"])
+        self.assertEqual("２０２４０７０８０９１３１２", timestamps["all"]["max"])
 
     def test_android_thai_calendars_are_gregorian_across_years(self):
         matrix = legacy_fixtures.formatter_probe_matrix()
@@ -2353,8 +2657,8 @@ class LegacyFixtureTests(unittest.TestCase):
     def test_corpus_regenerates_deterministically(self):
         result = legacy_fixtures.verify_deterministic_regeneration(TOOL_ROOT)
         self.assertEqual(len(EXPECTED_FIXTURES), result["fixture_count"])
-        self.assertEqual(42, result["artifact_count"])
-        self.assertEqual(22, result["exact_byte_artifact_count"])
+        self.assertEqual(43, result["artifact_count"])
+        self.assertEqual(23, result["exact_byte_artifact_count"])
         self.assertEqual(14, result["logical_database_artifact_count"])
         self.assertEqual(6, result["canonical_storage_artifact_count"])
 

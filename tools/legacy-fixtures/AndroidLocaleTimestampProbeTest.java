@@ -1,14 +1,14 @@
-package com.long2know.sportlogger;
-
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+package com.long2know.sportlogger.localeprobe;
 
 import android.content.Context;
+import android.icu.lang.UCharacter;
+import android.icu.text.NumberingSystem;
+import android.icu.util.LocaleData;
+import android.icu.util.VersionInfo;
 import android.os.Build;
-
-import androidx.test.platform.app.InstrumentationRegistry;
-
-import org.junit.Test;
+import android.os.Bundle;
+import android.test.InstrumentationTestCase;
+import android.test.InstrumentationTestRunner;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -34,10 +34,12 @@ import java.util.Objects;
 import java.util.TimeZone;
 import java.util.TreeMap;
 
-public final class AndroidLocaleTimestampProbeTest {
+public final class AndroidLocaleTimestampProbeTest extends InstrumentationTestCase {
     private static final String OUTPUT_FILE = "android-locale-timestamp-probe.tsv";
     private static final String PATTERN = "yyyy-MM-dd HH:mm:ss.SSS";
     private static final String LEGACY_PATTERN = "yyyyMMddHHmmss";
+    private static final String NUMBERING_CANDIDATE_SOURCE =
+            "android.icu.text.NumberingSystem.getAvailableNames";
     private static final TimeZone UTC = TimeZone.getTimeZone("UTC");
     private static final String[][] FIXED_TIMES = {
             {"2000-02-29T12:34:56.789Z", "2000", "2", "29", "12", "34", "56", "789"},
@@ -54,8 +56,21 @@ public final class AndroidLocaleTimestampProbeTest {
             "th-TH-u-ca-gregory-nu-thai",
     };
 
+    private static final class DigitShape {
+        final int zeroCodePoint;
+        final String normalized;
+        final String controlLayout;
+
+        DigitShape(int zeroCodePoint, String normalized, String controlLayout) {
+            this.zeroCodePoint = zeroCodePoint;
+            this.normalized = normalized;
+            this.controlLayout = controlLayout;
+        }
+    }
+
     private static final class Signature implements Comparable<Signature> {
         final int zeroCodePoint;
+        final String controlLayout;
         final String calendarClass;
         final String calendarType;
         final String formatted;
@@ -64,12 +79,14 @@ public final class AndroidLocaleTimestampProbeTest {
 
         Signature(
                 int zeroCodePoint,
+                String controlLayout,
                 String calendarClass,
                 String calendarType,
                 String formatted,
                 String legacyFormatted,
                 String numberDigits) {
             this.zeroCodePoint = zeroCodePoint;
+            this.controlLayout = controlLayout;
             this.calendarClass = calendarClass;
             this.calendarType = calendarType;
             this.formatted = formatted;
@@ -80,6 +97,10 @@ public final class AndroidLocaleTimestampProbeTest {
         @Override
         public int compareTo(Signature other) {
             int result = Integer.compare(zeroCodePoint, other.zeroCodePoint);
+            if (result != 0) {
+                return result;
+            }
+            result = controlLayout.compareTo(other.controlLayout);
             if (result != 0) {
                 return result;
             }
@@ -106,6 +127,7 @@ public final class AndroidLocaleTimestampProbeTest {
             }
             Signature other = (Signature) value;
             return zeroCodePoint == other.zeroCodePoint
+                    && controlLayout.equals(other.controlLayout)
                     && calendarClass.equals(other.calendarClass)
                     && calendarType.equals(other.calendarType)
                     && formatted.equals(other.formatted)
@@ -117,6 +139,7 @@ public final class AndroidLocaleTimestampProbeTest {
         public int hashCode() {
             return Objects.hash(
                     zeroCodePoint,
+                    controlLayout,
                     calendarClass,
                     calendarType,
                     formatted,
@@ -125,33 +148,35 @@ public final class AndroidLocaleTimestampProbeTest {
         }
     }
 
-    private static final class Observation {
+    private static final class LocaleObservation {
         final Locale locale;
         final int zeroCodePoint;
+        final String controlLayout;
         final String calendarClass;
         final String calendarType;
         final String formatted;
         final String legacyFormatted;
         final String numberDigits;
 
-        Observation(Locale locale, Date instant) {
+        LocaleObservation(Locale locale, Date instant) {
             this.locale = locale;
-            DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(locale);
-            zeroCodePoint = symbols.getZeroDigit();
             SimpleDateFormat formatter = formatter(PATTERN, locale);
             Calendar calendar = formatter.getCalendar();
             calendarClass = calendar.getClass().getName();
             calendarType = calendar.getCalendarType();
             formatted = formatter.format(instant);
             legacyFormatted = formatter(LEGACY_PATTERN, locale).format(instant);
-            DecimalFormat digits = new DecimalFormat("0000000000", symbols);
-            digits.setGroupingUsed(false);
-            numberDigits = digits.format(1234567890L);
+            DigitShape shape = analyzeLegacyDigits(legacyFormatted);
+            zeroCodePoint = shape.zeroCodePoint;
+            controlLayout = shape.controlLayout;
+            numberDigits = numberDigits(locale);
+            requireNormalizedDigits(numberDigits, zeroCodePoint, "1234567890");
         }
 
         Signature signature() {
             return new Signature(
                     zeroCodePoint,
+                    controlLayout,
                     calendarClass,
                     calendarType,
                     formatted,
@@ -164,6 +189,7 @@ public final class AndroidLocaleTimestampProbeTest {
                     locale.toLanguageTag(),
                     locale.toString(),
                     codePoint(zeroCodePoint),
+                    controlLayout,
                     calendarClass,
                     calendarType,
                     formatted,
@@ -172,12 +198,21 @@ public final class AndroidLocaleTimestampProbeTest {
         }
     }
 
-    @Test
-    public void recordsAndroidFormatterEvidence() throws Exception {
-        String evidence = buildEvidence();
+    public void testRecordsAndroidFormatterEvidence() throws Exception {
+        Bundle arguments = ((InstrumentationTestRunner) getInstrumentation()).getArguments();
+        String mode = arguments.getString("probe_mode", "base");
+        String evidence;
+        if ("base".equals(mode)) {
+            evidence = buildBaseEvidence();
+        } else if ("candidate".equals(mode)) {
+            evidence = buildNumberingCandidateEvidence(
+                    arguments.getString("numbering_candidate", ""));
+        } else {
+            throw new AssertionError("Unknown probe mode " + mode);
+        }
         assertFalse(evidence.contains("\r"));
         assertTrue(evidence.endsWith("\n"));
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = getInstrumentation().getTargetContext();
         File output = new File(context.getFilesDir(), OUTPUT_FILE);
         try (Writer writer = new OutputStreamWriter(
                 new FileOutputStream(output, false), StandardCharsets.UTF_8)) {
@@ -187,7 +222,7 @@ public final class AndroidLocaleTimestampProbeTest {
         assertTrue(output.length() > 0);
     }
 
-    private static String buildEvidence() throws Exception {
+    private static String buildBaseEvidence() throws Exception {
         Date signatureInstant = fixedDate(FIXED_TIMES[1]);
         Locale[] locales = Locale.getAvailableLocales();
         Arrays.sort(
@@ -195,30 +230,60 @@ public final class AndroidLocaleTimestampProbeTest {
                 Comparator.comparing(Locale::toLanguageTag)
                         .thenComparing(Locale::toString));
 
-        List<Observation> observations = new ArrayList<>();
         Map<Signature, List<String>> localesBySignature = new TreeMap<>();
-        Map<Integer, Observation> candidateByZero = new TreeMap<>();
         MessageDigest localeDigest = MessageDigest.getInstance("SHA-256");
         for (Locale locale : locales) {
-            Observation observation = new Observation(locale, signatureInstant);
-            observations.add(observation);
+            LocaleObservation observation = new LocaleObservation(locale, signatureInstant);
             localesBySignature
                     .computeIfAbsent(observation.signature(), ignored -> new ArrayList<>())
                     .add(locale.toLanguageTag());
-            candidateByZero.putIfAbsent(observation.zeroCodePoint, observation);
             localeDigest.update(observation.hashRow().getBytes(StandardCharsets.UTF_8));
         }
 
+        String[] numberingCandidates = NumberingSystem.getAvailableNames();
+        Arrays.sort(numberingCandidates);
+        MessageDigest candidateDigest = MessageDigest.getInstance("SHA-256");
+        for (String candidate : numberingCandidates) {
+            candidateDigest.update((candidate + "\n").getBytes(StandardCharsets.UTF_8));
+        }
+
         StringBuilder output = new StringBuilder();
-        output.append(row("meta", "format_version", "1"));
+        output.append(row("meta", "format_version", "2"));
         output.append(row("meta", "platform", "Android"));
         output.append(row("meta", "api_level", Integer.toString(Build.VERSION.SDK_INT)));
         output.append(row("meta", "release", Build.VERSION.RELEASE));
+        output.append(row("meta", "build_fingerprint", Build.FINGERPRINT));
+        output.append(row("meta", "abi", Build.SUPPORTED_ABIS[0]));
+        output.append(row("meta", "supported_abis", String.join(",", Build.SUPPORTED_ABIS)));
+        output.append(row("meta", "java_version", property("java.version")));
+        output.append(row("meta", "java_runtime_version", property("java.runtime.version")));
+        output.append(row("meta", "java_vm_name", property("java.vm.name")));
+        output.append(row("meta", "java_vm_version", property("java.vm.version")));
+        output.append(row("meta", "icu_version", VersionInfo.ICU_VERSION.toString()));
+        output.append(row("meta", "unicode_version", UCharacter.getUnicodeVersion().toString()));
+        output.append(row("meta", "cldr_version", LocaleData.getCLDRVersion().toString()));
         output.append(row("meta", "pattern", PATTERN));
         output.append(row("meta", "legacy_pattern", LEGACY_PATTERN));
         output.append(row("meta", "timezone", UTC.getID()));
         output.append(row("meta", "available_locale_count", Integer.toString(locales.length)));
         output.append(row("meta", "locale_rows_sha256", hex(localeDigest.digest())));
+        output.append(row("meta", "numbering_candidate_source", NUMBERING_CANDIDATE_SOURCE));
+        output.append(row(
+                "meta",
+                "numbering_candidate_version",
+                "ICU-" + VersionInfo.ICU_VERSION.toString()));
+        output.append(row(
+                "meta",
+                "numbering_candidate_count",
+                Integer.toString(numberingCandidates.length)));
+        output.append(row(
+                "meta",
+                "numbering_candidate_names_sha256",
+                hex(candidateDigest.digest())));
+        output.append(row(
+                "meta",
+                "numbering_candidate_instant_utc",
+                FIXED_TIMES[1][0]));
         output.append(row(
                 "meta",
                 "fixed_instants_utc",
@@ -230,6 +295,7 @@ public final class AndroidLocaleTimestampProbeTest {
             output.append(row(
                     "signature",
                     codePoint(signature.zeroCodePoint),
+                    signature.controlLayout,
                     signature.calendarClass,
                     signature.calendarType,
                     signature.formatted,
@@ -239,13 +305,31 @@ public final class AndroidLocaleTimestampProbeTest {
                     tags.get(0)));
         }
 
-        for (Observation candidate : candidateByZero.values()) {
-            for (String[] fixedTime : FIXED_TIMES) {
-                output.append(detailedRow(
-                        "candidate",
-                        candidate.locale,
-                        fixedTime[0],
-                        fixedDate(fixedTime)));
+        for (String name : numberingCandidates) {
+            NumberingSystem numberingSystem = null;
+            String definitionStatus = "ok";
+            try {
+                numberingSystem = NumberingSystem.getInstanceByName(name);
+                if (numberingSystem == null) {
+                    definitionStatus = "null";
+                }
+            } catch (RuntimeException | AssertionError error) {
+                definitionStatus = error.getClass().getSimpleName();
+            }
+            if (numberingSystem == null) {
+                output.append(row(
+                        "candidate_definition",
+                        name,
+                        definitionStatus));
+            } else {
+                output.append(row(
+                        "candidate_definition",
+                        name,
+                        definitionStatus,
+                        numberingSystem.getName(),
+                        Integer.toString(numberingSystem.getRadix()),
+                        Boolean.toString(numberingSystem.isAlgorithmic()),
+                        numberingSystem.getDescription()));
             }
         }
 
@@ -258,6 +342,10 @@ public final class AndroidLocaleTimestampProbeTest {
                 output.append(detailedRow(
                         "thai_control",
                         control.getValue(),
+                        "",
+                        null,
+                        "not_applicable",
+                        "ok",
                         fixedTime[0],
                         fixedDate(fixedTime)));
             }
@@ -265,14 +353,75 @@ public final class AndroidLocaleTimestampProbeTest {
         return output.toString();
     }
 
+    private static String buildNumberingCandidateEvidence(String candidateName) {
+        String[] candidates = NumberingSystem.getAvailableNames();
+        Arrays.sort(candidates);
+        if (Arrays.binarySearch(candidates, candidateName) < 0) {
+            throw new AssertionError("Unknown numbering candidate " + candidateName);
+        }
+        NumberingSystem numberingSystem = null;
+        String definitionStatus = "ok";
+        try {
+            numberingSystem = NumberingSystem.getInstanceByName(candidateName);
+            if (numberingSystem == null) {
+                definitionStatus = "null";
+            }
+        } catch (RuntimeException | AssertionError error) {
+            definitionStatus = error.getClass().getSimpleName();
+        }
+        Locale locale = new Locale.Builder()
+                .setLanguageTag("en-US")
+                .setUnicodeLocaleKeyword("nu", candidateName)
+                .build();
+        String[] fixedTime = FIXED_TIMES[1];
+        return numberingCandidateRow(
+                locale,
+                candidateName,
+                numberingSystem,
+                definitionStatus,
+                fixedTime[0],
+                fixedDate(fixedTime));
+    }
+
+    private static String numberingCandidateRow(
+            Locale locale,
+            String candidateName,
+            NumberingSystem numberingSystem,
+            String definitionStatus,
+            String instantLabel,
+            Date instant) {
+        try {
+            return detailedRow(
+                    "numbering_candidate",
+                    locale,
+                    candidateName,
+                    numberingSystem,
+                    definitionStatus,
+                    "ok",
+                    instantLabel,
+                    instant);
+        } catch (RuntimeException | AssertionError error) {
+            return row(
+                    "candidate_failure",
+                    candidateName,
+                    error.getClass().getSimpleName());
+        }
+    }
+
     private static String detailedRow(
             String kind,
             Locale locale,
+            String candidateName,
+            NumberingSystem numberingSystem,
+            String definitionStatus,
+            String observationStatus,
             String instantLabel,
             Date instant) {
-        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(locale);
         SimpleDateFormat formatter = formatter(PATTERN, locale);
         String formatted = formatter.format(instant);
+        String legacyFormatted = formatter(LEGACY_PATTERN, locale).format(instant);
+        DigitShape shape = analyzeLegacyDigits(legacyFormatted);
+
         SimpleDateFormat parser = formatter(PATTERN, locale);
         parser.setLenient(false);
         ParsePosition position = new ParsePosition(0);
@@ -296,11 +445,19 @@ public final class AndroidLocaleTimestampProbeTest {
             Locale.setDefault(Locale.Category.FORMAT, oldFormat);
         }
 
-        DecimalFormat digits = new DecimalFormat("0000000000", symbols);
-        digits.setGroupingUsed(false);
+        String numberDigits = numberDigits(locale);
+        requireNormalizedDigits(numberDigits, shape.zeroCodePoint, "1234567890");
         return row(
                 kind,
-                codePoint(symbols.getZeroDigit()),
+                candidateName,
+                numberingSystem == null ? "" : numberingSystem.getName(),
+                definitionStatus,
+                observationStatus,
+                numberingSystem == null ? "" : Integer.toString(numberingSystem.getRadix()),
+                numberingSystem == null ? "" : Boolean.toString(numberingSystem.isAlgorithmic()),
+                numberingSystem == null ? "" : numberingSystem.getDescription(),
+                codePoint(shape.zeroCodePoint),
+                shape.controlLayout,
                 locale.toLanguageTag(),
                 locale.toString(),
                 nullToEmpty(locale.getUnicodeLocaleType("nu")),
@@ -309,13 +466,83 @@ public final class AndroidLocaleTimestampProbeTest {
                 formatter.getCalendar().getCalendarType(),
                 instantLabel,
                 formatted,
-                formatter(LEGACY_PATTERN, locale).format(instant),
-                digits.format(1234567890L),
+                legacyFormatted,
+                numberDigits,
                 Boolean.toString(roundTrip),
                 parsed == null ? "" : Long.toString(parsed.getTime()),
                 Boolean.toString(formatted.equals(defaultFormatted)),
                 defaultCalendarClass,
                 defaultCalendarType);
+    }
+
+    private static DigitShape analyzeLegacyDigits(String value) {
+        int zeroCodePoint = -1;
+        int digitIndex = 0;
+        StringBuilder normalized = new StringBuilder();
+        StringBuilder controls = new StringBuilder();
+        for (int offset = 0; offset < value.length(); ) {
+            int codePoint = value.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            int decimal = UCharacter.digit(codePoint, 10);
+            if (decimal >= 0) {
+                int candidateZero = codePoint - decimal;
+                if (zeroCodePoint < 0) {
+                    zeroCodePoint = candidateZero;
+                } else if (zeroCodePoint != candidateZero) {
+                    throw new AssertionError("Formatter output mixed numbering systems");
+                }
+                normalized.append((char) ('0' + decimal));
+                digitIndex++;
+            } else if (Character.getType(codePoint) == Character.FORMAT) {
+                if (controls.length() > 0) {
+                    controls.append(',');
+                }
+                controls.append(digitIndex).append(':').append(codePoint(codePoint));
+            } else {
+                throw new AssertionError(
+                        "Legacy formatter emitted non-digit U+"
+                                + Integer.toHexString(codePoint).toUpperCase(Locale.ROOT));
+            }
+        }
+        if (zeroCodePoint < 0 || digitIndex != 14) {
+            throw new AssertionError("Legacy formatter did not emit exactly 14 digits");
+        }
+        return new DigitShape(zeroCodePoint, normalized.toString(), controls.toString());
+    }
+
+    private static void requireNormalizedDigits(
+            String value,
+            int expectedZeroCodePoint,
+            String expectedNormalized) {
+        int zeroCodePoint = -1;
+        StringBuilder normalized = new StringBuilder();
+        for (int offset = 0; offset < value.length(); ) {
+            int codePoint = value.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            int decimal = UCharacter.digit(codePoint, 10);
+            if (decimal < 0) {
+                throw new AssertionError("Number formatter emitted a non-decimal character");
+            }
+            int candidateZero = codePoint - decimal;
+            if (zeroCodePoint < 0) {
+                zeroCodePoint = candidateZero;
+            } else if (zeroCodePoint != candidateZero) {
+                throw new AssertionError("Number formatter mixed numbering systems");
+            }
+            normalized.append((char) ('0' + decimal));
+        }
+        if (zeroCodePoint != expectedZeroCodePoint
+                || !normalized.toString().equals(expectedNormalized)) {
+            throw new AssertionError("Number and date formatter digit systems differ");
+        }
+    }
+
+    private static String numberDigits(Locale locale) {
+        DecimalFormat digits = new DecimalFormat(
+                "0000000000",
+                DecimalFormatSymbols.getInstance(locale));
+        digits.setGroupingUsed(false);
+        return digits.format(1234567890L);
     }
 
     private static SimpleDateFormat formatter(String pattern, Locale locale) {
@@ -360,6 +587,10 @@ public final class AndroidLocaleTimestampProbeTest {
 
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private static String property(String name) {
+        return nullToEmpty(System.getProperty(name));
     }
 
     private static String codePoint(int value) {
