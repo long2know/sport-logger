@@ -202,7 +202,7 @@ public class SportLoggerService extends Service {
 
         // We can force reading at specific intervals like this
         _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
+        _scheduler.scheduleAtFixedRate(createRecordingTask(), 0, 1, TimeUnit.SECONDS);
         _stopWatch.startTImer();
         SqlLogger.initDatabase();
         SharedData.getInstance().ActivityId = SqlLogger.createActivity();
@@ -262,7 +262,7 @@ public class SportLoggerService extends Service {
 
         // We can force reading at specific intervals like this
         _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
+        _scheduler.scheduleAtFixedRate(createRecordingTask(), 0, 1, TimeUnit.SECONDS);
         SharedData.getInstance().IsPaused = false;
         _stopWatch.startTImer();
         CharSequence text = "Resuming activity";
@@ -297,6 +297,25 @@ public class SportLoggerService extends Service {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
     }
 
+    private Runnable createRecordingTask() {
+        final SqlLogger sqlLogger = new SqlLogger();
+        return new PermissionCheckedTask(
+                new PermissionCheckedTask.PermissionCheck() {
+                    @Override
+                    public boolean allRequiredPermissionsGranted() {
+                        return RecordingPermissions.allRequiredForRecordingGranted(
+                                SportLoggerService.this);
+                    }
+                },
+                sqlLogger,
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        handleRecordingPermissionLoss();
+                    }
+                });
+    }
+
     private synchronized void handleRecordingPermissionLoss() {
         if (_permissionLossHandled) {
             return;
@@ -306,6 +325,12 @@ public class SportLoggerService extends Service {
         SharedData shared = SharedData.getInstance();
         shared.IsRecording = false;
         shared.IsPaused = false;
+        shared.setHeartRate(0);
+
+        if (_scheduler != null) {
+            _scheduler.shutdownNow();
+            _scheduler = null;
+        }
 
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override

@@ -27,12 +27,16 @@ JDK 17. Google Maven metadata publishes `8.10.1` as the final patch in that fami
 that patch instead of combining independently latest AGP, Gradle, and JDK releases.
 
 The phone targets API 36 for the Google Play deadline beginning August 31, 2026. Wear targets API 35,
-which is the distinct Wear OS requirement for that deadline and preserves the legacy
-`BODY_SENSORS` runtime contract. Targeting Wear API 36 would opt the recorder into granular health
-permissions that still require physical Wear OS 6 permission, foreground-service, screen-off, and
-sensor validation. The manifest declares the future `READ_HEART_RATE` permission, but runtime code
-continues requesting `BODY_SENSORS` while target SDK is 35. The permission helper and tests define
-the target-36 transition without claiming that unperformed device validation.
+which is the distinct Wear OS requirement for that deadline and retains the legacy
+`BODY_SENSORS`/`BODY_SENSORS_BACKGROUND` contract. On API 33 and newer, `BODY_SENSORS` is
+while-in-use only for this target, so the background grant is also required before the recorder can
+run beyond the visible activity. Runtime code requests the foreground body-sensor permission first
+and makes the background permission a separate runtime request; Android ignores a combined request.
+
+Targeting Wear API 36 would opt the recorder into `READ_HEART_RATE` plus
+`READ_HEALTH_DATA_IN_BACKGROUND`. Both modern permissions are declared, and the permission helper
+and tests define that target-36 transition without claiming unperformed physical Wear OS 6
+permission, foreground-service, screen-off, or sensor validation.
 
 ## Play publication versioning
 
@@ -65,20 +69,39 @@ application `preBuild` tasks depend on it, so normal assemblies also enforce the
 Android 10 (API 29) introduced the `ACTIVITY_RECOGNITION` runtime permission for physical-activity
 data. Android's privacy documentation identifies the step counter and step detector as the built-in
 sensors that require it, and the current step-counter guide requires the grant before sensor access.
-The Wear manifest now declares that permission and the existing startup request follows this matrix:
+The Wear manifest now declares that permission and startup follows this matrix:
 
 - API 29 and newer require `ACTIVITY_RECOGNITION`; older devices do not request it.
 - Heart rate uses `BODY_SENSORS` unless both the device and target SDK are API 36 or newer, when it
   uses `READ_HEART_RATE`.
+- On API 33 and newer with target SDK 33 through 35, background heart rate additionally requires
+  `BODY_SENSORS_BACKGROUND`.
+- When both device and target SDK are API 36 or newer, background heart rate instead requires
+  `READ_HEALTH_DATA_IN_BACKGROUND`.
 - Coarse and fine location remain required for recording.
 - `POST_NOTIFICATIONS` is requested on API 33 and newer but remains optional for recording.
 
-The activity starts and binds the recorder service only after every recording permission is granted.
-The service checks again before foreground startup and before starting or resuming a recording, and
-the sensor thread handles a permission-race `SecurityException`. Denial leaves the start screen in a
-non-recording state and explains that recording permissions are required. Revocation stops and
-unbinds the recorder, clears recording/paused state, returns to the start screen, and requests the
-missing permissions again instead of presenting a successful recording UI with disabled steps.
+Foreground sensor, activity-recognition, location, and optional notification permissions may remain
+in the existing grouped request. A required background sensor permission is never included in that
+array: it is requested only after the foreground recording permissions have been granted. This
+ordering preserves older API behavior and satisfies Android's separate-operation requirement.
+
+Because this foreground service deliberately keeps collecting heart rate after the activity leaves
+the foreground, recording remains gated when the background sensor grant is denied. The start screen
+stays non-recording and an explicit message directs the user to allow all-the-time sensor access in
+Settings. The app itself remains usable, but it does not start the recorder service or claim
+background heart-rate capture.
+
+`BODY_SENSORS_BACKGROUND` is a hard-restricted permission: the installer of record must allowlist it
+before the user can grant it. A sideloaded or otherwise non-allowlisted build therefore remains
+explicitly gated rather than silently recording without background heart rate. Installer
+allowlisting and the device Settings flow require Play/OEM and physical-device validation.
+
+The service checks the complete permission set before foreground startup, before starting or
+resuming a recording, and immediately before every scheduled track-point write. The sensor thread
+also handles a permission-race `SecurityException`. A detected revocation shuts down scheduled
+writes, clears the cached heart rate and recording/paused state, stops and unbinds the recorder, and
+returns to the start screen instead of persisting or displaying a stale background heart-rate value.
 
 ## Pinned direct dependencies
 
@@ -129,10 +152,11 @@ foundation.
    app-private.
 6. Added notification permission/channel handling, immutable `PendingIntent` use, and explicit
    `health|location` foreground-service permissions, manifest types, and runtime types.
-7. Added the API 36 `READ_HEART_RATE` manifest foundation while retaining `BODY_SENSORS` runtime
-   behavior for the selected Wear target 35. Permission selection is target/API-aware, and
-   heart-rate, activity-recognition, and location permissions are granted before the recorder
-   service or its step sensors start.
+7. Added target/API-aware foreground and background health permissions. Wear target 35 uses
+   `BODY_SENSORS` followed by a separate `BODY_SENSORS_BACKGROUND` request on API 33+, while the API
+   36 transition uses `READ_HEART_RATE` and `READ_HEALTH_DATA_IN_BACKGROUND`. Heart-rate,
+   activity-recognition, location, and required background access are granted before the recorder
+   service or its sensors start.
 8. Replaced the removed `wearApp` packaging configuration. `mobile` and `wear` remain independently
    installable APKs with the unchanged application ID `com.long2know.sportlogger`.
 9. Added disjoint, independently incremented phone/Wear version-code ranges and wired their
@@ -157,8 +181,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Six unit-test reports
-contained 18 tests with zero failures, errors, or skips. Lint completed with zero errors and 83
+The final clean local run completed successfully with 202 actionable tasks. Ten unit-test reports
+contained 38 tests with zero failures, errors, or skips. Lint completed with zero errors and 83
 unsuppressed warnings (6 mobile, 72 Wear, and 5 utilities).
 
 The clean build produces:
@@ -201,6 +225,9 @@ Actions 6.2.0.
 - [Android 10 physical activity recognition](https://developer.android.com/about/versions/10/privacy/changes#physical-activity-recognition)
 - [Read step-count data with SensorManager](https://developer.android.com/health-and-fitness/fitness/basic-app/read-step-count-data)
 - [Wear Health Services API 36 permission migration](https://developer.android.com/health-and-fitness/health-services/permissions)
+- [Request background access to body sensor data](https://developer.android.com/health-and-fitness/health-services/background-body-sensors)
+- [`BODY_SENSORS_BACKGROUND` permission reference](https://developer.android.com/reference/android/Manifest.permission#BODY_SENSORS_BACKGROUND)
+- [Foreground service type runtime requirements](https://developer.android.com/develop/background-work/services/fgs/service-types)
 - [Android 14 foreground-service type requirements](https://developer.android.com/about/versions/14/changes/fgs-types-required)
 - [AndroidX AppCompat releases](https://developer.android.com/jetpack/androidx/releases/appcompat)
 - [AndroidX Core releases](https://developer.android.com/jetpack/androidx/releases/core)

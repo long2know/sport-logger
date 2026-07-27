@@ -53,7 +53,8 @@ public class MainActivity extends FragmentActivity implements
         WearableNavigationDrawerView.OnItemSelectedListener,
         ActivityCompat.OnRequestPermissionsResultCallback,
         ISportLoggerServiceClient {
-    private static final int PERMISSION_REQUEST_CODE = 1;
+    private static final int FOREGROUND_PERMISSION_REQUEST_CODE = 1;
+    private static final int BACKGROUND_SENSOR_PERMISSION_REQUEST_CODE = 2;
     private static final String TAG = "MainActivity";
 
     private SensorFragment _sensorFragment;
@@ -328,18 +329,31 @@ public class MainActivity extends FragmentActivity implements
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE) {
+        if (requestCode == FOREGROUND_PERMISSION_REQUEST_CODE) {
+            _permissionRequestInFlight = false;
+            if (hasRequiredWhileInUseRecordingPermissions()) {
+                requestBackgroundSensorPermissionOrStartService();
+            } else {
+                handleMissingRecordingPermissions(
+                        true, R.string.recording_permissions_required);
+            }
+        } else if (requestCode == BACKGROUND_SENSOR_PERMISSION_REQUEST_CODE) {
             _permissionRequestInFlight = false;
             if (hasRequiredRecordingPermissions()) {
                 startAndBindServiceIfPermitted();
             } else {
-                handleMissingRecordingPermissions(true);
+                handleMissingRecordingPermissions(
+                        true, R.string.background_sensor_permission_required);
             }
         }
     }
 
     private boolean hasRequiredRecordingPermissions() {
         return RecordingPermissions.allRequiredForRecordingGranted(this);
+    }
+
+    private boolean hasRequiredWhileInUseRecordingPermissions() {
+        return RecordingPermissions.allWhileInUseRequiredForRecordingGranted(this);
     }
 
     private boolean ensureLoggingService() {
@@ -376,7 +390,38 @@ public class MainActivity extends FragmentActivity implements
             ActivityCompat.requestPermissions(
                     this,
                     missingPermissions.toArray(new String[0]),
-                    PERMISSION_REQUEST_CODE);
+                    FOREGROUND_PERMISSION_REQUEST_CODE);
+            return;
+        }
+
+        requestBackgroundSensorPermission();
+    }
+
+    private boolean requestBackgroundSensorPermission() {
+        if (_permissionRequestInFlight || !hasRequiredWhileInUseRecordingPermissions()) {
+            return false;
+        }
+
+        String permission = RecordingPermissions.backgroundSensorPermissionForRecording(
+                Build.VERSION.SDK_INT,
+                getApplicationInfo().targetSdkVersion);
+        if (permission == null
+                || ContextCompat.checkSelfPermission(this, permission)
+                == PackageManager.PERMISSION_GRANTED) {
+            return false;
+        }
+
+        _permissionRequestInFlight = true;
+        ActivityCompat.requestPermissions(
+                this,
+                new String[]{permission},
+                BACKGROUND_SENSOR_PERMISSION_REQUEST_CODE);
+        return true;
+    }
+
+    private void requestBackgroundSensorPermissionOrStartService() {
+        if (!requestBackgroundSensorPermission()) {
+            startAndBindServiceIfPermitted();
         }
     }
 
@@ -395,6 +440,14 @@ public class MainActivity extends FragmentActivity implements
     }
 
     private void handleMissingRecordingPermissions(boolean showMessage) {
+        int messageResource = hasRequiredWhileInUseRecordingPermissions()
+                && !RecordingPermissions.backgroundSensorPermissionGranted(this)
+                ? R.string.background_sensor_permission_required
+                : R.string.recording_permissions_required;
+        handleMissingRecordingPermissions(showMessage, messageResource);
+    }
+
+    private void handleMissingRecordingPermissions(boolean showMessage, int messageResource) {
         SharedData shared = SharedData.getInstance();
         boolean recordingWasActive = shared.IsRecording || shared.IsPaused;
         shared.IsRecording = false;
@@ -413,7 +466,7 @@ public class MainActivity extends FragmentActivity implements
         if (showMessage) {
             Toast.makeText(
                     this,
-                    R.string.recording_permissions_required,
+                    messageResource,
                     Toast.LENGTH_SHORT)
                     .show();
         }
