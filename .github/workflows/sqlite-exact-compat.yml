@@ -1,0 +1,52 @@
+name: Exact SQLite Compatibility
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/sqlite-exact-compat.yml'
+      - 'tools/sqlite-compat/**'
+      - 'utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java'
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/sqlite-exact-compat.yml'
+      - 'tools/sqlite-compat/**'
+      - 'utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required local toolchain
+        run: |
+          command -v python3
+          command -v cc
+          command -v ar
+
+      - name: Run failure-injection unit tests
+        run: python3 -m unittest discover -s tools/sqlite-compat/tests -p 'test_*.py' -v
+
+      - name: Run cold-cache four-engine matrix
+        run: |
+          rm -rf tools/sqlite-compat/.cache tools/sqlite-compat/out
+          python3 tools/sqlite-compat/sqlite_compat.py run
+
+      - name: Rebuild and rerun from verified offline cache
+        run: python3 tools/sqlite-compat/sqlite_compat.py run --offline --force-rebuild
+
+      - name: Upload sanitized reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-sqlite-compat-reports
+          path: tools/sqlite-compat/out/
+          if-no-files-found: error
+          retention-days: 7

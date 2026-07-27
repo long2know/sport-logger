@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "engines": [
+    {
+      "version": "3.18.2",
+      "release_code": "3180200",
+      "archive_url": "https://www.sqlite.org/2017/sqlite-autoconf-3180200.tar.gz",
+      "archive_sha256": "0d40222ea818a559590c51994ac85570eff5c5f754cbe08c2d34a3791942c1ba",
+      "archive_size": 2533875,
+      "source_id": "2017-06-17 09:59:36 036ebf729e4b21035d7f4f8e35a6f705e6bf99887889e2dc14ebf2242e7930dd"
+    },
+    {
+      "version": "3.26.0",
+      "release_code": "3260000",
+      "archive_url": "https://www.sqlite.org/2018/sqlite-autoconf-3260000.tar.gz",
+      "archive_sha256": "5daa6a3fb7d1e8c767cd59c4ded8da6e4b00c61d3b466d0685e35c4dd6d7bf5d",
+      "archive_size": 2779667,
+      "source_id": "2018-12-01 12:34:55 bf8c1b2b7a5960c282e543b9c293686dccff272512d08865f4600fb58238b4f9"
+    },
+    {
+      "version": "3.32.0",
+      "release_code": "3320000",
+      "archive_url": "https://www.sqlite.org/2020/sqlite-autoconf-3320000.tar.gz",
+      "archive_sha256": "598317fd74f5dcc8921949c47665b9e512d0d9c6a445a2e843430f04dc10bda4",
+      "archive_size": 2902505,
+      "source_id": "2020-05-22 17:46:16 5998789c9c744bce92e4cff7636bba800a75574243d6977e1fc8281e360f8d5a"
+    },
+    {
+      "version": "3.33.0",
+      "release_code": "3330000",
+      "archive_url": "https://www.sqlite.org/2020/sqlite-autoconf-3330000.tar.gz",
+      "archive_sha256": "106a2c48c7f75a298a7557bcc0d5f4f454e5b43811cc738b7ca294d6956bbb15",
+      "archive_size": 2913759,
+      "source_id": "2020-08-14 13:23:32 fca8dc8b578f215a969cd899336378966156154710873e68b3d9ac5881b0ff3f"
+    }
+  ]
+}
