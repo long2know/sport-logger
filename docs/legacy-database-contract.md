@@ -28,8 +28,11 @@ contract.
   collators, creates `android_metadata (locale TEXT)` when needed, and leaves one
   row containing the device locale. This table is platform-managed metadata, not
   legacy business data. The source opens normally (without
-  `NO_LOCALIZED_COLLATORS`), so validation must permit and verify the table while
-  excluding it from activity/point counts and logical data checksums. See AOSP
+  `NO_LOCALIZED_COLLATORS`), so validation must require the exact table shape and
+  exactly one non-empty, locale-shaped TEXT row while excluding it
+  from activity/point counts and logical data checksums. Missing, empty,
+  non-TEXT, invalid-value, and multi-row metadata states are malformed and never
+  migration-ready. See AOSP
   Android 9
   [`SQLiteConnection.setLocaleFromConfiguration()`](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r46/core/java/android/database/sqlite/SQLiteConnection.java#403).
 - **Initialization:** `initDatabase()` issues two independent `CREATE TABLE IF
@@ -65,6 +68,12 @@ watch, open this file read-only, and write a separately named target database.
 Preflight must report `no_business_tables` and `partial_business_schema` as
 blocked schema states. A complete schema with zero rows is instead valid empty
 data and must report ready.
+
+Before page-count multiplication or file-length modulus, structural preflight
+must validate the two-byte SQLite page-size encoding. The only legal database
+header encodings are `1` (65536 bytes) and powers of two from 512 through
+32768. Zero and every other encoding are corrupt input: integrity/schema reads,
+source reads, target writes, and receipt writes must not run.
 
 ### Active WAL snapshot handling
 
@@ -250,9 +259,12 @@ checksums. Logical checksums do **not** hash SQLite file bytes. They hash tables
 `ACTIVITY`, `GPS_POINTS` order, rows by `ID`, and type-tagged column values;
 `REAL` values use exact IEEE-754 `float.hex()` representations. Platform
 metadata is verified separately and excluded from those business-data
-checksums. Exact artifact hashes are additionally recorded only where bytes are
-part of the test contract: the active WAL trio and the malformed, truncated,
-and corrupt negative files.
+checksums. Standard database artifacts are marked `exact_bytes_required: false`;
+deterministic regeneration compares their integrity, schema, platform metadata,
+and type-tagged rows logically, so harmless SQLite read/write-version header
+variation does not fail CI while logical drift does. Exact artifact hashes are
+recorded only where bytes are part of the test contract: the active WAL trio and
+the malformed, truncated, and corrupt negative files.
 
 The committed cases are:
 
@@ -290,10 +302,14 @@ Every blocked preflight output states `source_rows_read = 0`,
 order is file structure, then `PRAGMA integrity_check`, then exact table
 metadata/schema validation. A failed layer prevents all later reads and writes.
 
-The idempotency oracle also models a receipt gap: all nine canonical target
-rows commit, the receipt is absent, and a replay attempts all nine rows,
-inserts zero, counts nine duplicates, preserves the exact target checksum, and
-then completes the receipt.
+Each interrupted-rerun scenario requires the rerun record sequence to exactly
+match all nine canonical target records. Attempted session/point counts must
+cover that full set, and duplicate counts must exactly match the committed
+prefix; removing a row that committed before interruption is rejected even when
+the final target checksum would otherwise remain equal. The oracle also models
+a receipt gap: all nine canonical target rows commit, the receipt is absent, and
+a replay attempts all nine rows, inserts zero, counts nine duplicates, preserves
+the exact target checksum, and then completes the receipt.
 
 The legacy file has no intrinsic database UUID. **Tank must define the stable
 production source-database/install identity before production ETL is frozen**;
@@ -310,11 +326,13 @@ python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 ```
 
-The verifier runs 23 detectors covering integer and double narrowing,
+The verifier runs 31 detectors covering integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
 deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
-sidecar omission and torn snapshots, interrupted-rerun drift/loss, receipt-gap
-completion, and malformed/truncated/corrupt preflight side-effect prevention.
+sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
+committed-prefix omission), receipt-gap completion, Android metadata readiness,
+illegal page-size encodings, logical database drift, and
+malformed/truncated/corrupt preflight side-effect prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

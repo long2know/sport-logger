@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Standard-library tests for the committed legacy fixture corpus."""
 
+import copy
 import json
+import shutil
 import sqlite3
 import sys
 import unittest
@@ -33,17 +35,24 @@ EXPECTED_FIXTURES = {
 }
 
 EXPECTED_DEFECT_DETECTORS = {
+    "android_metadata_empty",
+    "android_metadata_invalid_value",
+    "android_metadata_missing",
+    "android_metadata_multiple_rows",
+    "android_metadata_wrong_type",
     "corrupt_sqlite_preflight",
     "corrupt_sqlite_receipt_write",
     "duplicate_timestamp_collapsed",
     "float_precision_round_trip",
     "integer_truncation",
     "integer_precision_above_2_53",
+    "invalid_sqlite_page_size_preflight",
     "malformed_schema_preflight",
     "malformed_schema_target_write",
     "missing_columns",
     "duplicate_deterministic_ids",
     "orphan_mishandling",
+    "partial_rerun_committed_prefix_row_missing",
     "partial_rerun_identity_drift",
     "partial_rerun_missing_row",
     "receipt_gap_not_completed",
@@ -53,6 +62,7 @@ EXPECTED_DEFECT_DETECTORS = {
     "timestamp_ordering",
     "truncated_sqlite_preflight",
     "truncated_sqlite_target_write",
+    "standard_database_logical_drift",
     "wal_inconsistent_snapshot",
     "wal_shm_omitted",
     "wal_sidecars_ignored",
@@ -145,14 +155,151 @@ class LegacyFixtureTests(unittest.TestCase):
                 legacy_fixtures.read_all_rows(connection),
             )
 
+        metadata_failures = (
+            (
+                "missing",
+                ("DROP TABLE android_metadata",),
+                "missing_table",
+                "android_metadata:missing_table",
+            ),
+            (
+                "empty",
+                ("DELETE FROM android_metadata",),
+                "empty",
+                "android_metadata:row_count",
+            ),
+            (
+                "wrong_type",
+                (
+                    "DELETE FROM android_metadata",
+                    "INSERT INTO android_metadata (locale) VALUES (X'656e5f5553')",
+                ),
+                "invalid_locale_type",
+                "android_metadata:locale_storage_type",
+            ),
+            (
+                "invalid_value",
+                (
+                    "DELETE FROM android_metadata",
+                    "INSERT INTO android_metadata (locale) "
+                    "VALUES ('not a locale')",
+                ),
+                "invalid_locale_value",
+                "android_metadata:locale_value",
+            ),
+            (
+                "multiple_rows",
+                (
+                    "INSERT INTO android_metadata (locale) VALUES ('fr_CA')",
+                ),
+                "multiple_rows",
+                "android_metadata:row_count",
+            ),
+        )
+        for label, statements, state, error in metadata_failures:
+            with self.subTest(label=label):
+                connection = sqlite3.connect(":memory:")
+                try:
+                    legacy_fixtures.create_schema(connection)
+                    for statement in statements:
+                        connection.execute(statement)
+                    diagnostics = legacy_fixtures.schema_diagnostics(connection)
+                    self.assertEqual("malformed_schema", diagnostics["state"])
+                    self.assertEqual("blocked", diagnostics["migration_readiness"])
+                    self.assertEqual(state, diagnostics["android_metadata"]["state"])
+                    self.assertIn(error, diagnostics["schema_errors"])
+                    with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                        legacy_fixtures.validate_schema(
+                            connection,
+                            "invalid metadata {}".format(label),
+                        )
+                finally:
+                    connection.close()
+
         connection = sqlite3.connect(":memory:")
         try:
             legacy_fixtures.create_schema(connection)
             connection.execute("DELETE FROM android_metadata")
-            with self.assertRaises(legacy_fixtures.FixtureValidationError):
-                legacy_fixtures.validate_schema(connection, "missing locale row")
+            connection.execute(
+                "INSERT INTO android_metadata (locale) VALUES (?)",
+                ("fr_CA",),
+            )
+            diagnostics = legacy_fixtures.schema_diagnostics(connection)
+            self.assertEqual("valid", diagnostics["android_metadata"]["state"])
+            self.assertEqual("ready", diagnostics["migration_readiness"])
+            legacy_fixtures.validate_schema(connection, "alternate valid locale")
         finally:
             connection.close()
+
+    def test_sqlite_page_size_validation_blocks_all_illegal_encodings(self):
+        legal_encodings = {
+            1: 65536,
+            512: 512,
+            1024: 1024,
+            2048: 2048,
+            4096: 4096,
+            8192: 8192,
+            16384: 16384,
+            32768: 32768,
+        }
+        header = bytearray(100)
+        header[:16] = legacy_fixtures.SQLITE_HEADER
+        incorrectly_accepted = []
+        for encoded in range(65536):
+            header[16:18] = encoded.to_bytes(2, "big")
+            try:
+                decoded = legacy_fixtures.sqlite_page_size(header)
+            except legacy_fixtures.FixtureValidationError:
+                if encoded in legal_encodings:
+                    self.fail(
+                        "Legal SQLite page-size encoding {} was rejected".format(
+                            encoded
+                        )
+                    )
+            else:
+                if encoded not in legal_encodings:
+                    incorrectly_accepted.append(encoded)
+                else:
+                    self.assertEqual(legal_encodings[encoded], decoded)
+        self.assertEqual([], incorrectly_accepted)
+
+        work_dir = TOOL_ROOT / "generated" / ".page-size-unit"
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True)
+        corrupt_case = next(
+            case
+            for case in legacy_fixtures.fixture_cases()
+            if case.key == "corrupt"
+        )
+        try:
+            for encoded in (0, 2, 511, 513, 1023, 32767, 32769, 65535):
+                database = work_dir / "invalid-{}.db".format(encoded)
+                shutil.copyfile(TOOL_ROOT / "fixtures" / "empty.db", database)
+                database_bytes = bytearray(database.read_bytes())
+                database_bytes[16:18] = encoded.to_bytes(2, "big")
+                database.write_bytes(database_bytes)
+
+                structure = legacy_fixtures.sqlite_file_structure_diagnostics(
+                    database
+                )
+                self.assertEqual("invalid_page_size", structure["status"])
+                self.assertEqual(encoded, structure["encoded_page_size"])
+                self.assertIsNone(structure["page_size"])
+
+                output = legacy_fixtures.build_blocked_preflight_output(
+                    corrupt_case,
+                    database,
+                )
+                expectations = output["migration_expectations"]
+                self.assertEqual("corrupt_sqlite", expectations["reason"])
+                self.assertEqual(0, expectations["source_rows_read"])
+                self.assertFalse(expectations["target_write_attempted"])
+                self.assertEqual(0, expectations["target_rows_written"])
+                self.assertFalse(expectations["receipt_write_attempted"])
+                self.assertFalse(expectations["receipt_written"])
+        finally:
+            shutil.rmtree(work_dir)
 
     def test_active_wal_snapshot_requires_sidecars_and_consistent_read(self):
         case = next(
@@ -411,6 +558,20 @@ class LegacyFixtureTests(unittest.TestCase):
         self.assertTrue(receipt_gap["exact_state_preserved"])
 
         for scenario in (after_session, after_point_prefix):
+            self.assertEqual(
+                simulation["canonical_insert_rows"],
+                scenario["canonical_record_count"],
+            )
+            self.assertEqual(
+                simulation["canonical_insert_rows"],
+                scenario["rerun_record_count"],
+            )
+            self.assertTrue(scenario["rerun_records_exactly_canonical"])
+            self.assertTrue(scenario["replay_attempts_cover_canonical_set"])
+            self.assertEqual(
+                simulation["canonical_insert_rows"],
+                scenario["replay"]["attempted_rows"],
+            )
             for phase in (scenario["first_attempt"], scenario["replay"]):
                 self.assertEqual(
                     phase["attempted_rows"],
@@ -418,6 +579,17 @@ class LegacyFixtureTests(unittest.TestCase):
                 )
                 self.assertTrue(phase["attempts_fully_accounted"])
                 self.assertEqual(0, phase["duplicate_rows"])
+
+        bad_rerun = copy.deepcopy(interrupted)
+        committed_prefix_point = bad_rerun["track_points"].pop(0)
+        self.assertEqual(1, committed_prefix_point["legacy_id"])
+        with self.assertRaises(legacy_fixtures.FixtureValidationError):
+            legacy_fixtures.simulate_interrupted_insert_attempts(
+                interrupted,
+                interruption_after_attempts=2,
+                interruption_point="after_partial_point_prefix",
+                rerun_output=bad_rerun,
+            )
 
         self.assertEqual(
             1,
@@ -435,10 +607,59 @@ class LegacyFixtureTests(unittest.TestCase):
             ),
         )
 
-    def test_corpus_regenerates_byte_for_byte(self):
+    def test_standard_database_comparison_is_logical(self):
+        case = next(
+            case
+            for case in legacy_fixtures.fixture_cases()
+            if case.key == "representative"
+        )
+        source = TOOL_ROOT / "fixtures" / "representative.db"
+        work_dir = TOOL_ROOT / "generated" / ".logical-comparison-unit"
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True)
+        try:
+            header_variant = work_dir / "writer-header-variant.db"
+            shutil.copyfile(source, header_variant)
+            database_bytes = bytearray(header_variant.read_bytes())
+            database_bytes[18] = 2 if database_bytes[18] == 1 else 1
+            database_bytes[19] = 2 if database_bytes[19] == 1 else 1
+            header_variant.write_bytes(database_bytes)
+            self.assertNotEqual(source.read_bytes(), header_variant.read_bytes())
+            legacy_fixtures.compare_standard_database_artifacts(
+                "writer header variation",
+                source,
+                header_variant,
+                case,
+            )
+
+            logical_drift = work_dir / "logical-drift.db"
+            shutil.copyfile(source, logical_drift)
+            connection = sqlite3.connect(str(logical_drift))
+            try:
+                with connection:
+                    connection.execute(
+                        "UPDATE ACTIVITY SET NAME = ? WHERE ID = 1",
+                        ("Changed logical value",),
+                    )
+            finally:
+                connection.close()
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_standard_database_artifacts(
+                    "logical drift",
+                    source,
+                    logical_drift,
+                    case,
+                )
+        finally:
+            shutil.rmtree(work_dir)
+
+    def test_corpus_regenerates_deterministically(self):
         result = legacy_fixtures.verify_deterministic_regeneration(TOOL_ROOT)
         self.assertEqual(len(EXPECTED_FIXTURES), result["fixture_count"])
         self.assertGreater(result["artifact_count"], len(EXPECTED_FIXTURES) * 2)
+        self.assertGreater(result["exact_byte_artifact_count"], 0)
+        self.assertGreater(result["logical_database_artifact_count"], 0)
 
 
 if __name__ == "__main__":

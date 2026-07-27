@@ -25,7 +25,7 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "cd09b900a0bf7666129581e9954f6dac569ecf861d9cb55c52dc7bea01304100",
+        "canonical_output_logical_checksum": "d7ef5e090a18cf69d3a434f25a6694d14680125f56c6a0691f686bdab9626b81",
         "diagnostics": {
           "data_state": "empty",
           "ordering": {
@@ -35,6 +35,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -122,7 +132,7 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "d75bb3024745afb538c5a5fb65eb06233fa1dabda804e0adc5528addd8347685",
+        "canonical_output_logical_checksum": "2b9178dacc0af06ee11fd8afce74d993686255d1fa10aed6fc123d3d7d3eaa4e",
         "diagnostics": {
           "data_state": "empty",
           "ordering": {
@@ -132,6 +142,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [],
             "migration_readiness": "blocked",
             "missing_business_tables": [
@@ -219,7 +239,7 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "dd4e8ed25b0b3c266eb5b66c6b097d67c605022f8264155a1ff053f325ddf346",
+        "canonical_output_logical_checksum": "b024497e1f86b12900b13234dddbd1219c419aa089604c85c214c583e2b60842",
         "diagnostics": {
           "data_state": "empty",
           "ordering": {
@@ -229,6 +249,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY"
             ],
@@ -317,7 +347,7 @@
           "source_track_point_rows": 1,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "cf902077c204e966824545bd0e3cf53e5715111a1b06821f19ffa4f75668a1d2",
+        "canonical_output_logical_checksum": "2615238d6cdf19c909a21c7034c0de6ba976fa19967f69551f76a13514c79bff",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -327,6 +357,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -425,7 +465,7 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "725c618587d45d3ed7ee6fa739a4744643b615edbd85e0cc7903d7d47c4639ef",
+        "canonical_output_logical_checksum": "f7b4daccd1398083b3879698f8abde9cde9ce2999fa73e1007f3f9611ac93b12",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -435,6 +475,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -544,7 +594,7 @@
           "source_track_point_rows": 2,
           "track_points": 2
         },
-        "canonical_output_logical_checksum": "299cadc67f61a6c3bf4b56a171aeff55092b9bfdb2d0b7e97382621d4203fbea",
+        "canonical_output_logical_checksum": "d26f4a444dc87b091a334e65ee39985636cef3840bb7a4e99682f42a6b12b445",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -554,6 +604,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -673,7 +733,7 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "64f817fb8f88d819c35eb3ff40374afd0ad7e8eaf2a342dfa664a87cdafe9197",
+        "canonical_output_logical_checksum": "1847a1f06112c39600ac112e800752a9b0f3e0cdcd2b44eac69323c2910ddcdc",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -683,6 +743,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -809,7 +879,7 @@
           "source_track_point_rows": 3,
           "track_points": 3
         },
-        "canonical_output_logical_checksum": "4316e45cc4fabab23782034a0559bbf5ac03b7b55189c50c73037c8d015c2ee1",
+        "canonical_output_logical_checksum": "9f05ae51ab1d70e3d124391dbecece7af0ae874784c2ee5de24d675e8b79a825",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -819,6 +889,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -925,7 +1005,7 @@
           "source_track_point_rows": 2,
           "track_points": 2
         },
-        "canonical_output_logical_checksum": "08c31e6a727efab380ec4eb7ab48c47129a0e0286da59a25a4beda40aa1876e1",
+        "canonical_output_logical_checksum": "7575f3b3e242b95b2e91495501a5392154fe8f84168314171d8b9f00f1ab62de",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -935,6 +1015,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -1105,7 +1195,7 @@
           "source_track_point_rows": 2,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "0393aa763fade9dd7580dcf3dd27f0040f4b1fdb497d627fa0295476e5751055",
+        "canonical_output_logical_checksum": "b4f605f9bb1c3d11ebf8a257bae399e40dd6c230b2b00c513369878f71ffa48a",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1115,6 +1205,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -1214,7 +1314,7 @@
           "source_track_point_rows": 3,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "155cf330b0c08ebd53600df063fc17bf3638f435a3faf7a29aeadebc8a38f175",
+        "canonical_output_logical_checksum": "f0c7062f9a52bc793a9a26180a8c050e614fbb0f9acf9a37b5f44c0841b4171b",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1224,6 +1324,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -1329,7 +1439,7 @@
       "database_identity": "synthetic:sport-logger:legacy:malformed_schema:v1",
       "description": "Structurally intact SQLite database with both business table names but an incompatible ACTIVITY column declaration.",
       "expected": {
-        "canonical_output_logical_checksum": "61de385a49cd8aad978d492588f2a692e8a219be6e99a330e7f4fdd22799493c",
+        "canonical_output_logical_checksum": "76b31b188f0c0b1cde0b59f732b2849f799d2a0ff9e0aa00afdc0c12201088be",
         "diagnostics": {
           "data_state": "not_examined_due_to_blocked_preflight",
           "preflight": {
@@ -1337,6 +1447,7 @@
               "actual_bytes": 20480,
               "declared_bytes": 20480,
               "declared_pages": 5,
+              "encoded_page_size": 4096,
               "page_size": 4096,
               "status": "complete"
             },
@@ -1345,6 +1456,16 @@
               "status": "passed"
             },
             "schema_check": {
+              "android_metadata": {
+                "row_count": 1,
+                "schema_errors": [],
+                "state": "valid",
+                "storage_types": [
+                  "text"
+                ],
+                "table_present": true,
+                "valid_locale_rows": 1
+              },
               "schema_errors": [
                 "ACTIVITY:table_info"
               ],
@@ -1384,7 +1505,7 @@
       "database_identity": "synthetic:sport-logger:legacy:truncated:v1",
       "description": "SQLite database shortened by one declared page; migration must stop at file-structure preflight.",
       "expected": {
-        "canonical_output_logical_checksum": "c6ab6537262dafd23495a957a46e5dc5748f9b39591ee164498a7ea76ab1991b",
+        "canonical_output_logical_checksum": "aec0b0d1683228afed6b8135b8852973ae58934b45dee20aa423890b3596bf70",
         "diagnostics": {
           "data_state": "not_examined_due_to_blocked_preflight",
           "preflight": {
@@ -1392,6 +1513,7 @@
               "actual_bytes": 16384,
               "declared_bytes": 20480,
               "declared_pages": 5,
+              "encoded_page_size": 4096,
               "page_size": 4096,
               "status": "truncated"
             },
@@ -1400,6 +1522,7 @@
               "status": "not_run"
             },
             "schema_check": {
+              "android_metadata": null,
               "schema_errors": [],
               "state": null,
               "status": "not_run"
@@ -1437,7 +1560,7 @@
       "database_identity": "synthetic:sport-logger:legacy:corrupt:v1",
       "description": "Page-aligned SQLite database with a damaged GPS_POINTS b-tree page; integrity preflight must block migration.",
       "expected": {
-        "canonical_output_logical_checksum": "fc4034eaf99b2fcdf74e33004a0ded8c4299d1b2cd4b2d50f2e5bbfc27bd1b4c",
+        "canonical_output_logical_checksum": "a3c49ea544266c9ab5cfc7bf62565d9be0d6873779ffd200552e5643a64217e2",
         "diagnostics": {
           "data_state": "not_examined_due_to_blocked_preflight",
           "preflight": {
@@ -1445,6 +1568,7 @@
               "actual_bytes": 20480,
               "declared_bytes": 20480,
               "declared_pages": 5,
+              "encoded_page_size": 4096,
               "page_size": 4096,
               "status": "complete"
             },
@@ -1453,6 +1577,7 @@
               "status": "failed"
             },
             "schema_check": {
+              "android_metadata": null,
               "schema_errors": [],
               "state": null,
               "status": "not_run"
@@ -1500,7 +1625,7 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "59bb2f8ed6f1e26b4d6e4b06f45453ac0d14d4440377a6fada8a26492fd90a0d",
+        "canonical_output_logical_checksum": "8ced848d8997586b067dd8d32fe3c0997bfd1c7bba6a2b07860c735b4e074a6a",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1510,6 +1635,16 @@
             "track_point_rows_ordered_by_64_bit_id": true
           },
           "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
             "business_tables_present": [
               "ACTIVITY",
               "GPS_POINTS"
@@ -1531,6 +1666,7 @@
           "expected_track_points": 6,
           "scenarios": {
             "interrupt_after_partial_point_prefix": {
+              "canonical_record_count": 9,
               "duplicate_attempts_prevented": 2,
               "duplicate_rows": 0,
               "exact_final_equality": true,
@@ -1571,9 +1707,13 @@
                 "sessions": 3,
                 "track_points": 6
               },
+              "replay_attempts_cover_canonical_set": true,
+              "rerun_record_count": 9,
+              "rerun_records_exactly_canonical": true,
               "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
             },
             "interrupt_after_session_row": {
+              "canonical_record_count": 9,
               "duplicate_attempts_prevented": 1,
               "duplicate_rows": 0,
               "exact_final_equality": true,
@@ -1614,6 +1754,9 @@
                 "sessions": 3,
                 "track_points": 6
               },
+              "replay_attempts_cover_canonical_set": true,
+              "rerun_record_count": 9,
+              "rerun_records_exactly_canonical": true,
               "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
             },
             "receipt_gap_replay": {

@@ -9,6 +9,16 @@
       "track_point_rows_ordered_by_64_bit_id": true
     },
     "schema": {
+      "android_metadata": {
+        "row_count": 1,
+        "schema_errors": [],
+        "state": "valid",
+        "storage_types": [
+          "text"
+        ],
+        "table_present": true,
+        "valid_locale_rows": 1
+      },
       "business_tables_present": [
         "ACTIVITY",
         "GPS_POINTS"
@@ -32,6 +42,7 @@
     "expected_track_points": 6,
     "scenarios": {
       "interrupt_after_partial_point_prefix": {
+        "canonical_record_count": 9,
         "duplicate_attempts_prevented": 2,
         "duplicate_rows": 0,
         "exact_final_equality": true,
@@ -72,9 +83,13 @@
           "sessions": 3,
           "track_points": 6
         },
+        "replay_attempts_cover_canonical_set": true,
+        "rerun_record_count": 9,
+        "rerun_records_exactly_canonical": true,
         "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
       },
       "interrupt_after_session_row": {
+        "canonical_record_count": 9,
         "duplicate_attempts_prevented": 1,
         "duplicate_rows": 0,
         "exact_final_equality": true,
@@ -115,6 +130,9 @@
           "sessions": 3,
           "track_points": 6
         },
+        "replay_attempts_cover_canonical_set": true,
+        "rerun_record_count": 9,
+        "rerun_records_exactly_canonical": true,
         "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
       },
       "receipt_gap_replay": {

@@ -9,6 +9,16 @@
       "track_point_rows_ordered_by_64_bit_id": true
     },
     "schema": {
+      "android_metadata": {
+        "row_count": 1,
+        "schema_errors": [],
+        "state": "valid",
+        "storage_types": [
+          "text"
+        ],
+        "table_present": true,
+        "valid_locale_rows": 1
+      },
       "business_tables_present": [
         "ACTIVITY",
         "GPS_POINTS"

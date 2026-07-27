@@ -12,10 +12,11 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 23 defect detectors.
+# all 31 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
-# Regenerate twice and compare every committed artifact byte-for-byte.
+# Regenerate twice. Standard databases are compared logically; artifacts whose
+# bytes are contractual are compared byte-for-byte.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 
 # Run the standard-library unit tests.
@@ -46,6 +47,7 @@ that round-trip to the same double are stable while `1.000000000000001` changed
 to `1.0` fails. Explicit epsilon probes remain available only where a test
 declares that weaker contract. The idempotency oracle counts every attempted,
 inserted, and prevented duplicate insert, computes final duplicate rows,
+requires every interrupted rerun to replay the exact full canonical record set,
 requires exact final-state equality, and covers a target-commit/receipt-gap
 replay that inserts zero rows before completing the receipt.
 To validate an ETL test export, emit matching files named `<fixture>.json` and
@@ -55,6 +57,22 @@ run:
 python3 tools/legacy-fixtures/legacy_fixtures.py verify \
   --candidate-dir path/to/candidate-json
 ```
+
+Schema readiness also requires the exact `android_metadata (locale TEXT)` table
+shape and exactly one non-empty, locale-shaped TEXT row. Missing, empty,
+non-TEXT, invalid-value, and multi-row metadata states are explicit
+`malformed_schema` diagnostics and block migration before source reads or
+target/receipt writes.
+
+## Deterministic regeneration
+
+Every standard SQLite artifact is marked `exact_bytes_required: false`.
+Regeneration compares its integrity, schema, platform metadata, and type-tagged
+business rows logically. Harmless SQLite read/write-version header differences
+therefore pass, while any schema, metadata, type, or row-value change fails.
+Artifacts marked `exact_bytes_required: true` remain byte-for-byte contracts,
+and canonical JSON outputs remain byte-stable. Manifest comparison ignores only
+non-contractual byte lengths for standard database artifacts.
 
 ## Active WAL snapshot
 
@@ -82,7 +100,10 @@ preflight layers:
   exact schema validation fails;
 - truncated file: declared page count exceeds file length, so integrity and
   schema reads are not attempted;
-- corrupt file: file length/header pass, then `PRAGMA integrity_check` fails.
+- corrupt file: file length/header pass, then `PRAGMA integrity_check` fails;
+- illegal page-size header: every encoding other than `1` (65536 bytes) or a
+  power of two from 512 through 32768 is classified as corrupt before modulus,
+  integrity, schema, source-read, target-write, or receipt logic.
 
 Each expected output requires a blocked migration, zero source rows read, no
 target write attempt, zero target rows, and no receipt attempt or receipt.

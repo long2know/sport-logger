@@ -7,6 +7,7 @@
         "actual_bytes": 16384,
         "declared_bytes": 20480,
         "declared_pages": 5,
+        "encoded_page_size": 4096,
         "page_size": 4096,
         "status": "truncated"
       },
@@ -15,6 +16,7 @@
         "status": "not_run"
       },
       "schema_check": {
+        "android_metadata": null,
         "schema_errors": [],
         "state": null,
         "status": "not_run"

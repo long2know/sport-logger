@@ -30,7 +30,11 @@ FIXTURE_NAMESPACE = uuid.uuid5(
     "https://github.com/long2know/sport-logger/legacy-fixtures/v1",
 )
 TIMESTAMP_PATTERN = re.compile(r"^[0-9]{14}$")
+ANDROID_LOCALE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_#-]*$")
 SQLITE_HEADER = b"SQLite format 3\x00"
+SQLITE_PAGE_SIZE_ENCODINGS = frozenset(
+    (1, 512, 1024, 2048, 4096, 8192, 16384, 32768)
+)
 
 STORAGE_STANDARD = "standard"
 STORAGE_ACTIVE_WAL = "active_wal"
@@ -1278,6 +1282,10 @@ def sqlite_page_size(database_bytes: bytes) -> int:
     if len(database_bytes) < 100 or database_bytes[:16] != SQLITE_HEADER:
         raise FixtureValidationError("File lacks a complete SQLite header")
     encoded_page_size = int.from_bytes(database_bytes[16:18], "big")
+    if encoded_page_size not in SQLITE_PAGE_SIZE_ENCODINGS:
+        raise FixtureValidationError(
+            "Invalid SQLite page-size encoding {}".format(encoded_page_size)
+        )
     return 65536 if encoded_page_size == 1 else encoded_page_size
 
 
@@ -1410,6 +1418,77 @@ def platform_metadata_payload(connection: sqlite3.Connection) -> Mapping[str, An
     }
 
 
+def valid_android_locale(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and "\x00" not in value
+        and ANDROID_LOCALE_PATTERN.fullmatch(value) is not None
+    )
+
+
+def android_metadata_diagnostics(
+    connection: sqlite3.Connection,
+    user_tables: Optional[Iterable[str]] = None,
+) -> Mapping[str, Any]:
+    tables = set(user_tables) if user_tables is not None else set(
+        user_table_names(connection)
+    )
+    if "android_metadata" not in tables:
+        return {
+            "state": "missing_table",
+            "table_present": False,
+            "row_count": 0,
+            "valid_locale_rows": 0,
+            "storage_types": [],
+            "schema_errors": ["android_metadata:missing_table"],
+        }
+    if table_info(connection, "android_metadata") != EXPECTED_TABLE_INFO[
+        "android_metadata"
+    ]:
+        return {
+            "state": "invalid_schema",
+            "table_present": True,
+            "row_count": None,
+            "valid_locale_rows": 0,
+            "storage_types": [],
+            "schema_errors": ["android_metadata:table_info"],
+        }
+
+    rows = tuple(
+        connection.execute(
+            "SELECT locale, typeof(locale) FROM android_metadata ORDER BY rowid"
+        )
+    )
+    storage_types = [str(row[1]) for row in rows]
+    valid_locale_rows = sum(
+        1
+        for locale, storage_type in rows
+        if storage_type == "text" and valid_android_locale(locale)
+    )
+    errors: List[str] = []
+    if len(rows) != 1:
+        errors.append("android_metadata:row_count")
+        state = "empty" if not rows else "multiple_rows"
+    elif rows[0][1] != "text":
+        errors.append("android_metadata:locale_storage_type")
+        state = "invalid_locale_type"
+    elif not valid_android_locale(rows[0][0]):
+        errors.append("android_metadata:locale_value")
+        state = "invalid_locale_value"
+    else:
+        state = "valid"
+    return {
+        "state": state,
+        "table_present": True,
+        "row_count": len(rows),
+        "valid_locale_rows": valid_locale_rows,
+        "storage_types": storage_types,
+        "schema_errors": errors,
+    }
+
+
 def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
     user_tables = set(user_table_names(connection))
     business_tables_present = [
@@ -1418,13 +1497,14 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
     missing_business_tables = [
         table for table in BUSINESS_TABLES if table not in user_tables
     ]
-    schema_errors: List[str] = []
-    for table in PLATFORM_TABLES + BUSINESS_TABLES:
+    metadata_diagnostics = android_metadata_diagnostics(connection, user_tables)
+    schema_errors: List[str] = list(metadata_diagnostics["schema_errors"])
+    for table in BUSINESS_TABLES:
         if table not in user_tables:
             continue
         if table_info(connection, table) != EXPECTED_TABLE_INFO[table]:
             schema_errors.append("{}:table_info".format(table))
-        if table in BUSINESS_TABLES and tuple(
+        if tuple(
             connection.execute('PRAGMA foreign_key_list("{}")'.format(table))
         ):
             schema_errors.append("{}:foreign_keys".format(table))
@@ -1452,6 +1532,7 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
         "platform_tables_present": [
             table for table in PLATFORM_TABLES if table in user_tables
         ],
+        "android_metadata": metadata_diagnostics,
         "unexpected_tables": unexpected_tables,
         "schema_errors": sorted(schema_errors),
     }
@@ -1471,22 +1552,21 @@ def validate_schema(
             )
         )
     user_tables = set(user_table_names(connection))
+    metadata_diagnostics = android_metadata_diagnostics(connection, user_tables)
+    if metadata_diagnostics["state"] != "valid":
+        raise FixtureValidationError(
+            "{} android_metadata is invalid: state {}, errors {}".format(
+                label,
+                metadata_diagnostics["state"],
+                metadata_diagnostics["schema_errors"],
+            )
+        )
     expected_tables = expected_business_table_set | set(PLATFORM_TABLES)
     if user_tables != expected_tables:
         raise FixtureValidationError(
             "{} tables mismatch: expected {}, found {}".format(
                 label, sorted(expected_tables), sorted(user_tables)
             )
-        )
-    metadata_rows = tuple(
-        connection.execute(
-            "SELECT locale, typeof(locale) FROM android_metadata ORDER BY rowid"
-        )
-    )
-    if len(metadata_rows) != 1 or metadata_rows[0][1] != "text":
-        raise FixtureValidationError(
-            "{} android_metadata must contain exactly one TEXT locale row; "
-            "found {!r}".format(label, metadata_rows)
         )
     for table in PLATFORM_TABLES + BUSINESS_TABLES:
         if table not in expected_tables:
@@ -1522,6 +1602,7 @@ def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
         return {
             "status": "truncated",
             "actual_bytes": size,
+            "encoded_page_size": None,
             "page_size": None,
             "declared_pages": None,
             "declared_bytes": None,
@@ -1530,11 +1611,23 @@ def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
         return {
             "status": "invalid_header",
             "actual_bytes": size,
+            "encoded_page_size": None,
             "page_size": None,
             "declared_pages": None,
             "declared_bytes": None,
         }
-    page_size = sqlite_page_size(header)
+    encoded_page_size = int.from_bytes(header[16:18], "big")
+    try:
+        page_size = sqlite_page_size(header)
+    except FixtureValidationError:
+        return {
+            "status": "invalid_page_size",
+            "actual_bytes": size,
+            "encoded_page_size": encoded_page_size,
+            "page_size": None,
+            "declared_pages": None,
+            "declared_bytes": None,
+        }
     declared_pages = int.from_bytes(header[28:32], "big")
     declared_bytes = declared_pages * page_size
     if size < declared_bytes or size % page_size != 0:
@@ -1546,6 +1639,7 @@ def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
     return {
         "status": status,
         "actual_bytes": size,
+        "encoded_page_size": encoded_page_size,
         "page_size": page_size,
         "declared_pages": declared_pages,
         "declared_bytes": declared_bytes,
@@ -1598,11 +1692,21 @@ def build_blocked_preflight_output(
     if structure["status"] == "truncated":
         detected_reason = "truncated_sqlite"
         integrity = {"status": "not_run", "result_count": 0}
-        schema_check = {"status": "not_run", "state": None, "schema_errors": []}
+        schema_check = {
+            "status": "not_run",
+            "state": None,
+            "schema_errors": [],
+            "android_metadata": None,
+        }
     elif structure["status"] != "complete":
         detected_reason = "corrupt_sqlite"
         integrity = {"status": "not_run", "result_count": 0}
-        schema_check = {"status": "not_run", "state": None, "schema_errors": []}
+        schema_check = {
+            "status": "not_run",
+            "state": None,
+            "schema_errors": [],
+            "android_metadata": None,
+        }
     else:
         integrity = sqlite_integrity_diagnostics(database)
         if integrity["status"] != "passed":
@@ -1611,6 +1715,7 @@ def build_blocked_preflight_output(
                 "status": "not_run",
                 "state": None,
                 "schema_errors": [],
+                "android_metadata": None,
             }
         else:
             with open_readonly(database) as connection:
@@ -1623,6 +1728,7 @@ def build_blocked_preflight_output(
                 ),
                 "state": diagnostics["state"],
                 "schema_errors": diagnostics["schema_errors"],
+                "android_metadata": diagnostics["android_metadata"],
             }
             if schema_check["status"] == "failed":
                 detected_reason = diagnostics["state"]
@@ -2307,6 +2413,32 @@ def expected_migration_state(
     return migration_state_payload(by_source)
 
 
+def canonical_migration_records(
+    records: Sequence[Tuple[str, Mapping[str, Any]]],
+) -> List[Mapping[str, Any]]:
+    return [
+        {
+            "kind": kind,
+            "record": record,
+        }
+        for kind, record in records
+    ]
+
+
+def assert_exact_migration_records(
+    label: str,
+    actual_records: Sequence[Tuple[str, Mapping[str, Any]]],
+    expected_records: Sequence[Tuple[str, Mapping[str, Any]]],
+) -> None:
+    if canonical_json_bytes(
+        canonical_migration_records(actual_records)
+    ) != canonical_json_bytes(canonical_migration_records(expected_records)):
+        raise FixtureValidationError(
+            "{} rerun records do not exactly match the canonical migration "
+            "records".format(label)
+        )
+
+
 def assert_exact_final_state(
     label: str,
     actual_state: Sequence[Mapping[str, Any]],
@@ -2334,6 +2466,11 @@ def simulate_interrupted_insert_attempts(
         )
     rerun = rerun_output if rerun_output is not None else first_output
     rerun_records = ordered_migration_records(rerun)
+    assert_exact_migration_records(
+        interruption_point,
+        rerun_records,
+        first_records,
+    )
     expected_state = expected_migration_state(first_records)
     by_source: Dict[str, Mapping[str, Any]] = {}
     by_id: Dict[str, str] = {}
@@ -2347,6 +2484,16 @@ def simulate_interrupted_insert_attempts(
     first_attempt.update(migration_state_counts(by_source))
     first_attempt["migration_complete"] = False
     first_attempt["receipt_present"] = False
+    if (
+        first_attempt["attempted_rows"] != interruption_after_attempts
+        or first_attempt["inserted_rows"] != interruption_after_attempts
+        or first_attempt["duplicate_attempts"] != 0
+    ):
+        raise FixtureValidationError(
+            "{} first attempt is not the canonical committed prefix".format(
+                interruption_point
+            )
+        )
 
     replay = apply_insert_attempts(by_source, by_id, rerun_records)
     replay = dict(replay)
@@ -2354,6 +2501,30 @@ def simulate_interrupted_insert_attempts(
     replay["migration_complete"] = True
     replay["receipt_present"] = True
     replay["receipt_completed"] = True
+    canonical_sessions = sum(1 for kind, _ in first_records if kind == "session")
+    canonical_track_points = sum(
+        1 for kind, _ in first_records if kind == "track_point"
+    )
+    if (
+        replay["attempted_rows"] != len(first_records)
+        or replay["attempted_sessions"] != canonical_sessions
+        or replay["attempted_track_points"] != canonical_track_points
+        or replay["duplicate_attempts"] != interruption_after_attempts
+        or replay["duplicate_session_attempts"]
+        != first_attempt["inserted_sessions"]
+        or replay["duplicate_track_point_attempts"]
+        != first_attempt["inserted_track_points"]
+        or replay["inserted_rows"]
+        != len(first_records) - interruption_after_attempts
+        or replay["inserted_sessions"]
+        != canonical_sessions - first_attempt["inserted_sessions"]
+        or replay["inserted_track_points"]
+        != canonical_track_points - first_attempt["inserted_track_points"]
+    ):
+        raise FixtureValidationError(
+            "{} replay attempts do not account for the full canonical record "
+            "set".format(interruption_point)
+        )
 
     final_state = migration_state_payload(by_source)
     assert_exact_final_state(interruption_point, final_state, expected_state)
@@ -2363,6 +2534,10 @@ def simulate_interrupted_insert_attempts(
     return {
         "interruption_point": interruption_point,
         "interruption_after_attempts": interruption_after_attempts,
+        "canonical_record_count": len(first_records),
+        "rerun_record_count": len(rerun_records),
+        "rerun_records_exactly_canonical": True,
+        "replay_attempts_cover_canonical_set": True,
         "first_attempt": first_attempt,
         "replay": replay,
         "duplicate_attempts_prevented": duplicate_attempts_prevented,
@@ -2957,8 +3132,11 @@ def validate_output_invariants(
                     )
                 )
             preflight = output["diagnostics"]["preflight"]
-            if preflight["file_structure"]["status"] == "truncated":
+            structure_status = preflight["file_structure"]["status"]
+            if structure_status == "truncated":
                 detected_reason = "truncated_sqlite"
+            elif structure_status != "complete":
+                detected_reason = "corrupt_sqlite"
             elif preflight["integrity_check"]["status"] == "failed":
                 detected_reason = "corrupt_sqlite"
             else:
@@ -3018,6 +3196,18 @@ def validate_output_invariants(
         if schema_diagnostic["migration_readiness"] != expected_readiness:
             raise FixtureValidationError(
                 "{} migration-readiness diagnostic mismatch".format(fixture_name)
+            )
+        if schema_diagnostic["android_metadata"] != {
+            "state": "valid",
+            "table_present": True,
+            "row_count": 1,
+            "valid_locale_rows": 1,
+            "storage_types": ["text"],
+            "schema_errors": [],
+        }:
+            raise FixtureValidationError(
+                "{} must report exactly one valid TEXT android_metadata locale "
+                "row".format(fixture_name)
             )
         if schema_diagnostic["platform_tables_present"] != ["android_metadata"]:
             raise FixtureValidationError(
@@ -3207,6 +3397,46 @@ def validate_output_invariants(
                 "interrupt_after_partial_point_prefix",
             ):
                 scenario = scenarios[scenario_name]
+                first_attempt = scenario["first_attempt"]
+                replay = scenario["replay"]
+                if (
+                    scenario["canonical_record_count"]
+                    != idempotency["canonical_insert_rows"]
+                    or scenario["rerun_record_count"]
+                    != idempotency["canonical_insert_rows"]
+                    or scenario["rerun_records_exactly_canonical"] is not True
+                    or scenario["replay_attempts_cover_canonical_set"] is not True
+                    or first_attempt["attempted_rows"]
+                    != scenario["interruption_after_attempts"]
+                    or first_attempt["inserted_rows"]
+                    != scenario["interruption_after_attempts"]
+                    or first_attempt["duplicate_attempts"] != 0
+                    or replay["attempted_rows"]
+                    != idempotency["canonical_insert_rows"]
+                    or replay["attempted_sessions"]
+                    != idempotency["expected_sessions"]
+                    or replay["attempted_track_points"]
+                    != idempotency["expected_track_points"]
+                    or replay["duplicate_attempts"]
+                    != scenario["interruption_after_attempts"]
+                    or replay["duplicate_session_attempts"]
+                    != first_attempt["inserted_sessions"]
+                    or replay["duplicate_track_point_attempts"]
+                    != first_attempt["inserted_track_points"]
+                    or replay["inserted_rows"]
+                    != idempotency["canonical_insert_rows"]
+                    - scenario["interruption_after_attempts"]
+                    or replay["inserted_sessions"]
+                    != idempotency["expected_sessions"]
+                    - first_attempt["inserted_sessions"]
+                    or replay["inserted_track_points"]
+                    != idempotency["expected_track_points"]
+                    - first_attempt["inserted_track_points"]
+                ):
+                    raise FixtureValidationError(
+                        "{} {} replay does not cover the full canonical record "
+                        "set".format(fixture_name, scenario_name)
+                    )
                 for phase_name in ("first_attempt", "replay"):
                     phase = scenario[phase_name]
                     if (
@@ -3486,6 +3716,27 @@ def run_mutation_detection_tests(
             "Validator self-test did not detect partial_rerun_missing_row"
         )
 
+    bad_rerun = copy.deepcopy(interrupted)
+    committed_prefix_row = bad_rerun["track_points"].pop(0)
+    if committed_prefix_row["legacy_id"] != 1:
+        raise FixtureValidationError(
+            "Idempotency fixture lost its committed-prefix point control"
+        )
+    try:
+        simulate_interrupted_insert_attempts(
+            interrupted,
+            interruption_after_attempts=2,
+            interruption_point="after_partial_point_prefix",
+            rerun_output=bad_rerun,
+        )
+    except FixtureValidationError:
+        passed.append("partial_rerun_committed_prefix_row_missing")
+    else:
+        raise FixtureValidationError(
+            "Validator self-test did not detect "
+            "partial_rerun_committed_prefix_row_missing"
+        )
+
     candidate = copy.deepcopy(expected_outputs)
     receipt_gap_replay = candidate["interrupted_idempotency"]["idempotency"][
         "scenarios"
@@ -3566,6 +3817,173 @@ def run_storage_detection_tests(
                 "$.storage.{}".format(fixture_name),
             )
             passed.append(detector_name)
+
+        metadata_source = root / "fixtures" / "empty.db"
+        metadata_mutations = (
+            (
+                "android_metadata_missing",
+                ("DROP TABLE android_metadata",),
+                "missing_table",
+                "android_metadata:missing_table",
+            ),
+            (
+                "android_metadata_empty",
+                ("DELETE FROM android_metadata",),
+                "empty",
+                "android_metadata:row_count",
+            ),
+            (
+                "android_metadata_wrong_type",
+                (
+                    "DELETE FROM android_metadata",
+                    "INSERT INTO android_metadata (locale) "
+                    "VALUES (X'656e5f5553')",
+                ),
+                "invalid_locale_type",
+                "android_metadata:locale_storage_type",
+            ),
+            (
+                "android_metadata_invalid_value",
+                (
+                    "DELETE FROM android_metadata",
+                    "INSERT INTO android_metadata (locale) "
+                    "VALUES ('not a locale')",
+                ),
+                "invalid_locale_value",
+                "android_metadata:locale_value",
+            ),
+            (
+                "android_metadata_multiple_rows",
+                (
+                    "INSERT INTO android_metadata (locale) VALUES ('fr_CA')",
+                ),
+                "multiple_rows",
+                "android_metadata:row_count",
+            ),
+        )
+        for detector_name, statements, expected_state, expected_error in (
+            metadata_mutations
+        ):
+            mutated_database = work_dir / "{}.db".format(detector_name)
+            shutil.copyfile(metadata_source, mutated_database)
+            connection = sqlite3.connect(str(mutated_database))
+            try:
+                with connection:
+                    for statement in statements:
+                        connection.execute(statement)
+            finally:
+                connection.close()
+            with open_readonly(mutated_database) as connection:
+                diagnostics = schema_diagnostics(connection)
+                if (
+                    diagnostics["state"] != "malformed_schema"
+                    or diagnostics["migration_readiness"] != "blocked"
+                    or diagnostics["android_metadata"]["state"]
+                    != expected_state
+                    or expected_error not in diagnostics["schema_errors"]
+                ):
+                    raise FixtureValidationError(
+                        "Validator self-test did not diagnose {}".format(
+                            detector_name
+                        )
+                    )
+                try:
+                    validate_schema(
+                        connection,
+                        detector_name,
+                    )
+                except FixtureValidationError:
+                    passed.append(detector_name)
+                else:
+                    raise FixtureValidationError(
+                        "Validator self-test did not reject {}".format(
+                            detector_name
+                        )
+                    )
+            blocked = build_blocked_preflight_output(
+                cases["malformed_schema"],
+                mutated_database,
+            )
+            if (
+                blocked["diagnostics"]["preflight"]["schema_check"][
+                    "android_metadata"
+                ]["state"]
+                != expected_state
+                or blocked["migration_expectations"]
+                != blocked_migration_expectations("malformed_schema")
+            ):
+                raise FixtureValidationError(
+                    "{} did not block before source or target side effects".format(
+                        detector_name
+                    )
+                )
+
+        corrupt_case = cases["corrupt"]
+        for encoded_page_size in (0, 2, 511, 513, 32767, 32769, 65535):
+            invalid_page_size = work_dir / "invalid-page-size-{}.db".format(
+                encoded_page_size
+            )
+            shutil.copyfile(metadata_source, invalid_page_size)
+            database_bytes = bytearray(invalid_page_size.read_bytes())
+            database_bytes[16:18] = encoded_page_size.to_bytes(2, "big")
+            invalid_page_size.write_bytes(database_bytes)
+            output = build_blocked_preflight_output(
+                corrupt_case,
+                invalid_page_size,
+            )
+            expectations = output["migration_expectations"]
+            if (
+                output["diagnostics"]["preflight"]["file_structure"]["status"]
+                != "invalid_page_size"
+                or expectations != blocked_migration_expectations(
+                    "corrupt_sqlite"
+                )
+            ):
+                raise FixtureValidationError(
+                    "Validator self-test did not safely block page-size "
+                    "encoding {}".format(encoded_page_size)
+                )
+        passed.append("invalid_sqlite_page_size_preflight")
+
+        representative_case = cases["representative"]
+        representative_database = root / "fixtures" / "representative.db"
+        writer_header_variant = work_dir / "writer-header-variant.db"
+        shutil.copyfile(representative_database, writer_header_variant)
+        database_bytes = bytearray(writer_header_variant.read_bytes())
+        database_bytes[18] = 2 if database_bytes[18] == 1 else 1
+        database_bytes[19] = 2 if database_bytes[19] == 1 else 1
+        writer_header_variant.write_bytes(database_bytes)
+        compare_standard_database_artifacts(
+            "writer header variation",
+            representative_database,
+            writer_header_variant,
+            representative_case,
+        )
+
+        logical_drift = work_dir / "standard-logical-drift.db"
+        shutil.copyfile(representative_database, logical_drift)
+        connection = sqlite3.connect(str(logical_drift))
+        try:
+            with connection:
+                connection.execute(
+                    "UPDATE ACTIVITY SET NAME = ? WHERE ID = 1",
+                    ("Changed logical value",),
+                )
+        finally:
+            connection.close()
+        try:
+            compare_standard_database_artifacts(
+                "logical drift",
+                representative_database,
+                logical_drift,
+                representative_case,
+            )
+        except FixtureValidationError:
+            passed.append("standard_database_logical_drift")
+        else:
+            raise FixtureValidationError(
+                "Validator self-test did not detect standard_database_logical_drift"
+            )
     finally:
         if work_dir.exists():
             shutil.rmtree(work_dir)
@@ -3716,14 +4134,111 @@ def verify_corpus(
     }
 
 
-def corpus_artifact_bytes(root: Path) -> Mapping[str, bytes]:
+def corpus_artifact_paths(root: Path) -> Mapping[str, Path]:
     paths = [root / "manifest.json"]
     paths.extend(sorted((root / "expected").glob("*.json")))
     paths.extend(sorted(path for path in (root / "fixtures").iterdir() if path.is_file()))
     return {
-        path.relative_to(root).as_posix(): path.read_bytes()
+        path.relative_to(root).as_posix(): path
         for path in paths
     }
+
+
+def standard_database_logical_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage != STORAGE_STANDARD:
+        raise FixtureValidationError(
+            "{} is not a standard logical-database fixture".format(case.key)
+        )
+    structure = sqlite_file_structure_diagnostics(database)
+    if structure["status"] != "complete":
+        raise FixtureValidationError(
+            "{} has invalid file structure {}".format(
+                database,
+                structure["status"],
+            )
+        )
+    integrity = sqlite_integrity_diagnostics(database)
+    if integrity["status"] != "passed":
+        raise FixtureValidationError(
+            "{} failed SQLite integrity validation".format(database)
+        )
+    with open_readonly(database) as connection:
+        validate_schema(connection, str(database), case.business_tables)
+        rows_by_table = read_all_rows(connection)
+        compare_rows_to_case(case, rows_by_table)
+        return {
+            "schema": schema_payload(connection),
+            "schema_diagnostics": schema_diagnostics(connection),
+            "platform_metadata": platform_metadata_payload(connection),
+            "business_rows": {
+                table: [
+                    [typed_value(value) for value in row]
+                    for row in rows_by_table[table]
+                ]
+                for table in BUSINESS_TABLES
+            },
+        }
+
+
+def compare_standard_database_artifacts(
+    label: str,
+    expected_database: Path,
+    actual_database: Path,
+    case: FixtureCase,
+) -> None:
+    expected_snapshot = standard_database_logical_snapshot(
+        expected_database,
+        case,
+    )
+    actual_snapshot = standard_database_logical_snapshot(
+        actual_database,
+        case,
+    )
+    compare_json(
+        expected_snapshot,
+        actual_snapshot,
+        "$.logical_database.{}".format(label),
+    )
+
+
+def manifest_artifact_requirements(
+    manifest: Mapping[str, Any],
+) -> Tuple[Mapping[str, bool], Mapping[str, str]]:
+    exact_bytes: Dict[str, bool] = {}
+    fixture_by_path: Dict[str, str] = {}
+    for entry in manifest.get("fixtures", []):
+        fixture_name = entry["name"]
+        for artifact in entry.get("artifacts", []):
+            path = artifact["path"]
+            exact = artifact.get("exact_bytes_required")
+            if not isinstance(exact, bool):
+                raise FixtureValidationError(
+                    "{} artifact {} lacks exact_bytes_required".format(
+                        fixture_name,
+                        path,
+                    )
+                )
+            if path in exact_bytes:
+                raise FixtureValidationError(
+                    "Duplicate manifest artifact path {}".format(path)
+                )
+            exact_bytes[path] = exact
+            fixture_by_path[path] = fixture_name
+    return exact_bytes, fixture_by_path
+
+
+def deterministic_manifest_payload(
+    manifest: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    payload = copy.deepcopy(manifest)
+    for entry in payload.get("fixtures", []):
+        for artifact in entry.get("artifacts", []):
+            if artifact.get("exact_bytes_required") is False:
+                artifact.pop("bytes", None)
+    return payload
 
 
 def verify_deterministic_regeneration(
@@ -3738,9 +4253,9 @@ def verify_deterministic_regeneration(
     try:
         generate_corpus(first)
         generate_corpus(second)
-        first_artifacts = corpus_artifact_bytes(first)
-        second_artifacts = corpus_artifact_bytes(second)
-        committed_artifacts = corpus_artifact_bytes(root)
+        first_artifacts = corpus_artifact_paths(first)
+        second_artifacts = corpus_artifact_paths(second)
+        committed_artifacts = corpus_artifact_paths(root)
         if set(first_artifacts) != set(second_artifacts):
             raise FixtureValidationError(
                 "Deterministic generations produced different artifact sets"
@@ -3749,21 +4264,87 @@ def verify_deterministic_regeneration(
             raise FixtureValidationError(
                 "Committed corpus artifact set differs from regeneration"
             )
-        mismatches = [
-            path
-            for path in sorted(first_artifacts)
-            if first_artifacts[path] != second_artifacts[path]
-            or first_artifacts[path] != committed_artifacts[path]
-        ]
+
+        committed_manifest = load_json(root / "manifest.json")
+        first_manifest = load_json(first / "manifest.json")
+        second_manifest = load_json(second / "manifest.json")
+        compare_json(
+            deterministic_manifest_payload(committed_manifest),
+            deterministic_manifest_payload(first_manifest),
+            "$.determinism.first_manifest",
+        )
+        compare_json(
+            deterministic_manifest_payload(committed_manifest),
+            deterministic_manifest_payload(second_manifest),
+            "$.determinism.second_manifest",
+        )
+        committed_requirements, fixture_by_path = manifest_artifact_requirements(
+            committed_manifest
+        )
+        first_requirements, _ = manifest_artifact_requirements(first_manifest)
+        second_requirements, _ = manifest_artifact_requirements(second_manifest)
+        compare_json(
+            committed_requirements,
+            first_requirements,
+            "$.determinism.first_artifact_requirements",
+        )
+        compare_json(
+            committed_requirements,
+            second_requirements,
+            "$.determinism.second_artifact_requirements",
+        )
+
+        cases = {case.key: case for case in fixture_cases()}
+        mismatches: List[str] = []
+        exact_byte_artifact_count = 0
+        logical_database_artifact_count = 0
+        for path in sorted(first_artifacts):
+            if path == "manifest.json":
+                continue
+            exact_bytes_required = committed_requirements.get(path)
+            if exact_bytes_required is False:
+                fixture_name = fixture_by_path[path]
+                case = cases[fixture_name]
+                if case.storage != STORAGE_STANDARD or not path.endswith(".db"):
+                    raise FixtureValidationError(
+                        "{} is marked for logical comparison but is not a "
+                        "standard database artifact".format(path)
+                    )
+                compare_standard_database_artifacts(
+                    "{} first/second".format(fixture_name),
+                    first_artifacts[path],
+                    second_artifacts[path],
+                    case,
+                )
+                compare_standard_database_artifacts(
+                    "{} regenerated/committed".format(fixture_name),
+                    first_artifacts[path],
+                    committed_artifacts[path],
+                    case,
+                )
+                logical_database_artifact_count += 1
+                continue
+
+            exact_byte_artifact_count += 1
+            first_bytes = first_artifacts[path].read_bytes()
+            if (
+                first_bytes != second_artifacts[path].read_bytes()
+                or first_bytes != committed_artifacts[path].read_bytes()
+            ):
+                mismatches.append(path)
         if mismatches:
             raise FixtureValidationError(
-                "Byte-for-byte deterministic regeneration failed for {}".format(
+                "Exact-byte deterministic regeneration failed for {}".format(
                     mismatches
                 )
             )
         return {
             "artifact_count": len(first_artifacts),
             "fixture_count": len(fixture_cases()),
+            "exact_byte_artifact_count": exact_byte_artifact_count,
+            "logical_database_artifact_count": (
+                logical_database_artifact_count
+            ),
         }
     finally:
         if work_dir.exists():
@@ -3995,8 +4576,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     subparsers.add_parser(
         "verify-determinism",
         help=(
-            "Regenerate the full corpus twice and compare every committed artifact "
-            "byte-for-byte."
+            "Regenerate the full corpus twice, compare standard databases "
+            "logically, and compare exact-byte artifacts byte-for-byte."
         ),
     ).add_argument("--root", type=Path, default=TOOL_ROOT)
 
@@ -4058,10 +4639,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "verify-determinism":
             result = verify_deterministic_regeneration(args.root)
             print(
-                "Verified byte-for-byte regeneration of {} artifacts across {} "
-                "fixtures".format(
+                "Verified deterministic regeneration of {} artifacts across {} "
+                "fixtures ({} exact-byte artifacts, {} logical database "
+                "artifacts)".format(
                     result["artifact_count"],
                     result["fixture_count"],
+                    result["exact_byte_artifact_count"],
+                    result["logical_database_artifact_count"],
                 )
             )
             return 0
