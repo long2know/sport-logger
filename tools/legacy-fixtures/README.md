@@ -12,7 +12,7 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 31 defect detectors.
+# all 34 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
 # Regenerate twice. Standard databases are compared logically; artifacts whose
@@ -29,7 +29,7 @@ not required.
 
 ## Layout
 
-- `fixtures/*.db` — 15 SQLite inputs using Android's platform metadata table
+- `fixtures/*.db` — 16 SQLite inputs using Android's platform metadata table
   plus the source-reachable application schema state.
 - `fixtures/active_wal_snapshot.db-{wal,shm}` — the required sidecars for the
   active-WAL case. Its committed rows exist only in the WAL snapshot.
@@ -63,6 +63,32 @@ shape and exactly one non-empty, locale-shaped TEXT row. Missing, empty,
 non-TEXT, invalid-value, and multi-row metadata states are explicit
 `malformed_schema` diagnostics and block migration before source reads or
 target/receipt writes.
+
+## Locale-sensitive timestamps
+
+Legacy `Config.TimestampFormat` constructs `SimpleDateFormat("yyyyMMddHHmmss")`
+without a locale, so Android uses the device's default format locale. The
+`localized_timestamps` fixture records `android_metadata = ar_EG` and uses the
+Arabic-Indic text `٢٠٢٤٠٧٠٨٠٩١٠١١`, reproduced with Java 21
+`SimpleDateFormat("yyyyMMddHHmmss", Locale.forLanguageTag("ar-EG"))` for the
+same fields as ASCII `20240708091011`. Android documents the same
+locale-sensitive constructor/default-symbol contract, including a zero digit
+that differs for Arabic; the checked fixture text is deterministic and does not
+depend on the Python host locale. See the Android
+[`SimpleDateFormat(String)`](https://developer.android.com/reference/java/text/SimpleDateFormat#SimpleDateFormat(java.lang.String))
+and
+[`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
+contracts. This source text is preserved exactly in canonical rows,
+rejected-row diagnostics, representative values, and checksums.
+
+Validation converts each Unicode `Nd` decimal digit to its ASCII value only in a
+temporary parse buffer. It requires exactly 14 digits from one numbering-system
+block, then applies strict Gregorian date/time parsing. It still rejects mixed
+ASCII/Arabic-Indic or mixed Arabic digit sets, separators, direction marks,
+superscript and other non-`Nd` lookalikes, impossible dates, and invalid times.
+Defect detectors prove both that an ASCII-only ETL drops the valid localized
+rows and that a permissive per-character digit conversion wrongly accepts mixed
+numbering systems.
 
 ## Deterministic regeneration
 

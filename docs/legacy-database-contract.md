@@ -115,9 +115,10 @@ single locale row:
 CREATE TABLE IF NOT EXISTS android_metadata (locale TEXT);
 ```
 
-The committed fixtures use deterministic locale `en_US`; production locale text
-is device-dependent and must not become a source-database identity or migrated
-business row.
+Most committed fixtures use deterministic locale `en_US`; the
+`localized_timestamps` fixture uses `ar_EG` to reproduce the locale-sensitive
+legacy writer. Production locale text is device-dependent and must not become a
+source-database identity or migrated business row.
 
 The generator then executes these source statements verbatim:
 
@@ -212,8 +213,21 @@ timestamp or collapses equal timestamps fails the oracle.
 ## Timestamp rules
 
 `Config.TimestampFormat` is a process-global
-`SimpleDateFormat("yyyyMMddHHmmss")` using the device's default time zone and
-default lenient parsing (`Config.java:15-18`). Writers obtain local time,
+`SimpleDateFormat("yyyyMMddHHmmss")` using the device's default format locale,
+default time zone, and default lenient parsing (`Config.java:15-18`). The
+one-argument constructor is locale-sensitive, so numeric fields may be emitted
+with the locale's decimal digits rather than ASCII. For example, Java/Android
+formatting under `ar_EG` emits Arabic-Indic
+`٢٠٢٤٠٧٠٨٠٩١٠١١` for the fields represented by ASCII
+`20240708091011`. The checked expected string was reproduced with Java 21
+`SimpleDateFormat("yyyyMMddHHmmss", Locale.forLanguageTag("ar-EG"))`; Android
+documents that the one-argument constructor uses the default `FORMAT` locale,
+and its `DecimalFormatSymbols.getZeroDigit()` contract explicitly varies for
+Arabic. See Android's
+[`SimpleDateFormat(String)`](https://developer.android.com/reference/java/text/SimpleDateFormat#SimpleDateFormat(java.lang.String))
+and
+[`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
+documentation. Writers obtain local time,
 subtract the current zone offset, then format with that still-local formatter
 (`SqlLogger.java:65-73,121-129`). Consequences:
 
@@ -224,10 +238,15 @@ subtract the current zone offset, then format with that still-local formatter
 - parse failures are swallowed and become an unset Java `Date`
   (`SqlLogger.java:205-211,253-259,344-346`).
 
-The fixture oracle treats only a strictly valid 14-digit Gregorian timestamp as
-migratable and otherwise records a rejection. ETL must preserve the raw text
-for diagnostics and parse valid values as UTC without applying the device's
-current offset again.
+The fixture oracle treats only a strictly valid 14-`Nd`-digit Gregorian
+timestamp as migratable and otherwise records a rejection. For validation and
+parsing only, ETL must map Unicode decimal digits to their ASCII decimal values,
+require all 14 characters to come from one numbering-system block, and then
+apply strict Gregorian field validation. The original legacy text must remain
+unchanged in canonical source fields, diagnostics, representative values, and
+checksums. Separators, formatting controls, non-`Nd` lookalikes, mixed
+numbering systems, impossible dates, and invalid times remain rejected. Valid
+values parse as UTC without applying the device's current offset again.
 
 ## Source-backed defects that migration must not reproduce
 
@@ -279,6 +298,7 @@ The committed cases are:
 | `representative.db` | Multi-activity data, multiple points, optional nulls, zero/default coordinates, and a normal partial live row. |
 | `timestamp_ordering.db` | Duplicate and non-monotonic timestamps in required ascending 64-bit point-ID order. |
 | `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
+| `localized_timestamps.db` | `ar_EG` source metadata, valid Arabic-Indic timestamps preserved losslessly, and strict invalid-date/time, separator, non-`Nd`, and mixed-numbering controls. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
 | `malformed_schema.db` | Integrity-valid file whose `ACTIVITY.TIME` declaration is incompatible; exact schema preflight blocks before row reads. |
@@ -326,13 +346,14 @@ python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 ```
 
-The verifier runs 31 detectors covering integer and double narrowing,
+The verifier runs 34 detectors covering integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
 deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
 sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
 committed-prefix omission), receipt-gap completion, Android metadata readiness,
-illegal page-size encodings, logical database drift, and
-malformed/truncated/corrupt preflight side-effect prevention.
+illegal page-size encodings, logical database drift, ASCII-only localized
+timestamp loss, destructive timestamp text normalization, mixed-numbering
+acceptance, and malformed/truncated/corrupt preflight side-effect prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

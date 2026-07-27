@@ -3,6 +3,7 @@
   "fixture_namespace_uuid": "8f13caf0-f046-575f-b2cb-fa4a5fbd1ae6",
   "fixtures": [
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -110,6 +111,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 8192,
@@ -217,6 +219,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 16384,
@@ -325,6 +328,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -443,6 +447,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -559,6 +564,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -711,6 +717,7 @@
       "storage": "active_wal"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -857,6 +864,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -983,6 +991,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1173,6 +1182,142 @@
       "storage": "standard"
     },
     {
+      "android_locale": "ar_EG",
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/localized_timestamps.db"
+        }
+      ],
+      "database": "fixtures/localized_timestamps.db",
+      "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
+      "description": "Arabic-Egypt locale rows using the Arabic-Indic digits emitted by locale-sensitive SimpleDateFormat, plus strict malformed controls.",
+      "expected": {
+        "activity_rows": 6,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 5,
+          "rejected_track_point_rows": 4,
+          "sessions": 1,
+          "source_activity_rows": 6,
+          "source_track_point_rows": 6,
+          "track_points": 2
+        },
+        "canonical_output_logical_checksum": "ef3f2b2c346e52fe87592c950c64a21ec98f3846765e9b845766126034164fd5",
+        "diagnostics": {
+          "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
+          "schema": {
+            "android_metadata": {
+              "row_count": 1,
+              "schema_errors": [],
+              "state": "valid",
+              "storage_types": [
+                "text"
+              ],
+              "table_present": true,
+              "valid_locale_rows": 1
+            },
+            "business_tables_present": [
+              "ACTIVITY",
+              "GPS_POINTS"
+            ],
+            "migration_readiness": "ready",
+            "missing_business_tables": [],
+            "platform_tables_present": [
+              "android_metadata"
+            ],
+            "schema_errors": [],
+            "state": "complete",
+            "unexpected_tables": []
+          }
+        },
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "cda7608c763f67f022fdf62d6f0d4a2ddd2be5870e2a17402d63b5e9c8546f5f",
+          "database": "9d9a789d2d43989750306b2340e5c416ef5af59c205ae9ac25fa8fdbcbbefa7d",
+          "gps_points": "5cf3c3bb06cf4edf4256c63aaeb244617d0c35c908886904588364eafe93b2a7"
+        },
+        "physical_orphan_track_points": 0,
+        "platform_metadata": {
+          "android_metadata": {
+            "business_data": false,
+            "rows": [
+              {
+                "locale": "ar_EG",
+                "storage_type": "text"
+              }
+            ]
+          }
+        },
+        "points_per_activity": {
+          "1": 6
+        },
+        "representative_values": [
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+            "legacy_id": 1,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTTIMESTAMP",
+            "comparison": "exact",
+            "expected": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+            "legacy_id": 2,
+            "storage_type": "text",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "٢٠٢٤٠٧٠٨09١٠١١",
+            "legacy_id": 3,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          }
+        ],
+        "schema_logical_checksum": "a5dba611ed9fe3994cd9ae1227d16073ec4505c9c505f4cae5ac2b27ebded24c",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 5,
+            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+            "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+            "null_count": 5,
+            "valid_count": 2
+          },
+          "all": {
+            "invalid_count": 9,
+            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+            "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+            "null_count": 5,
+            "valid_count": 4
+          },
+          "track_point": {
+            "invalid_count": 4,
+            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+            "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+            "null_count": 0,
+            "valid_count": 2
+          }
+        },
+        "track_point_rows": 6
+      },
+      "expected_output": "expected/localized_timestamps.json",
+      "name": "localized_timestamps",
+      "storage": "standard"
+    },
+    {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1292,6 +1437,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1427,6 +1573,7 @@
       "storage": "standard"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1493,6 +1640,7 @@
       "storage": "malformed_schema"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 16384,
@@ -1548,6 +1696,7 @@
       "storage": "truncated"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1603,6 +1752,7 @@
       "storage": "corrupt"
     },
     {
+      "android_locale": "en_US",
       "artifacts": [
         {
           "bytes": 20480,
@@ -1900,7 +2050,10 @@
     "activity_ddl": "CREATE TABLE IF NOT EXISTS ACTIVITY (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,DISTANCE REAL, TIME REAL, PACE REAL);",
     "android_metadata_business_data": false,
     "android_metadata_ddl": "CREATE TABLE IF NOT EXISTS android_metadata (locale TEXT);",
-    "fixture_android_locale": "en_US",
+    "fixture_android_locales": [
+      "ar_EG",
+      "en_US"
+    ],
     "foreign_keys_declared": false,
     "gps_points_ddl": "CREATE TABLE IF NOT EXISTS GPS_POINTS (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);",
     "user_version": 0

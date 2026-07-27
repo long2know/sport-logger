@@ -6,7 +6,9 @@ import json
 import shutil
 import sqlite3
 import sys
+import unicodedata
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -21,6 +23,7 @@ EXPECTED_FIXTURES = {
     "corrupt",
     "empty",
     "interrupted_idempotency",
+    "localized_timestamps",
     "malformed_schema",
     "malformed_null_partial",
     "orphan",
@@ -46,9 +49,12 @@ EXPECTED_DEFECT_DETECTORS = {
     "float_precision_round_trip",
     "integer_truncation",
     "integer_precision_above_2_53",
+    "localized_timestamp_ascii_only_parser",
+    "localized_timestamp_text_normalized",
     "invalid_sqlite_page_size_preflight",
     "malformed_schema_preflight",
     "malformed_schema_target_write",
+    "mixed_numbering_system_accepted",
     "missing_columns",
     "duplicate_deterministic_ids",
     "orphan_mishandling",
@@ -87,6 +93,7 @@ class LegacyFixtureTests(unittest.TestCase):
         }
         manifest = legacy_fixtures.load_json(TOOL_ROOT / "manifest.json")
         manifest_names = {entry["name"] for entry in manifest["fixtures"]}
+        self.assertEqual(len(EXPECTED_FIXTURES), len(manifest["fixtures"]))
         manifest_artifacts = {
             artifact["path"]
             for entry in manifest["fixtures"]
@@ -102,6 +109,10 @@ class LegacyFixtureTests(unittest.TestCase):
         self.assertEqual(EXPECTED_FIXTURES, output_names)
         self.assertEqual(EXPECTED_FIXTURES, manifest_names)
         self.assertEqual(manifest_artifacts, disk_artifacts)
+        self.assertEqual(
+            len(EXPECTED_FIXTURES) + 2,
+            len(disk_artifacts),
+        )
         self.assertEqual(
             {
                 "fixtures/active_wal_snapshot.db",
@@ -123,6 +134,10 @@ class LegacyFixtureTests(unittest.TestCase):
                         legacy_fixtures.file_sha256(path),
                         artifact["sha256"],
                     )
+        self.assertEqual(
+            ["ar_EG", "en_US"],
+            manifest["source_schema"]["fixture_android_locales"],
+        )
 
     def test_android_metadata_is_verified_as_platform_metadata(self):
         empty_case = next(
@@ -230,6 +245,160 @@ class LegacyFixtureTests(unittest.TestCase):
             legacy_fixtures.validate_schema(connection, "alternate valid locale")
         finally:
             connection.close()
+
+    def test_unicode_decimal_timestamp_normalization_is_strict(self):
+        ascii_timestamp = "20240708091011"
+        arabic_indic_timestamp = "٢٠٢٤٠٧٠٨٠٩١٠١١"
+        fullwidth_timestamp = "２０２４０７０８０９１０１１"
+        expected = datetime(2024, 7, 8, 9, 10, 11)
+        unicode_nd_digits = [
+            character
+            for code_point in range(0x110000)
+            if unicodedata.category(character := chr(code_point)) == "Nd"
+        ]
+
+        self.assertEqual(
+            ascii_timestamp,
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                arabic_indic_timestamp
+            ),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_strict_legacy_timestamp(ascii_timestamp),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_strict_legacy_timestamp(
+                arabic_indic_timestamp
+            ),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_strict_legacy_timestamp(
+                fullwidth_timestamp
+            ),
+        )
+        self.assertEqual(
+            "20240708091011",
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                "٢٠٢٤٠٧٠٨09١٠١١"
+            ),
+        )
+        self.assertIsNone(
+            legacy_fixtures.normalized_legacy_timestamp_digits(
+                "٢٠٢٤٠٧٠٨09١٠١١",
+                require_single_numbering_system=True,
+            )
+        )
+        self.assertFalse(
+            all("0" <= character <= "9" for character in arabic_indic_timestamp)
+        )
+        self.assertTrue(
+            unicode_nd_digits,
+            "The runtime must expose Unicode decimal digits",
+        )
+        for character in unicode_nd_digits:
+            with self.subTest(character=character):
+                decimal = unicodedata.decimal(character)
+                localized = character * 14
+                self.assertEqual(
+                    str(decimal) * 14,
+                    legacy_fixtures.normalized_legacy_timestamp_digits(
+                        localized
+                    ),
+                )
+
+        invalid_values = {
+            "impossible localized date": "٢٠٢٤٠٢٣٠٠١٠١٠١",
+            "impossible localized time": "٢٠٢٤٠٧٠٨٢٤٠٠٠٠",
+            "separator": "٢٠٢٤٠٧٠٨/٩١٠١١",
+            "non-decimal lookalike": "٢٠٢٤٠٧٠٨٠٩١٠١¹",
+            "mixed ASCII and Arabic-Indic": "٢٠٢٤٠٧٠٨09١٠١١",
+            "mixed Arabic digit sets": "٢٠٢٤٠٧٠٨۰۹١٠١١",
+            "embedded direction mark": "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
+            "too short": "٢٠٢٤٠٧٠٨٠٩١٠١",
+        }
+        for label, value in invalid_values.items():
+            with self.subTest(label=label):
+                normalized = (
+                    legacy_fixtures.normalized_legacy_timestamp_digits(
+                        value,
+                        require_single_numbering_system=True,
+                    )
+                )
+                if label in {
+                    "impossible localized date",
+                    "impossible localized time",
+                }:
+                    self.assertIsNotNone(normalized)
+                else:
+                    self.assertIsNone(normalized)
+                self.assertIsNone(
+                    legacy_fixtures.parse_strict_legacy_timestamp(value)
+                )
+                self.assertFalse(legacy_fixtures.strict_legacy_timestamp(value))
+
+    def test_localized_fixture_preserves_source_text_and_locale(self):
+        case = next(
+            case
+            for case in legacy_fixtures.fixture_cases()
+            if case.key == "localized_timestamps"
+        )
+        self.assertEqual("ar_EG", case.android_locale)
+        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", case.activities[0][1])
+
+        output = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")[
+            "localized_timestamps"
+        ]
+        self.assertEqual(1, output["summary"]["sessions"])
+        self.assertEqual(2, output["summary"]["track_points"])
+        self.assertEqual(5, output["summary"]["rejected_activity_rows"])
+        self.assertEqual(4, output["summary"]["rejected_track_point_rows"])
+        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", output["sessions"][0]["gmt_start"])
+        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١٣", output["sessions"][0]["gmt_end"])
+        self.assertEqual(
+            ["٢٠٢٤٠٧٠٨٠٩١٠١١", "٢٠٢٤٠٧٠٨٠٩١٠١٢"],
+            [point["gmt_timestamp"] for point in output["track_points"]],
+        )
+
+        rejected_activities = {
+            row["legacy_id"]: row
+            for row in output["rejected_rows"]
+            if row["table"] == "ACTIVITY"
+        }
+        rejected_points = {
+            row["legacy_id"]: row
+            for row in output["rejected_rows"]
+            if row["table"] == "GPS_POINTS"
+        }
+        self.assertEqual(
+            "٢٠٢٤٠٧٠٨09١٠١١",
+            rejected_activities[3]["raw"]["GMTSTART"],
+        )
+        self.assertEqual(
+            "٢٠٢٤٠٧٠٨٠٩١٠١¹",
+            rejected_activities[4]["raw"]["GMTSTART"],
+        )
+        self.assertEqual(
+            "٢٠٢٤٠٧٠٨/٩١٠١٧",
+            rejected_points[6]["raw"]["GMTTIMESTAMP"],
+        )
+
+        manifest = legacy_fixtures.load_json(TOOL_ROOT / "manifest.json")
+        entry = next(
+            entry
+            for entry in manifest["fixtures"]
+            if entry["name"] == "localized_timestamps"
+        )
+        self.assertEqual("ar_EG", entry["android_locale"])
+        self.assertEqual(
+            [{"locale": "ar_EG", "storage_type": "text"}],
+            entry["expected"]["platform_metadata"]["android_metadata"]["rows"],
+        )
+        timestamps = entry["expected"]["timestamps"]
+        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", timestamps["all"]["min"])
+        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١٣", timestamps["all"]["max"])
 
     def test_sqlite_page_size_validation_blocks_all_illegal_encodings(self):
         legal_encodings = {
@@ -458,6 +627,7 @@ class LegacyFixtureTests(unittest.TestCase):
                 outputs,
             )
         )
+        self.assertEqual(len(EXPECTED_DEFECT_DETECTORS), len(detected))
         self.assertEqual(EXPECTED_DEFECT_DETECTORS, detected)
 
     def test_json_integer_comparison_is_exact_above_2_53(self):

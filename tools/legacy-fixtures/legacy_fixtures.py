@@ -13,23 +13,24 @@ import shutil
 import sqlite3
 import struct
 import sys
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 
 TOOL_ROOT = Path(__file__).resolve().parent
 FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
 ANDROID_METADATA_LOCALE = "en_US"
+AR_EG_ANDROID_METADATA_LOCALE = "ar_EG"
 FIXTURE_NAMESPACE = uuid.uuid5(
     uuid.NAMESPACE_URL,
     "https://github.com/long2know/sport-logger/legacy-fixtures/v1",
 )
-TIMESTAMP_PATTERN = re.compile(r"^[0-9]{14}$")
 ANDROID_LOCALE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_#-]*$")
 SQLITE_HEADER = b"SQLite format 3\x00"
 SQLITE_PAGE_SIZE_ENCODINGS = frozenset(
@@ -134,6 +135,7 @@ class FixtureCase:
     exercise_idempotency: bool = False
     storage: str = STORAGE_STANDARD
     blocked_reason: Optional[str] = None
+    android_locale: str = ANDROID_METADATA_LOCALE
 
     @property
     def database_identity(self) -> str:
@@ -666,6 +668,173 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             ),
         ),
         FixtureCase(
+            key="localized_timestamps",
+            description=(
+                "Arabic-Egypt locale rows using the Arabic-Indic digits emitted by "
+                "locale-sensitive SimpleDateFormat, plus strict malformed controls."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١١",
+                    "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+                    "Synthetic Arabic-Indic Session",
+                    "Valid localized legacy timestamps retain their exact source text.",
+                    120.0,
+                    300.0,
+                    2.5,
+                ),
+                activity(
+                    2,
+                    "٢٠٢٤٠٢٣٠٠١٠١٠١",
+                    None,
+                    "Synthetic Invalid Localized Date",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    3,
+                    "٢٠٢٤٠٧٠٨09١٠١١",
+                    None,
+                    "Synthetic Mixed Numbering Systems",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    4,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١¹",
+                    None,
+                    "Synthetic Non-Decimal Lookalike",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    5,
+                    "٢٠٢٤٠٧٠٨/٩١٠١١",
+                    None,
+                    "Synthetic Localized Separator",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    6,
+                    "٢٠٢٤٠٧٠٨٢٤٠٠٠٠",
+                    None,
+                    "Synthetic Invalid Localized Time",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١١",
+                    30.0444,
+                    31.2357,
+                    23.5,
+                    3.0,
+                    2.0,
+                    90.0,
+                    120.0,
+                ),
+                point(
+                    2,
+                    1,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+                    30.0445,
+                    31.2358,
+                    23.625,
+                    3.125,
+                    2.125,
+                    91.0,
+                    121.0,
+                ),
+                point(
+                    3,
+                    1,
+                    "٢٠٢٤١٣٠٨٠٩١٠١٤",
+                    30.0446,
+                    31.2359,
+                    None,
+                    None,
+                    None,
+                    None,
+                    122.0,
+                ),
+                point(
+                    4,
+                    1,
+                    "٢٠٢٤٠٧٠٨09١٠١٥",
+                    30.0447,
+                    31.2360,
+                    None,
+                    None,
+                    None,
+                    None,
+                    123.0,
+                ),
+                point(
+                    5,
+                    1,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١⁶",
+                    30.0448,
+                    31.2361,
+                    None,
+                    None,
+                    None,
+                    None,
+                    124.0,
+                ),
+                point(
+                    6,
+                    1,
+                    "٢٠٢٤٠٧٠٨/٩١٠١٧",
+                    30.0449,
+                    31.2362,
+                    None,
+                    None,
+                    None,
+                    None,
+                    125.0,
+                ),
+            ),
+            representative_values=(
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 1,
+                    "column": "GMTSTART",
+                    "expected": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+                    "comparison": exact,
+                },
+                {
+                    "table": "GPS_POINTS",
+                    "legacy_id": 2,
+                    "column": "GMTTIMESTAMP",
+                    "expected": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 3,
+                    "column": "GMTSTART",
+                    "expected": "٢٠٢٤٠٧٠٨09١٠١١",
+                    "comparison": exact,
+                },
+            ),
+            android_locale=AR_EG_ANDROID_METADATA_LOCALE,
+        ),
+        FixtureCase(
             key="orphan",
             description=(
                 "A valid activity plus one valid point and one point referencing a "
@@ -1043,6 +1212,7 @@ def remove_database_artifacts(database: Path) -> None:
 def create_schema(
     connection: sqlite3.Connection,
     business_tables: Sequence[str] = BUSINESS_TABLES,
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
     requested_tables = set(business_tables)
     unknown_tables = requested_tables - set(BUSINESS_TABLES)
@@ -1054,7 +1224,7 @@ def create_schema(
     connection.execute("DELETE FROM android_metadata")
     connection.execute(
         "INSERT INTO android_metadata (locale) VALUES (?)",
-        (ANDROID_METADATA_LOCALE,),
+        (android_locale,),
     )
     if "ACTIVITY" in requested_tables:
         connection.execute(CREATE_ACTIVITY_SQL)
@@ -1068,6 +1238,7 @@ def create_database(
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
     business_tables: Sequence[str] = BUSINESS_TABLES,
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
     requested_tables = set(business_tables)
     if activities and "ACTIVITY" not in requested_tables:
@@ -1086,7 +1257,7 @@ def create_database(
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA foreign_keys = OFF")
         with connection:
-            create_schema(connection, business_tables)
+            create_schema(connection, business_tables, android_locale)
             if "ACTIVITY" in requested_tables:
                 connection.executemany(
                     "INSERT INTO ACTIVITY ({}) VALUES ({})".format(
@@ -1195,6 +1366,7 @@ def create_active_wal_snapshot(
     database: Path,
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
     remove_database_artifacts(database)
     work_dir = root / "generated" / ".active-wal-work"
@@ -1207,7 +1379,7 @@ def create_active_wal_snapshot(
     writer: Optional[sqlite3.Connection] = None
     snapshot: Optional[sqlite3.Connection] = None
     try:
-        create_database(source, (), ())
+        create_database(source, (), (), android_locale=android_locale)
         writer = sqlite3.connect(str(source))
         journal_mode = writer.execute("PRAGMA journal_mode = WAL").fetchone()[0]
         if str(journal_mode).lower() != "wal":
@@ -1250,6 +1422,7 @@ def create_malformed_schema_database(
     database: Path,
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
     database.parent.mkdir(parents=True, exist_ok=True)
     remove_database_artifacts(database)
@@ -1262,7 +1435,7 @@ def create_malformed_schema_database(
             connection.execute(CREATE_ANDROID_METADATA_SQL)
             connection.execute(
                 "INSERT INTO android_metadata (locale) VALUES (?)",
-                (ANDROID_METADATA_LOCALE,),
+                (android_locale,),
             )
             connection.execute(
                 "CREATE TABLE ACTIVITY "
@@ -1293,8 +1466,14 @@ def create_truncated_database(
     database: Path,
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
-    create_database(database, activities, track_points)
+    create_database(
+        database,
+        activities,
+        track_points,
+        android_locale=android_locale,
+    )
     database_bytes = database.read_bytes()
     page_size = sqlite_page_size(database_bytes)
     if len(database_bytes) <= page_size:
@@ -1306,8 +1485,14 @@ def create_corrupt_database(
     database: Path,
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
+    android_locale: str = ANDROID_METADATA_LOCALE,
 ) -> None:
-    create_database(database, activities, track_points)
+    create_database(
+        database,
+        activities,
+        track_points,
+        android_locale=android_locale,
+    )
     with open_readonly(database) as connection:
         root_page = connection.execute(
             "SELECT rootpage FROM sqlite_master "
@@ -1329,6 +1514,7 @@ def generate_case_database(root: Path, case: FixtureCase, database: Path) -> Non
             case.activities,
             case.track_points,
             case.business_tables,
+            case.android_locale,
         )
         return
     if case.storage == STORAGE_ACTIVE_WAL:
@@ -1337,6 +1523,7 @@ def generate_case_database(root: Path, case: FixtureCase, database: Path) -> Non
             database,
             case.activities,
             case.track_points,
+            case.android_locale,
         )
         return
     if case.storage == STORAGE_MALFORMED_SCHEMA:
@@ -1344,6 +1531,7 @@ def generate_case_database(root: Path, case: FixtureCase, database: Path) -> Non
             database,
             case.activities,
             case.track_points,
+            case.android_locale,
         )
         return
     if case.storage == STORAGE_TRUNCATED:
@@ -1351,6 +1539,7 @@ def generate_case_database(root: Path, case: FixtureCase, database: Path) -> Non
             database,
             case.activities,
             case.track_points,
+            case.android_locale,
         )
         return
     if case.storage == STORAGE_CORRUPT:
@@ -1358,6 +1547,7 @@ def generate_case_database(root: Path, case: FixtureCase, database: Path) -> Non
             database,
             case.activities,
             case.track_points,
+            case.android_locale,
         )
         return
     raise FixtureValidationError(
@@ -1936,14 +2126,52 @@ def active_wal_snapshot_diagnostics(
     }
 
 
-def strict_legacy_timestamp(value: Any) -> bool:
-    if not isinstance(value, str) or not TIMESTAMP_PATTERN.fullmatch(value):
-        return False
+TimestampParser = Callable[[Any], Optional[datetime]]
+
+
+def normalized_legacy_timestamp_digits(
+    value: Any,
+    require_single_numbering_system: bool = False,
+) -> Optional[str]:
+    """Map Unicode Nd digits to ASCII without changing the source string."""
+    if not isinstance(value, str) or len(value) != 14:
+        return None
+    normalized: List[str] = []
+    zero_code_point: Optional[int] = None
+    for character in value:
+        if unicodedata.category(character) != "Nd":
+            return None
+        try:
+            decimal = unicodedata.decimal(character)
+        except ValueError:
+            return None
+        character_zero = ord(character) - decimal
+        if zero_code_point is None:
+            zero_code_point = character_zero
+        elif (
+            require_single_numbering_system
+            and zero_code_point != character_zero
+        ):
+            return None
+        normalized.append(chr(ord("0") + decimal))
+    return "".join(normalized)
+
+
+def parse_strict_legacy_timestamp(value: Any) -> Optional[datetime]:
+    normalized = normalized_legacy_timestamp_digits(
+        value,
+        require_single_numbering_system=True,
+    )
+    if normalized is None:
+        return None
     try:
-        datetime.strptime(value, "%Y%m%d%H%M%S")
+        return datetime.strptime(normalized, "%Y%m%d%H%M%S")
     except ValueError:
-        return False
-    return True
+        return None
+
+
+def strict_legacy_timestamp(value: Any) -> bool:
+    return parse_strict_legacy_timestamp(value) is not None
 
 
 def finite_number(value: Any) -> bool:
@@ -1977,13 +2205,16 @@ def deterministic_id(database_identity: str, table: str, legacy_id: int) -> str:
     )
 
 
-def activity_rejection_reasons(row: Mapping[str, Any]) -> List[str]:
+def activity_rejection_reasons(
+    row: Mapping[str, Any],
+    timestamp_parser: TimestampParser = parse_strict_legacy_timestamp,
+) -> List[str]:
     reasons: List[str] = []
     if not isinstance(row["ID"], int):
         reasons.append("invalid_id")
-    if not strict_legacy_timestamp(row["GMTSTART"]):
+    if timestamp_parser(row["GMTSTART"]) is None:
         reasons.append("invalid_gmtstart")
-    if row["GMTEND"] is not None and not strict_legacy_timestamp(row["GMTEND"]):
+    if row["GMTEND"] is not None and timestamp_parser(row["GMTEND"]) is None:
         reasons.append("invalid_gmtend")
     for column in ("NAME", "DESCRIPTION"):
         if row[column] is not None and not isinstance(row[column], str):
@@ -1999,13 +2230,16 @@ def activity_rejection_reasons(row: Mapping[str, Any]) -> List[str]:
     return sorted(reasons)
 
 
-def point_rejection_reasons(row: Mapping[str, Any]) -> List[str]:
+def point_rejection_reasons(
+    row: Mapping[str, Any],
+    timestamp_parser: TimestampParser = parse_strict_legacy_timestamp,
+) -> List[str]:
     reasons: List[str] = []
     if not isinstance(row["ID"], int):
         reasons.append("invalid_id")
     if not isinstance(row["ACTIVITYID"], int):
         reasons.append("missing_or_invalid_activity_id")
-    if not strict_legacy_timestamp(row["GMTTIMESTAMP"]):
+    if timestamp_parser(row["GMTTIMESTAMP"]) is None:
         reasons.append("invalid_gmttimestamp")
 
     latitude = row["LATITUDE"]
@@ -2130,6 +2364,7 @@ def rejected_row(
 
 def ordering_diagnostics(
     rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
+    timestamp_parser: TimestampParser = parse_strict_legacy_timestamp,
 ) -> Mapping[str, Any]:
     activity_ids = [
         row_mapping(ACTIVITY_COLUMNS, row)["ID"]
@@ -2141,9 +2376,9 @@ def ordering_diagnostics(
     ]
     point_ids = [row["ID"] for row in point_rows]
     valid_timestamps = [
-        row["GMTTIMESTAMP"]
+        parsed
         for row in point_rows
-        if strict_legacy_timestamp(row["GMTTIMESTAMP"])
+        if (parsed := timestamp_parser(row["GMTTIMESTAMP"])) is not None
     ]
     return {
         "activity_rows_ordered_by_64_bit_id": activity_ids == sorted(activity_ids),
@@ -2166,6 +2401,7 @@ def build_canonical_output(
     case: FixtureCase,
     rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
     source_schema_diagnostics: Mapping[str, Any],
+    timestamp_parser: TimestampParser = parse_strict_legacy_timestamp,
 ) -> Mapping[str, Any]:
     activity_rows = [
         row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
@@ -2181,7 +2417,7 @@ def build_canonical_output(
     invalid_activity_ids = set()
 
     for row in activity_rows:
-        reasons = activity_rejection_reasons(row)
+        reasons = activity_rejection_reasons(row, timestamp_parser)
         if reasons:
             invalid_activity_ids.add(row["ID"])
             rejected.append(
@@ -2195,7 +2431,7 @@ def build_canonical_output(
     track_points: List[Mapping[str, Any]] = []
     orphan_track_points: List[Mapping[str, Any]] = []
     for row in point_rows:
-        reasons = point_rejection_reasons(row)
+        reasons = point_rejection_reasons(row, timestamp_parser)
         if isinstance(row["ACTIVITYID"], int) and row["ACTIVITYID"] in invalid_activity_ids:
             reasons.append("invalid_parent_activity")
         if reasons:
@@ -2240,7 +2476,7 @@ def build_canonical_output(
                 if not activity_rows and not point_rows
                 else "contains_business_rows"
             ),
-            "ordering": ordering_diagnostics(rows_by_table),
+            "ordering": ordering_diagnostics(rows_by_table, timestamp_parser),
         },
         "sessions": sessions,
         "track_points": track_points,
@@ -2681,15 +2917,19 @@ def timestamp_summary(
     ]
 
     def summarize(values: Sequence[Any]) -> Mapping[str, Any]:
-        valid = sorted(value for value in values if strict_legacy_timestamp(value))
+        valid = [
+            (parsed, value)
+            for value in values
+            if (parsed := parse_strict_legacy_timestamp(value)) is not None
+        ]
         invalid = [
             value
             for value in values
             if value is not None and not strict_legacy_timestamp(value)
         ]
         return {
-            "min": valid[0] if valid else None,
-            "max": valid[-1] if valid else None,
+            "min": min(valid, key=lambda item: item[0])[1] if valid else None,
+            "max": max(valid, key=lambda item: item[0])[1] if valid else None,
             "valid_count": len(valid),
             "invalid_count": len(invalid),
             "null_count": sum(1 for value in values if value is None),
@@ -2864,6 +3104,7 @@ def manifest_entry(
         "name": case.key,
         "description": case.description,
         "storage": case.storage,
+        "android_locale": case.android_locale,
         "database": database.relative_to(root).as_posix(),
         "expected_output": expected_output_path.relative_to(root).as_posix(),
         "database_identity": case.database_identity,
@@ -2899,6 +3140,7 @@ def blocked_manifest_entry(
         "name": case.key,
         "description": case.description,
         "storage": case.storage,
+        "android_locale": case.android_locale,
         "database": database.relative_to(root).as_posix(),
         "expected_output": expected_output_path.relative_to(root).as_posix(),
         "database_identity": case.database_identity,
@@ -2978,7 +3220,9 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
         "source_schema": {
             "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
             "android_metadata_business_data": False,
-            "fixture_android_locale": ANDROID_METADATA_LOCALE,
+            "fixture_android_locales": sorted(
+                {case.android_locale for case in fixture_cases()}
+            ),
             "activity_ddl": CREATE_ACTIVITY_SQL,
             "gps_points_ddl": CREATE_GPS_POINTS_SQL,
             "user_version": 0,
@@ -3603,6 +3847,14 @@ def run_mutation_detection_tests(
     rejected("timestamp_drift", candidate)
 
     candidate = copy.deepcopy(expected_outputs)
+    localized = candidate["localized_timestamps"]
+    localized["sessions"][0]["gmt_start"] = "20240708091011"
+    localized["sessions"][0]["gmt_end"] = "20240708091013"
+    localized["track_points"][0]["gmt_timestamp"] = "20240708091011"
+    localized["track_points"][1]["gmt_timestamp"] = "20240708091012"
+    rejected("localized_timestamp_text_normalized", candidate)
+
+    candidate = copy.deepcopy(expected_outputs)
     candidate["timestamp_ordering"]["track_points"].sort(
         key=lambda row: (row["gmt_timestamp"], row["legacy_id"])
     )
@@ -3762,6 +4014,66 @@ def run_storage_detection_tests(
         shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True)
     try:
+        localized_case = cases["localized_timestamps"]
+        localized_database = root / "fixtures" / "localized_timestamps.db"
+        with open_readonly(localized_database) as connection:
+            localized_rows = read_all_rows(connection)
+            localized_schema = schema_diagnostics(connection)
+
+        def parse_ascii_only(value: Any) -> Optional[datetime]:
+            if (
+                not isinstance(value, str)
+                or len(value) != 14
+                or any(character < "0" or character > "9" for character in value)
+            ):
+                return None
+            try:
+                return datetime.strptime(value, "%Y%m%d%H%M%S")
+            except ValueError:
+                return None
+
+        def parse_mixed_decimal_digits(value: Any) -> Optional[datetime]:
+            if not isinstance(value, str) or len(value) != 14:
+                return None
+            normalized: List[str] = []
+            for character in value:
+                if unicodedata.category(character) != "Nd":
+                    return None
+                try:
+                    normalized.append(
+                        chr(ord("0") + unicodedata.decimal(character))
+                    )
+                except ValueError:
+                    return None
+            try:
+                return datetime.strptime(
+                    "".join(normalized),
+                    "%Y%m%d%H%M%S",
+                )
+            except ValueError:
+                return None
+
+        for detector_name, timestamp_parser in (
+            ("localized_timestamp_ascii_only_parser", parse_ascii_only),
+            ("mixed_numbering_system_accepted", parse_mixed_decimal_digits),
+        ):
+            candidate = copy.deepcopy(expected_outputs)
+            candidate["localized_timestamps"] = build_canonical_output(
+                localized_case,
+                localized_rows,
+                localized_schema,
+                timestamp_parser,
+            )
+            validate_output_invariants(candidate)
+            try:
+                validate_candidate_outputs(expected_outputs, candidate)
+            except FixtureValidationError:
+                passed.append(detector_name)
+            else:
+                raise FixtureValidationError(
+                    "Validator self-test did not detect {}".format(detector_name)
+                )
+
         missing_shm = work_dir / "missing-shm.db"
         shutil.copyfile(active_database, missing_shm)
         shutil.copyfile(
@@ -4003,7 +4315,9 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
     expected_schema = {
         "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
         "android_metadata_business_data": False,
-        "fixture_android_locale": ANDROID_METADATA_LOCALE,
+        "fixture_android_locales": sorted(
+            {case.android_locale for case in fixture_cases()}
+        ),
         "activity_ddl": CREATE_ACTIVITY_SQL,
         "gps_points_ddl": CREATE_GPS_POINTS_SQL,
         "user_version": 0,
@@ -4045,6 +4359,8 @@ def verify_corpus(
             )
         if entry.get("storage") != case.storage:
             raise FixtureValidationError("{} storage mode mismatch".format(name))
+        if entry.get("android_locale") != case.android_locale:
+            raise FixtureValidationError("{} Android locale mismatch".format(name))
         database = root / entry["database"]
         expected_output_path = root / entry["expected_output"]
         if not database.is_file():
