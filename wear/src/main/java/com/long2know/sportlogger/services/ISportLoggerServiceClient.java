@@ -11,4 +11,7 @@ public interface ISportLoggerServiceClient {
     void onRecordingOperationCompleted(RecordingOperationResult result);
 
     void onRecordingLifecycleFailure(RecordingOperationResult result);
+
+    void onTerminalCompletionAcknowledged(
+            long operationId, boolean acknowledged);
 }

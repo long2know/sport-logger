@@ -490,6 +490,72 @@ public class RecordingWriterCoordinatorTest {
         assertEquals(38L, coordinator.generationFor(replacement, 111));
     }
 
+    @Test
+    public void reservedPositiveGenerationExistsBeforeTaskConstruction() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object owner = new Object();
+        long reservedGeneration = coordinator.allocateGeneration();
+        AtomicReference<RecordingWriterCoordinator.GenerationToken>
+                factoryGeneration = new AtomicReference<>();
+
+        assertTrue(reservedGeneration > 0L);
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(
+                        owner,
+                        121,
+                        reservedGeneration,
+                        generation -> {
+                            factoryGeneration.set(generation);
+                            return () -> { };
+                        },
+                        generation -> generation.getGeneration()
+                                == reservedGeneration,
+                        (generation, exception) -> { }));
+        assertEquals(
+                reservedGeneration,
+                factoryGeneration.get().getGeneration());
+        assertEquals(
+                reservedGeneration,
+                coordinator.generationFor(owner, 121));
+    }
+
+    @Test
+    public void invalidOwnershipIsRejectedBeforeFactoryConstruction() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        AtomicInteger factoryCalls = new AtomicInteger();
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                coordinator.start(
+                        new Object(),
+                        0,
+                        1L,
+                        generation -> {
+                            factoryCalls.incrementAndGet();
+                            return () -> { };
+                        },
+                        generation -> true,
+                        (generation, exception) -> { }));
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                coordinator.start(
+                        new Object(),
+                        122,
+                        -1L,
+                        generation -> {
+                            factoryCalls.incrementAndGet();
+                            return () -> { };
+                        },
+                        generation -> true,
+                        (generation, exception) -> { }));
+        assertEquals(0, factoryCalls.get());
+    }
+
     private static final class FakeSchedulerFactory
             implements RecordingWriterCoordinator.SchedulerFactory {
         final List<FakeScheduler> schedulers = new ArrayList<>();

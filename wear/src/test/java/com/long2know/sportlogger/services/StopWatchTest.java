@@ -20,11 +20,13 @@ public class StopWatchTest {
         time.now = 1_000L;
         stopWatch.startTImer();
         assertEquals(1, callbacks.size());
+        assertEquals(StopWatch.UPDATE_INTERVAL_MILLIS, callbacks.lastDelay);
 
         time.now = 2_500L;
         callbacks.runNext();
         assertEquals("00:00:01", SharedData.getInstance().Duration);
         assertEquals(1, callbacks.size());
+        assertEquals(StopWatch.UPDATE_INTERVAL_MILLIS, callbacks.lastDelay);
 
         stopWatch.pauseTimer();
         stopWatch.pauseTimer();
@@ -80,9 +82,11 @@ public class StopWatchTest {
     private static final class FakeCallbackScheduler
             implements StopWatch.CallbackScheduler {
         private final List<Runnable> _callbacks = new ArrayList<>();
+        long lastDelay = -1L;
 
         @Override
         public void postDelayed(Runnable callback, long delayMillis) {
+            lastDelay = delayMillis;
             _callbacks.add(callback);
         }
 
@@ -110,7 +114,7 @@ public class StopWatchTest {
         long now;
 
         @Override
-        public long uptimeMillis() {
+        public long elapsedRealtimeMillis() {
             return now;
         }
     }

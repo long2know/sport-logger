@@ -10,9 +10,15 @@
     <string name="background_sensor_permission_required">Allow all-the-time sensor access in Settings to record heart rate after leaving SportLogger.</string>
     <string name="recording_shutdown_failed">Recording paused after a lifecycle failure. Your activity was retained.</string>
     <string name="recording_recovery_required">Your activity is retained, but SportLogger cannot safely restore controls yet.</string>
+    <string name="recording_persistence_unavailable">SportLogger could not load recording state. Retry before starting another activity.</string>
     <string name="recording_recovery_not_persisted">Your activity is retained only while SportLogger keeps running because recovery metadata could not be saved. Keep the app open and retry recovery.</string>
     <string name="retry_recording_recovery">Retry recovery</string>
+    <string name="stop_retained_activity">Stop and export retained activity</string>
+    <string name="discard_retained_activity">Discard retained activity</string>
     <string name="recording_recovery_ready">Recording controls restored.</string>
+    <string name="terminal_export_in_progress">Your stopped activity is saved. Exporting it to the phone…</string>
+    <string name="terminal_export_retry_required">Your stopped activity is saved, but export did not finish. Retry export before starting or discarding another activity.</string>
+    <string name="retry_terminal_export">Retry export</string>
     <string name="recording_startup_failed">Recording did not start. No activity is in progress.</string>
     <string name="recording_operation_failed">The recording action could not be completed.</string>
     <!--

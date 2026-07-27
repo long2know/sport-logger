@@ -7,7 +7,8 @@ final class RecordingUiState {
         START,
         RECORDING,
         PAUSED,
-        RECOVERY
+        RECOVERY,
+        TERMINAL_PENDING
     }
 
     interface Renderer {

@@ -7,13 +7,15 @@ import android.os.SystemClock;
 import com.long2know.utilities.models.SharedData;
 
 public class StopWatch {
+    static final long UPDATE_INTERVAL_MILLIS = 500L;
+
     interface CallbackScheduler {
         void postDelayed(Runnable callback, long delayMillis);
         void removeCallbacks(Runnable callback);
     }
 
     interface TimeSource {
-        long uptimeMillis();
+        long elapsedRealtimeMillis();
     }
 
     private static final class HandlerCallbackScheduler implements CallbackScheduler {
@@ -50,10 +52,9 @@ public class StopWatch {
     private boolean _isRunning;
 
     public StopWatch() {
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
         _callbackScheduler = new HandlerCallbackScheduler(
                 new Handler(Looper.getMainLooper()));
-        _timeSource = SystemClock::uptimeMillis;
+        _timeSource = SystemClock::elapsedRealtime;
         _duration = "00:00:00";
     }
 
@@ -70,7 +71,7 @@ public class StopWatch {
 
         cancelScheduledCallback();
         _millisecondTime = 0L;
-        _startTime = _timeSource.uptimeMillis();
+        _startTime = _timeSource.elapsedRealtimeMillis();
         _isRunning = true;
         final long generation = ++_generation;
         _scheduledCallback = new Runnable() {
@@ -79,7 +80,8 @@ public class StopWatch {
                 updateTimer(generation);
             }
         };
-        _callbackScheduler.postDelayed(_scheduledCallback, 200);
+        _callbackScheduler.postDelayed(
+                _scheduledCallback, UPDATE_INTERVAL_MILLIS);
     }
 
     public synchronized void resetTimer() {
@@ -100,7 +102,8 @@ public class StopWatch {
 
     public synchronized void pauseTimer() {
         if (_isRunning) {
-            _millisecondTime = Math.max(0L, _timeSource.uptimeMillis() - _startTime);
+            _millisecondTime = Math.max(
+                    0L, _timeSource.elapsedRealtimeMillis() - _startTime);
             _timeBuff += _millisecondTime;
         }
         _isRunning = false;
@@ -113,7 +116,8 @@ public class StopWatch {
             return;
         }
 
-        _millisecondTime = Math.max(0L, _timeSource.uptimeMillis() - _startTime);
+        _millisecondTime = Math.max(
+                0L, _timeSource.elapsedRealtimeMillis() - _startTime);
         _updateTime = _timeBuff + _millisecondTime;
         _seconds = (int) (_updateTime / 1000);
         _hours = _seconds / 3600;
@@ -127,7 +131,8 @@ public class StopWatch {
 
         SharedData.getInstance().Duration = _duration;
         if (_isRunning && generation == _generation) {
-            _callbackScheduler.postDelayed(_scheduledCallback, 0);
+            _callbackScheduler.postDelayed(
+                    _scheduledCallback, UPDATE_INTERVAL_MILLIS);
         }
     }
 

@@ -123,9 +123,14 @@ a stale service that passed an earlier check therefore cannot fence whichever ge
 service has installed in the meantime.
 
 A writer generation captures its activity ID before scheduling, and every SQL insert uses that
-immutable ID instead of consulting the mutable shared `ActivityId`. The writer coordinator reserves
-the generation/activity slot under its short monitor, publishes the generation claim, then creates
-the scheduler task and opens `SqlLogger` only after releasing that monitor. It revalidates the same
+immutable ID instead of consulting the mutable shared `ActivityId`. Start and resume first allocate a
+strictly positive process-wide generation and synchronously commit the exact
+activity/generation/recovery tuple. Only a successfully durable tuple may reach writer `SqlLogger`,
+task, or scheduler construction; zero or negative generations are rejected before ownership. If the
+initial tuple commit or later construction fails, the retained activity can still be stopped/exported
+or discarded directly from recovery controls. The writer coordinator then reserves the
+generation/activity slot under its short monitor, publishes the generation claim, and creates the
+scheduler task and opens `SqlLogger` only after releasing that monitor. It revalidates the same
 reservation before publishing or scheduling. Permission loss or destruction can therefore invalidate
 a slow reservation immediately instead of waiting behind SQLite initialization; a task that finishes
 construction after its reservation was fenced is never scheduled and is closed with its scheduler.
@@ -141,15 +146,25 @@ recovery and returns `WRITER_FAILED`.
 
 Recovery metadata is synchronously committed to private `SharedPreferences` as the exact activity
 ID, last writer generation, and phase, but the commit itself runs on the lifecycle executor without
-holding the recovery-state monitor. This metadata is not service ownership: writer and listener
-ownership remain in the existing fenced coordinators. Replacement startup also runs asynchronously:
-it validates that the activity row still exists, restores the writer-generation floor, marks the
-tuple as recovery required, and fences only that exact prior generation. Paused controls appear only
-after the writer is quiescent and the replacement listener group acknowledges startup. The same
-activity ID can then be resumed with a newer generation, stopped/exported, or discarded. An uncaught
+holding the recovery-state monitor. Recovery and terminal stores share a fair, process-wide
+persistence epoch barrier. Replacement startup reserves a newer epoch on `onCreate()`, then activates
+it on the lifecycle executor: activation waits for any predecessor store operation, reloads both
+durable records while holding the barrier, and only then publishes replacement state. Operations from
+older epochs are rejected before touching disk, so a predecessor cannot land a hidden clear or save
+after the replacement reload. A fresh barrier after process death reloads the same durable records;
+the in-memory epoch itself does not need to survive a dead process. A failed reload never falls back
+to a start-ready idle screen: it leaves persistence unavailable, exposes only retry, and reserves a
+newer epoch for the next asynchronous reload attempt.
+
+This metadata is not service ownership: writer and listener ownership remain in the existing fenced
+coordinators. Replacement startup validates that the activity row still exists, restores the
+writer-generation floor, marks the tuple as recovery required, and fences only that exact prior
+generation. Paused controls appear only after the writer is quiescent and the replacement listener
+group acknowledges startup. The same activity ID can then be resumed with a newer generation,
+stopped/exported, or discarded. Recovery UI also exposes stop and discard directly; those operations
+repeat the exact bounded fences instead of pretending recovery already succeeded. An uncaught
 scheduled-write failure is surfaced as `WRITER_FAILED`, closes writer and listener ownership, pauses
-the stopwatch, and remains retry-only. An explicit recovery retry must establish a clean fence and
-listener generation before paused controls can be restored.
+the stopwatch, and remains recovery-owned.
 
 A listener or service-startup failure before an activity row exists remains `IDLE`, clears the
 non-authoritative shared UI mirror, and returns to the start screen. A failure with an owned activity
@@ -186,7 +201,9 @@ revalidates the operation token, service generation, activity ID, writer generat
 and recording state. Permission loss, writer failure, stop/discard, or destruction therefore either
 wins before that commit and makes startup a no-op, or wins afterward and pauses the already-started
 timer. Cleanup repeats an idempotent final pause (and reset where terminal) after its writer/listener
-fences so a dequeued stale completion cannot leave timing active.
+fences so a dequeued stale completion cannot leave timing active. Stopwatch duration derives from
+`SystemClock.elapsedRealtime()` rather than callback count, updates at a bounded 500 ms cadence, never
+changes main-thread priority, and removes the exact generation callback during cleanup.
 
 A detected revocation invalidates any active operation token and closes listener callback production
 immediately, then queues bounded writer and listener fences on the same lifecycle executor. This
@@ -218,7 +235,10 @@ unsafe after state save. `onStart`, `onResume`, and service reconnection reconci
 service or retained recovery status, then render the pending idle, recording, paused, or retry screen
 once the `FragmentManager` can safely commit. Stop export database reads and serialization run on a
 separate activity executor and are entered only from a successful stop completion; failed or stale
-terminal operations retain data and never take the export/delete/navigation success path.
+terminal operations retain data and never take the export/delete/navigation success path. The
+production stopped-activity query includes `GMTEND`, strictly rejects null, malformed, leniently
+normalized, or trailing timestamp values, and closes its activity/track-point cursors and logger
+database on success or failure.
 
 Before a fenced stop clears active recording ownership or reports success, it synchronously persists a
 minimal record containing a monotonic terminal operation ID, activity ID, writer generation, result,
@@ -228,7 +248,17 @@ reports a successful Data Layer handoff acknowledgment from `putDataItem`; task 
 failure, cancellation, a missing callback, or process death leaves it pending for retry. Duplicate
 delivery and acknowledgment are idempotent, and discard checks both submission and deletion paths so
 it cannot delete the protected stopped activity. A failed terminal-record commit leaves the source
-activity in explicit recovery instead of returning stop success.
+activity in explicit recovery instead of returning stop success. A failed or cancelled Data Layer
+attempt immediately enables a visible in-session retry action. Each retry has a distinct in-memory
+attempt token behind a process-wide attempt fence and executor that survive activity teardown. Only a
+task failure, cancellation, or completed acknowledgment releases the fence, so the non-cancellable
+Data Layer task cannot overlap a timeout- or recreation-triggered replacement. An attempt with no
+callback remains durably pending and in flight until process death reloads it; this deliberately
+prefers retained data and single delivery over an unsafe concurrent retry. Retries are explicit and
+bounded by one in-flight operation rather than a zero-delay or unbounded automatic loop. Successful
+handoff asks the service to acknowledge asynchronously on the serialized lifecycle executor. Recovery
+and terminal preference commits therefore never run on the UI thread, and a failed or stale
+acknowledgment releases the attempt while leaving the durable handoff replayable.
 
 This compatibility bridge is intentionally not the future canonical Data Layer outbox. It stores only
 one pending stopped activity, blocks another recording/discard while that slot is occupied, retains the
@@ -248,6 +278,7 @@ receiver acknowledgment, retry policy, and lifecycle-independent worker.
 | `androidx.wear:wear` | `1.4.0` | wear |
 | `com.google.android.gms:play-services-wearable` | `20.0.1` | mobile, wear |
 | `junit:junit` | `4.13.2` | all modules |
+| `org.robolectric:robolectric` | `4.16.1` | wear, utilities tests |
 | `androidx.test:runner` | `1.7.0` | all modules |
 | `androidx.test.ext:junit` | `1.3.0` | all modules |
 | `androidx.test.espresso:espresso-core` | `3.7.0` | all modules |
@@ -314,8 +345,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Forty-two unit-test
-reports contained 242 tests with zero failures, errors, or skips. Lint completed with zero errors and
+The final clean local run completed successfully with 202 actionable tasks. Forty-eight unit-test
+reports contained 282 tests with zero failures, errors, or skips. Lint completed with zero errors and
 82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:
@@ -343,8 +374,10 @@ Actions 6.2.0.
   static context retention, locale-unspecified machine timestamps, Wear accessibility/localization
   debt, and launcher-icon modernization.
 - The installed SDK emits a non-fatal SDK XML version warning with this older supported AGP family.
-- No emulator, physical Wear OS device, Play Console submission, sensor accuracy, screen-off
-  recording, or Data Layer delivery test is claimed by this build-only foundation.
+- Robolectric executes the production SQLite schema and stopped-activity query, including invalid end
+  times and close paths. No emulator, physical Wear OS device, Play Console submission, sensor
+  accuracy, screen-off recording, or real Data Layer delivery test is claimed by this build-only
+  foundation.
 
 ## Primary evidence
 

@@ -38,7 +38,7 @@ final class RecordingRecoveryState {
             if (phase == null
                     || phase == Phase.IDLE
                     || activityId <= 0
-                    || generation < 0L) {
+                    || generation <= 0L) {
                 return IDLE;
             }
             return new Snapshot(phase, activityId, generation);
@@ -123,19 +123,23 @@ final class RecordingRecoveryState {
                 current.getGeneration()));
     }
 
-    Transition recordActivityCreated(int activityId) {
+    Transition reserveWriterGeneration(int activityId, long generation) {
         Snapshot current = snapshot();
-        if (current.ownsActivity() || activityId <= 0) {
+        if (activityId <= 0
+                || generation <= 0L
+                || (current.ownsActivity()
+                        && (current.getActivityId() != activityId
+                                || generation <= current.getGeneration()))) {
             return Transition.rejected(current);
         }
         return update(current, Snapshot.owned(
-                Phase.RECOVERY_REQUIRED, activityId, 0L));
+                Phase.RECOVERY_REQUIRED, activityId, generation));
     }
 
     Transition recordRecording(int activityId, long generation) {
         Snapshot current = snapshot();
-        if (!matchesActivity(current, activityId)
-                || generation <= current.getGeneration()) {
+        if (!matches(current, activityId, generation)
+                || current.getPhase() == Phase.RECORDING) {
             return Transition.rejected(current);
         }
         return update(current, Snapshot.owned(

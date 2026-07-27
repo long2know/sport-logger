@@ -58,6 +58,10 @@ final class RecordingWriterCoordinator {
         private volatile RuntimeException _failure;
 
         private GenerationToken(Object owner, int activityId, long generation) {
+            if (owner == null || activityId <= 0 || generation <= 0L) {
+                throw new IllegalArgumentException(
+                        "Writer ownership requires an owner, activity, and positive generation.");
+            }
             _owner = owner;
             _activityId = activityId;
             _generation = generation;
@@ -192,6 +196,30 @@ final class RecordingWriterCoordinator {
             TaskFactory taskFactory,
             GenerationClaim generationClaim,
             FailureListener failureListener) {
+        return start(
+                owner,
+                activityId,
+                0L,
+                taskFactory,
+                generationClaim,
+                failureListener);
+    }
+
+    StartStatus start(
+            Object owner,
+            int activityId,
+            long reservedGeneration,
+            TaskFactory taskFactory,
+            GenerationClaim generationClaim,
+            FailureListener failureListener) {
+        if (owner == null
+                || activityId <= 0
+                || reservedGeneration < 0L
+                || taskFactory == null
+                || generationClaim == null
+                || failureListener == null) {
+            return StartStatus.START_FAILED;
+        }
         final Reservation reservation;
         while (true) {
             Generation completed = null;
@@ -212,9 +240,15 @@ final class RecordingWriterCoordinator {
                             ? StartStatus.ALREADY_RUNNING
                             : StartStatus.PREVIOUS_GENERATION_ACTIVE;
                 } else {
+                    long generation = reservedGeneration > 0L
+                            ? reservedGeneration
+                            : nextGenerationLocked();
+                    if (reservedGeneration > _nextGeneration) {
+                        _nextGeneration = reservedGeneration;
+                    }
                     GenerationToken token =
                             new GenerationToken(
-                                    owner, activityId, ++_nextGeneration);
+                                    owner, activityId, generation);
                     reservation = new Reservation(token);
                     _reservation = reservation;
                     break;
@@ -312,10 +346,22 @@ final class RecordingWriterCoordinator {
         return StartStatus.STARTED;
     }
 
+    synchronized long allocateGeneration() {
+        return nextGenerationLocked();
+    }
+
     synchronized void restoreGenerationFloor(long generation) {
         if (generation > _nextGeneration) {
             _nextGeneration = generation;
         }
+    }
+
+    private long nextGenerationLocked() {
+        if (_nextGeneration == Long.MAX_VALUE) {
+            throw new IllegalStateException(
+                    "Writer generation space is exhausted.");
+        }
+        return ++_nextGeneration;
     }
 
     synchronized long generationFor(Object owner, int activityId) {

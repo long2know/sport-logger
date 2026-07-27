@@ -192,11 +192,111 @@ public class RecordingRecoveryContractTest {
         assertFalse(destroy.contains("clearPending("));
         assertFalse(destroy.contains("acknowledge("));
         assertTrue(activity.contains(
-                "_terminalExportCoordinator.abandon();"));
+                "TERMINAL_EXPORT_COORDINATOR"));
+        assertFalse(activity.contains(
+                "TERMINAL_EXPORT_COORDINATOR.abandon()"));
         assertTrue(terminalState.contains(
                 "AcknowledgeStatus.RETAINED"));
         assertTrue(terminalState.contains(
                 "AcknowledgeStatus.ALREADY_CLEARED"));
+    }
+
+    @Test
+    public void generationIsPersistedBeforeWriterConstruction() throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String recovery = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingRecoveryState.java");
+        String start = service.substring(
+                service.indexOf("private void runStart("),
+                service.indexOf("private void runPause("));
+
+        int allocation = start.indexOf("WRITERS.allocateGeneration()");
+        int rowCreation = start.indexOf("SqlLogger.createActivity()");
+        int durableReservation = start.indexOf(
+                "_recoveryState.reserveWriterGeneration(");
+        int writerConstruction = start.indexOf("startWriter(");
+        assertTrue(allocation >= 0 && allocation < rowCreation);
+        assertTrue(rowCreation < durableReservation);
+        assertTrue(durableReservation < writerConstruction);
+        assertTrue(start.substring(
+                durableReservation, writerConstruction).contains(
+                "if (!reservedTransition.isPersisted())"));
+        assertTrue(recovery.contains("generation <= 0L"));
+        assertFalse(recovery.contains("recordActivityCreated("));
+    }
+
+    @Test
+    public void replacementActivatesProcessWidePersistenceBeforeReload()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String barrier = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingPersistenceBarrier.java");
+        String recoveryStore = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SharedPreferencesRecordingRecoveryStore.java");
+        String terminalStore = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SharedPreferencesRecordingTerminalCompletionStore.java");
+        String startup = service.substring(
+                service.indexOf("private void runStartup("),
+                service.indexOf("private boolean activatePersistence("));
+
+        assertTrue(startup.contains("activatePersistence(token)"));
+        assertTrue(service.contains("PERSISTENCE.activate("));
+        assertTrue(service.contains("boolean published = PERSISTENCE.read("));
+        assertTrue(service.contains("_persistenceReady = true"));
+        assertTrue(service.contains(
+                "|| PERSISTENCE.isActive(_persistenceEpoch)"));
+        assertTrue(barrier.contains("ReentrantLock"));
+        assertTrue(barrier.contains("if (!isActive(epoch))"));
+        assertTrue(recoveryStore.contains("_persistenceBarrier.write("));
+        assertTrue(terminalStore.contains("_persistenceBarrier.write("));
+    }
+
+    @Test
+    public void failedPersistenceReloadStaysRetryOnlyInsteadOfShowingIdle()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String activation = service.substring(
+                service.indexOf("private boolean activatePersistence("),
+                service.indexOf(
+                        "private void runStartupWithTerminalCompletion("));
+        String retry = service.substring(
+                service.indexOf(
+                        "public RecordingOperationResult retryRecovery()"),
+                service.indexOf(
+                        "private RecordingOperationResult submitOperation("));
+
+        assertTrue(activation.contains("showPersistenceUnavailable()"));
+        assertTrue(activation.contains("SHOW_RECOVERY_RETRY"));
+        assertFalse(activation.contains("showIdle()"));
+        assertTrue(retry.contains("if (!_persistenceReady)"));
+        assertTrue(retry.contains("retryPersistenceStartup()"));
+        assertTrue(retry.contains("PERSISTENCE.reserveEpoch()"));
+    }
+
+    @Test
+    public void stopwatchUsesMonotonicBoundedCadenceWithoutPriorityMutation()
+            throws Exception {
+        String stopwatch = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "StopWatch.java");
+
+        assertTrue(stopwatch.contains("SystemClock::elapsedRealtime"));
+        assertTrue(stopwatch.contains("UPDATE_INTERVAL_MILLIS"));
+        assertFalse(stopwatch.contains("setThreadPriority"));
+        assertFalse(stopwatch.contains(
+                "postDelayed(_scheduledCallback, 0"));
+        assertTrue(stopwatch.contains(
+                "removeCallbacks(_scheduledCallback)"));
     }
 
     @Test

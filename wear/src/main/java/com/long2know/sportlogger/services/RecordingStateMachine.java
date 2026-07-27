@@ -185,6 +185,7 @@ final class RecordingStateMachine {
 
     private static boolean isRetainedActivityState(State state) {
         return state == State.RECORDING
-                || state == State.PAUSED;
+                || state == State.PAUSED
+                || state == State.RECOVERY_REQUIRED;
     }
 }

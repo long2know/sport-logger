@@ -32,7 +32,7 @@ public class RecordingLifecycleContractTest {
         assertFalse(logger.contains("int activityId = singleton.ActivityId"));
         assertTrue(activity.contains("exportActivityAsync(result)"));
         assertTrue(activity.contains(
-                "getTrackPointsByActivity(activityId)"));
+                "getStoppedActivityForExport("));
         assertTrue(service.contains("sqlLogger::close"));
     }
 
@@ -160,12 +160,21 @@ public class RecordingLifecycleContractTest {
         assertTrue(completion.contains("if (!result.isSuccess())"));
         assertTrue(completion.contains("case STOP:"));
         assertTrue(completion.contains("exportActivityAsync(result)"));
-        assertTrue(completion.contains("showStartScreenIfPossible()"));
-        assertTrue(activity.contains("_exportExecutor.execute("));
+        assertTrue(completion.contains("showTerminalExportPending(false)"));
+        assertTrue(activity.contains(
+                "TERMINAL_EXPORT_EXECUTOR.execute("));
         assertTrue(activity.contains("addOnSuccessListener"));
-        assertTrue(activity.contains("acknowledgeTerminalCompletion("));
+        assertTrue(activity.contains(
+                "requestTerminalCompletionAcknowledgment("));
         assertTrue(activity.contains("addOnFailureListener"));
+        assertTrue(activity.contains("addOnCanceledListener"));
         assertTrue(activity.contains("releaseTerminalCompletion("));
+        String acknowledgment = method(
+                activity,
+                "public void onTerminalCompletionAcknowledged(",
+                "public void onRequestPermissionsResult(");
+        assertTrue(acknowledgment.contains(
+                "showStartScreenIfPossible()"));
     }
 
     @Test
@@ -246,13 +255,13 @@ public class RecordingLifecycleContractTest {
                 "SharedPreferencesRecordingTerminalCompletionStore"));
         assertTrue(service.contains("deliverPendingTerminalCompletion()"));
         assertTrue(service.contains(
-                "public boolean acknowledgeTerminalCompletion("));
+                "public boolean requestTerminalCompletionAcknowledgment("));
         assertTrue(service.contains(
                 "_terminalCompletions.protectsActivity("));
         assertFalse(destroy.contains(
                 "_terminalCompletions.acknowledge("));
         assertTrue(activity.contains(
-                "service.acknowledgeTerminalCompletion("));
+                "service.requestTerminalCompletionAcknowledgment("));
         assertTrue(activity.contains(
                 "service.releaseTerminalCompletion("));
     }
@@ -279,7 +288,85 @@ public class RecordingLifecycleContractTest {
         assertTrue(activity.contains("clearPendingOperation()"));
         assertTrue(start.contains("_start.setEnabled(!_operationPending)"));
         assertTrue(end.contains("button.setEnabled(!_operationPending)"));
-        assertTrue(recovery.contains("_retry.setEnabled(!_operationPending)"));
+        assertTrue(recovery.contains(
+                "boolean enabled = !_operationPending"));
+    }
+
+    @Test
+    public void failedExportHasImmediateRetryAndAckDiskWorkIsSerialized()
+            throws Exception {
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String acknowledgmentRequest = method(
+                service,
+                "public boolean requestTerminalCompletionAcknowledgment(",
+                "public void releaseTerminalCompletion(");
+        String acknowledgmentWorker = method(
+                service,
+                "private void runTerminalCompletionAcknowledgment(",
+                "public synchronized RecordingStatus getRecordingStatus()");
+        String exportFailure = method(
+                activity,
+                "private static void handleTerminalExportFailure(",
+                "public void onTerminalCompletionAcknowledged(");
+        String retry = method(
+                activity,
+                "public void retryPendingTerminalExport()",
+                "private void handleOperationRequest(");
+
+        assertTrue(activity.contains("addOnCanceledListener"));
+        assertTrue(activity.contains(
+                "private static final ExecutorService "
+                        + "TERMINAL_EXPORT_EXECUTOR"));
+        assertTrue(activity.contains(
+                "private static final TerminalExportCoordinator "
+                        + "TERMINAL_EXPORT_COORDINATOR"));
+        assertTrue(activity.contains(
+                "private static Runnable terminalExportTask("));
+        assertFalse(activity.contains(
+                "Wearable.getDataClient(MainActivity.this)"));
+        assertFalse(activity.contains(
+                "TERMINAL_EXPORT_COORDINATOR.abandon()"));
+        assertFalse(activity.contains(
+                "TERMINAL_EXPORT_TIMEOUT_MILLIS"));
+        assertFalse(activity.contains("new TimeoutException("));
+        assertTrue(exportFailure.contains(
+                "showTerminalExportPending(true)"));
+        assertTrue(exportFailure.contains(
+                "releaseTerminalCompletion(terminalCompletionId)"));
+        assertTrue(retry.contains(
+                "requestPendingTerminalCompletionReplay()"));
+        assertTrue(acknowledgmentRequest.contains(
+                "_operations.tryExecute(serviceGeneration"));
+        assertFalse(acknowledgmentRequest.contains(
+                "_terminalCompletions.acknowledge("));
+        assertFalse(acknowledgmentRequest.contains(
+                "_recoveryState.clearAfterStop("));
+        assertTrue(acknowledgmentWorker.contains(
+                "_terminalCompletions.acknowledge("));
+        assertTrue(acknowledgmentWorker.contains(
+                "onTerminalCompletionAcknowledged("));
+    }
+
+    @Test
+    public void recoveryUiKeepsSafeTerminalActionsAvailable()
+            throws Exception {
+        String recovery = read(
+                "wear/src/main/java/com/long2know/sportlogger/"
+                        + "RecoveryActivityFragment.java");
+        String stateMachine = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingStateMachine.java");
+
+        assertTrue(recovery.contains("activity.stopActivity()"));
+        assertTrue(recovery.contains("activity.discardActivity()"));
+        assertTrue(recovery.contains(
+                "!_terminalExportPending && hasOwnedActivity"));
+        assertTrue(stateMachine.contains(
+                "|| state == State.RECOVERY_REQUIRED"));
     }
 
     @Test
@@ -301,11 +388,11 @@ public class RecordingLifecycleContractTest {
                 "private RecordingOperationResult submitOperation(",
                 "private void runOperation(");
 
-        assertTrue(completion.contains("_operations.owns(token)"));
+        assertTrue(completion.contains("operationOwnsLocked(token)"));
         assertTrue(
                 completion.indexOf("_pendingOperationCompletion = completion;")
                         < completion.indexOf("_operations.finish(token);"));
-        assertTrue(failure.contains("_operations.owns(token)"));
+        assertTrue(failure.contains("operationOwnsLocked(token)"));
         assertTrue(
                 failure.indexOf("_pendingLifecycleFailure = publishedFailure;")
                         < failure.indexOf("_operations.finish(token);"));

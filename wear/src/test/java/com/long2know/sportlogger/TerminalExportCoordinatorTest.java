@@ -2,58 +2,61 @@ package com.long2know.sportlogger;
 
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class TerminalExportCoordinatorTest {
     @Test
-    public void failedOrAbortedExportCanBeRetried() {
+    public void failedExportCanBeRetried() {
         TerminalExportCoordinator coordinator =
                 new TerminalExportCoordinator();
 
-        assertTrue(coordinator.begin(41L));
-        assertFalse(coordinator.begin(41L));
-        coordinator.failed(41L);
-        assertTrue(coordinator.begin(41L));
-        coordinator.abandon();
-        assertTrue(coordinator.begin(41L));
+        TerminalExportCoordinator.Attempt first = coordinator.begin(41L);
+        assertNotNull(first);
+        assertNull(coordinator.begin(41L));
+        assertTrue(coordinator.failed(first));
+        assertNotNull(coordinator.begin(41L));
     }
 
     @Test
-    public void onlySuccessfulAcknowledgmentCompletesHandoff() {
+    public void handoffRemainsInFlightUntilAsyncAcknowledgmentFinishes() {
         TerminalExportCoordinator coordinator =
                 new TerminalExportCoordinator();
-        AtomicInteger acknowledgments = new AtomicInteger();
 
-        assertTrue(coordinator.begin(51L));
-        assertFalse(coordinator.succeeded(51L, operationId -> {
-            acknowledgments.incrementAndGet();
-            return false;
-        }));
+        TerminalExportCoordinator.Attempt first = coordinator.begin(51L);
+        assertNotNull(first);
+        assertTrue(coordinator.succeeded(first));
+        assertFalse(coordinator.failed(first));
+        assertNull(coordinator.begin(51L));
+        assertTrue(coordinator.acknowledgmentFinished(51L));
         assertFalse(coordinator.isInFlight());
 
-        assertTrue(coordinator.begin(51L));
-        assertTrue(coordinator.succeeded(51L, operationId -> {
-            acknowledgments.incrementAndGet();
-            return true;
-        }));
+        TerminalExportCoordinator.Attempt second = coordinator.begin(51L);
+        assertNotNull(second);
+        assertTrue(coordinator.succeeded(second));
+        assertTrue(coordinator.acknowledgmentFinished(51L));
         assertFalse(coordinator.isInFlight());
-        assertFalse(coordinator.succeeded(51L, operationId -> true));
-        assertTrue(acknowledgments.get() == 2);
     }
 
     @Test
-    public void acknowledgmentExceptionLeavesAttemptRetryable() {
+    public void staleCallbacksCannotReleaseAnotherAttempt() {
         TerminalExportCoordinator coordinator =
                 new TerminalExportCoordinator();
 
-        assertTrue(coordinator.begin(61L));
-        assertFalse(coordinator.succeeded(61L, operationId -> {
-            throw new RuntimeException("service disappeared");
-        }));
+        TerminalExportCoordinator.Attempt stale = coordinator.begin(61L);
+        assertNotNull(stale);
+        assertTrue(coordinator.failed(stale));
+        TerminalExportCoordinator.Attempt current = coordinator.begin(61L);
+        assertNotNull(current);
+
+        assertFalse(coordinator.succeeded(stale));
+        assertFalse(coordinator.failed(stale));
+        assertTrue(coordinator.isInFlight());
+        assertFalse(coordinator.acknowledgmentFinished(60L));
+        assertTrue(coordinator.isInFlight());
+        assertTrue(coordinator.failed(current));
         assertFalse(coordinator.isInFlight());
-        assertTrue(coordinator.begin(61L));
     }
 }

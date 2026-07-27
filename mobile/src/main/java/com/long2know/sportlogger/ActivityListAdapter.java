@@ -79,8 +79,9 @@ public class ActivityListAdapter extends BaseAdapter {
     }
 
     public static List<SportActivity> load(Context ctx) {
-        SqlLogger logger = new SqlLogger();
-        return logger.getSportActivities();
+        try (SqlLogger logger = new SqlLogger()) {
+            return logger.getSportActivities();
+        }
 //        File f = ctx.getDir(WorkoutSerializer.WORKOUTS_DIR, 0);
 //        return f.list(new FilenameFilter() {
 //            @Override

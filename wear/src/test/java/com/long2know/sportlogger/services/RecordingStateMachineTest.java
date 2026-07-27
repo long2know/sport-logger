@@ -49,7 +49,7 @@ public class RecordingStateMachineTest {
     }
 
     @Test
-    public void fenceFailureRequiresExplicitRecoveryBeforeRetry() {
+    public void fenceFailureAllowsTerminalRetryButRequiresRecoveryForResume() {
         RecordingStateMachine machine = new RecordingStateMachine();
         machine.begin(RecordingStateMachine.Operation.START);
         machine.completeSuccess(RecordingStateMachine.Operation.START);
@@ -63,8 +63,13 @@ public class RecordingStateMachineTest {
                 machine.getState());
 
         assertEquals(
-                RecordingStateMachine.Decision.INVALID,
+                RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.STOP));
+        assertTrue(machine.completeFailure(
+                RecordingStateMachine.Operation.STOP, true));
+        assertEquals(
+                RecordingStateMachine.Decision.INVALID,
+                machine.begin(RecordingStateMachine.Operation.RESUME));
         assertEquals(
                 RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.RECOVER));
@@ -91,8 +96,10 @@ public class RecordingStateMachineTest {
                 RecordingStateMachine.Decision.INVALID,
                 machine.begin(RecordingStateMachine.Operation.RESUME));
         assertEquals(
-                RecordingStateMachine.Decision.INVALID,
+                RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.STOP));
+        assertTrue(machine.completeFailure(
+                RecordingStateMachine.Operation.STOP, true));
         assertEquals(
                 RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.RECOVER));
@@ -112,11 +119,39 @@ public class RecordingStateMachineTest {
                 RecordingStateMachine.State.RECOVERY_REQUIRED,
                 machine.getState());
         assertEquals(
-                RecordingStateMachine.Decision.INVALID,
+                RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.DISCARD));
+        assertTrue(machine.completeFailure(
+                RecordingStateMachine.Operation.DISCARD, true));
         assertEquals(
                 RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.RECOVER));
+    }
+
+    @Test
+    public void startupFailureRecoveryCanStopOrDiscardWithoutResuming() {
+        RecordingStateMachine stopMachine = new RecordingStateMachine();
+        stopMachine.restoreOwnedActivity();
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                stopMachine.begin(RecordingStateMachine.Operation.STOP));
+        assertTrue(stopMachine.completeSuccess(
+                RecordingStateMachine.Operation.STOP));
+        assertEquals(
+                RecordingStateMachine.State.IDLE,
+                stopMachine.getState());
+
+        RecordingStateMachine discardMachine = new RecordingStateMachine();
+        discardMachine.restoreOwnedActivity();
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                discardMachine.begin(
+                        RecordingStateMachine.Operation.DISCARD));
+        assertTrue(discardMachine.completeSuccess(
+                RecordingStateMachine.Operation.DISCARD));
+        assertEquals(
+                RecordingStateMachine.State.IDLE,
+                discardMachine.getState());
     }
 
     @Test

@@ -5,7 +5,8 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
-import java.text.ParseException;
+import java.text.DateFormat;
+import java.text.ParsePosition;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
@@ -68,8 +69,6 @@ public class SqlLogger implements Runnable, AutoCloseable {
 
     @Override
     public void run() {
-        // Moves the current Thread into the background
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
         writeData();
     }
 
@@ -139,29 +138,21 @@ public class SqlLogger implements Runnable, AutoCloseable {
 
 
     public static void initDatabase() {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
+        try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
+                DATABASE_NAME, Context.MODE_PRIVATE, null)) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + ACTIVITY_TABLE_NAME
+                    + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,"
+                    + "DISTANCE REAL, TIME REAL, PACE REAL);");
 
-        db.execSQL("CREATE TABLE IF NOT EXISTS " + ACTIVITY_TABLE_NAME
-                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,"
-                + "DISTANCE REAL, TIME REAL, PACE REAL);");
-
-        db.execSQL("CREATE TABLE IF NOT EXISTS " + GPS_TABLE_NAME
-                + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,"
-                + "ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);");
-        db.close();
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + GPS_TABLE_NAME
+                    + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, ACTIVITYID INTEGER, GMTTIMESTAMP VARCHAR, LATITUDE REAL, LONGITUDE REAL,"
+                    + "ALTITUDE REAL, ACCURACY REAL, SPEED REAL, BEARING REAL, HEARTRATE REAL);");
+        }
         Log.i(TAG, "Database opened ok");
     }
 
     public static int createActivity() {
-        // Get a timestamp
-        GregorianCalendar greg = new GregorianCalendar();
-        TimeZone tz = greg.getTimeZone();
-        int offset = tz.getOffset(System.currentTimeMillis());
-        greg.add(Calendar.SECOND, (offset / 1000) * -1);
-        Date current = greg.getTime();
-        String ts = Config.DotnetTimestampFormat.format(current);
-        String gmtTime = Config.TimestampFormat.format(current);
+        String gmtTime = currentUtcTimestamp();
         StringBuffer queryBuf = new StringBuffer();
 
         queryBuf.append("INSERT INTO "
@@ -172,47 +163,67 @@ public class SqlLogger implements Runnable, AutoCloseable {
                 + "');");
         Log.i(TAG, queryBuf.toString());
 
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-        db.execSQL(queryBuf.toString());
-
-        String queryLastRowInserted = "select last_insert_rowid()";
-
-        final Cursor cursor = db.rawQuery(queryLastRowInserted, null);
-        int idLastInsertedRow = 0;
-        if (cursor != null) {
-            try {
+        try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
+                DATABASE_NAME, Context.MODE_PRIVATE, null)) {
+            db.execSQL(queryBuf.toString());
+            try (Cursor cursor = db.rawQuery(
+                    "select last_insert_rowid()", null)) {
                 if (cursor.moveToFirst()) {
-                    idLastInsertedRow = cursor.getInt(0);
+                    return cursor.getInt(0);
                 }
-            } finally {
-                cursor.close();
             }
         }
+        return 0;
+    }
 
-        return idLastInsertedRow;
+    public static boolean completeActivity(int activityId) {
+        if (activityId <= 0) {
+            return false;
+        }
+        try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
+                DATABASE_NAME, Context.MODE_PRIVATE, null)) {
+            ContentValues values = new ContentValues();
+            values.put(A_END_TIME_UTC, currentUtcTimestamp());
+            int updated = db.update(
+                    ACTIVITY_TABLE_NAME,
+                    values,
+                    A_ROWID + "=? AND (" + A_END_TIME_UTC
+                            + " IS NULL OR " + A_END_TIME_UTC + "='')",
+                    new String[]{Integer.toString(activityId)});
+            if (updated == 1) {
+                return true;
+            }
+            try (Cursor cursor = db.query(
+                    ACTIVITY_TABLE_NAME,
+                    new String[]{A_END_TIME_UTC},
+                    A_ROWID + "=?",
+                    new String[]{Integer.toString(activityId)},
+                    null,
+                    null,
+                    null,
+                    "1")) {
+                return cursor.moveToFirst()
+                        && parseOptionalTimestamp(cursor, 0) != null;
+            }
+        }
     }
 
     public static boolean activityExists(int activityId) {
         if (activityId <= 0) {
             return false;
         }
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(
+        try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
                 DATABASE_NAME, Context.MODE_PRIVATE, null);
-        Cursor cursor = db.query(
-                ACTIVITY_TABLE_NAME,
-                new String[]{A_ROWID},
-                A_ROWID + "=?",
-                new String[]{Integer.toString(activityId)},
-                null,
-                null,
-                null,
-                "1");
-        try {
+             Cursor cursor = db.query(
+                     ACTIVITY_TABLE_NAME,
+                     new String[]{A_ROWID},
+                     A_ROWID + "=?",
+                     new String[]{Integer.toString(activityId)},
+                     null,
+                     null,
+                     null,
+                     "1")) {
             return cursor.moveToFirst();
-        } finally {
-            cursor.close();
-            db.close();
         }
     }
 
@@ -236,96 +247,116 @@ public class SqlLogger implements Runnable, AutoCloseable {
     }
 
     public SportActivity getSportActivity(int id) {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-
-        String[] field = {A_ROWID, A_NAME, A_DESCRIPTION, A_START_TIME_UTC, A_DISTANCE, A_TIME, A_PACE};
+        if (id <= 0) {
+            throw new IllegalArgumentException(
+                    "A positive activity ID is required for export.");
+        }
+        String[] field = {
+                A_ROWID,
+                A_NAME,
+                A_DESCRIPTION,
+                A_START_TIME_UTC,
+                A_END_TIME_UTC,
+                A_DISTANCE,
+                A_TIME,
+                A_PACE
+        };
         String whereClause = A_ROWID + "=?";
         String[] whereArgs = { Integer.toString(id) };
-        Cursor cursor = db.query(ACTIVITY_TABLE_NAME, field, whereClause,whereArgs, null, null, null, null);
-
-        int iname = cursor.getColumnIndex(A_NAME);
-        int idescription = cursor.getColumnIndex(A_DESCRIPTION);
-        int istarttime = cursor.getColumnIndex(A_START_TIME_UTC);
-        int iendtime = cursor.getColumnIndex(A_END_TIME_UTC);
-        int idistance = cursor.getColumnIndex(A_DISTANCE);
-        int itime = cursor.getColumnIndex(A_TIME);
-        int ipace = cursor.getColumnIndex(A_PACE);
-
-        SportActivity retVal = new SportActivity();
-
-        if (cursor != null) {
-            try {
-                if (cursor.moveToFirst()) {
-                    retVal.Name = cursor.getString(iname);
-                    retVal.Description = cursor.getString(idescription);
-
-                    try {
-                        retVal.StartTimeUTC = Config.TimestampFormat.parse(cursor.getString(istarttime));
-                    } catch (ParseException e) {}
-
-                    try {
-                        retVal.EndTimeUTC = Config.TimestampFormat.parse(cursor.getString(iendtime));
-                    } catch (ParseException e) {}
-
-                    retVal.Distance = cursor.getDouble(idistance);
-                    retVal.Time = cursor.getDouble(itime);
-                    retVal.Pace = cursor.getDouble(ipace);
-                }
-            } finally {
-                cursor.close();
+        try (Cursor cursor = database().query(
+                ACTIVITY_TABLE_NAME,
+                field,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                null,
+                "1")) {
+            if (!cursor.moveToFirst()) {
+                throw new IllegalStateException(
+                        "Activity " + id + " does not exist.");
             }
+            SportActivity activity = new SportActivity();
+            activity.Id = cursor.getInt(
+                    cursor.getColumnIndexOrThrow(A_ROWID));
+            activity.Name = cursor.getString(
+                    cursor.getColumnIndexOrThrow(A_NAME));
+            activity.Description = cursor.getString(
+                    cursor.getColumnIndexOrThrow(A_DESCRIPTION));
+            activity.StartTimeUTC = parseRequiredTimestamp(
+                    cursor,
+                    cursor.getColumnIndexOrThrow(A_START_TIME_UTC),
+                    A_START_TIME_UTC,
+                    id);
+            activity.EndTimeUTC = parseRequiredTimestamp(
+                    cursor,
+                    cursor.getColumnIndexOrThrow(A_END_TIME_UTC),
+                    A_END_TIME_UTC,
+                    id);
+            activity.Distance = cursor.getDouble(
+                    cursor.getColumnIndexOrThrow(A_DISTANCE));
+            activity.Time = cursor.getDouble(
+                    cursor.getColumnIndexOrThrow(A_TIME));
+            activity.Pace = cursor.getDouble(
+                    cursor.getColumnIndexOrThrow(A_PACE));
+            return activity;
         }
-        db.close();
+    }
 
-        return retVal;
+    public SportActivity getStoppedActivityForExport(int id) {
+        SportActivity activity = getSportActivity(id);
+        activity.SportTrackPoints = getTrackPointsByActivity(id);
+        return activity;
     }
 
     public List<SportActivity> getSportActivities() {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-
-        String[] field = {A_ROWID, A_NAME, A_DESCRIPTION, A_START_TIME_UTC, A_DISTANCE, A_TIME, A_PACE};
+        String[] field = {
+                A_ROWID,
+                A_NAME,
+                A_DESCRIPTION,
+                A_START_TIME_UTC,
+                A_END_TIME_UTC,
+                A_DISTANCE,
+                A_TIME,
+                A_PACE
+        };
 //        String whereClause = A_ROWID + "=?";
 //        String[] whereArgs = { Integer.toString(id) };
 
-        Cursor cursor = db.query(ACTIVITY_TABLE_NAME, field, null, null, null, null, null, null);
-
-        int iname = cursor.getColumnIndex(A_NAME);
-        int idescription = cursor.getColumnIndex(A_DESCRIPTION);
-        int istarttime = cursor.getColumnIndex(A_START_TIME_UTC);
-        int iendtime = cursor.getColumnIndex(A_END_TIME_UTC);
-        int idistance = cursor.getColumnIndex(A_DISTANCE);
-        int itime = cursor.getColumnIndex(A_TIME);
-        int ipace = cursor.getColumnIndex(A_PACE);
-
         List<SportActivity> retVal =  new ArrayList<>();
+        try (Cursor cursor = database().query(
+                ACTIVITY_TABLE_NAME,
+                field,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null)) {
+            int irowid = cursor.getColumnIndexOrThrow(A_ROWID);
+            int iname = cursor.getColumnIndexOrThrow(A_NAME);
+            int idescription = cursor.getColumnIndexOrThrow(A_DESCRIPTION);
+            int istarttime = cursor.getColumnIndexOrThrow(A_START_TIME_UTC);
+            int iendtime = cursor.getColumnIndexOrThrow(A_END_TIME_UTC);
+            int idistance = cursor.getColumnIndexOrThrow(A_DISTANCE);
+            int itime = cursor.getColumnIndexOrThrow(A_TIME);
+            int ipace = cursor.getColumnIndexOrThrow(A_PACE);
 
-        if (cursor != null) {
-            try {
-
-                for (cursor.moveToFirst(); !cursor.isAfterLast(); cursor.moveToNext()){
-                    SportActivity sportActivity = new SportActivity();
-                    sportActivity.Name = cursor.getString(iname);
-                    sportActivity.Description = cursor.getString(idescription);
-
-                    try {
-                        sportActivity.StartTimeUTC = Config.TimestampFormat.parse(cursor.getString(istarttime));
-                    } catch (ParseException e) {}
-
-                    try {
-                        sportActivity.EndTimeUTC = Config.TimestampFormat.parse(cursor.getString(iendtime));
-                    } catch (ParseException e) {}
-
-                    sportActivity.Distance = cursor.getDouble(idistance);
-                    sportActivity.Time = cursor.getDouble(itime);
-                    sportActivity.Pace = cursor.getDouble(ipace);
-
-                    retVal.add(sportActivity);
-                }
-
-            } finally {
-                cursor.close();
+            for (cursor.moveToFirst();
+                 !cursor.isAfterLast();
+                 cursor.moveToNext()) {
+                SportActivity sportActivity = new SportActivity();
+                sportActivity.Id = cursor.getInt(irowid);
+                sportActivity.Name = cursor.getString(iname);
+                sportActivity.Description = cursor.getString(idescription);
+                sportActivity.StartTimeUTC =
+                        parseOptionalTimestamp(cursor, istarttime);
+                sportActivity.EndTimeUTC =
+                        parseOptionalTimestamp(cursor, iendtime);
+                sportActivity.Distance = cursor.getDouble(idistance);
+                sportActivity.Time = cursor.getDouble(itime);
+                sportActivity.Pace = cursor.getDouble(ipace);
+                retVal.add(sportActivity);
             }
         }
 
@@ -333,9 +364,6 @@ public class SqlLogger implements Runnable, AutoCloseable {
     }
 
     public void updateSportActivity(SportActivity sportActivity) {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-
         // Create a new map of values, where column names are the keys
         ContentValues values = new ContentValues();
         values.put(A_NAME, sportActivity.Name);
@@ -350,77 +378,66 @@ public class SqlLogger implements Runnable, AutoCloseable {
         String whereClause = A_ROWID + "=?";
         String[] whereArgs = { Integer.toString(sportActivity.Id) };
 
-        int count = db.update(ACTIVITY_TABLE_NAME, values, whereClause, whereArgs);
+        database().update(ACTIVITY_TABLE_NAME, values, whereClause, whereArgs);
     }
 
     public void deleteActivity(int id) {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-
         // Delete the track points
         String whereClause = T_ACTIVITY_ID + "=?";
         String[] whereArgs = { Integer.toString(id) };
-        db.delete(GPS_TABLE_NAME, whereClause, whereArgs);
+        database().delete(GPS_TABLE_NAME, whereClause, whereArgs);
 
         // Delete the activity
         whereClause = A_ROWID + "=?";
         whereArgs = new String[] { Integer.toString(id) };
-        db.delete(ACTIVITY_TABLE_NAME, whereClause, whereArgs);
-        db.close();
+        database().delete(ACTIVITY_TABLE_NAME, whereClause, whereArgs);
     }
 
     public List<SportTrackPoint> getTrackPointsByActivity(int activityId) {
-        SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                Context.MODE_PRIVATE, null);
-
         String[] field = {T_ROWID, T_ACTIVITY_ID, T_TIMESTAMP_UTC, T_LATITUDE, T_LONGITUDE, T_ALTITUDE,
                 T_ACCURACY, T_SPEED, T_BEARING, T_HEARTRATE};
         String whereClause = T_ACTIVITY_ID + "=?";
         String[] whereArgs = { Integer.toString(activityId) };
-        Cursor cursor = db.query(GPS_TABLE_NAME, field, whereClause,whereArgs, null, null, null, null);
-
-        int irowid = cursor.getColumnIndex(T_ROWID);
-        int iactivityid = cursor.getColumnIndex(T_ACTIVITY_ID);
-        int itimestamputc = cursor.getColumnIndex(T_TIMESTAMP_UTC);
-        int ilatitude = cursor.getColumnIndex(T_LATITUDE);
-        int ilongitude = cursor.getColumnIndex(T_LONGITUDE);
-        int ialtitude = cursor.getColumnIndex(T_ALTITUDE);
-        int iaccuracy = cursor.getColumnIndex(T_ACCURACY);
-        int ispeed = cursor.getColumnIndex(T_SPEED);
-        int ibearing = cursor.getColumnIndex(T_BEARING);
-        int iheartrate = cursor.getColumnIndex(T_HEARTRATE);
-
         List<SportTrackPoint> retVal =  new ArrayList<>();
+        try (Cursor cursor = database().query(
+                GPS_TABLE_NAME,
+                field,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                null,
+                null)) {
+            int irowid = cursor.getColumnIndexOrThrow(T_ROWID);
+            int iactivityid = cursor.getColumnIndexOrThrow(T_ACTIVITY_ID);
+            int itimestamputc =
+                    cursor.getColumnIndexOrThrow(T_TIMESTAMP_UTC);
+            int ilatitude = cursor.getColumnIndexOrThrow(T_LATITUDE);
+            int ilongitude = cursor.getColumnIndexOrThrow(T_LONGITUDE);
+            int ialtitude = cursor.getColumnIndexOrThrow(T_ALTITUDE);
+            int iaccuracy = cursor.getColumnIndexOrThrow(T_ACCURACY);
+            int ispeed = cursor.getColumnIndexOrThrow(T_SPEED);
+            int ibearing = cursor.getColumnIndexOrThrow(T_BEARING);
+            int iheartrate = cursor.getColumnIndexOrThrow(T_HEARTRATE);
 
-        if (cursor != null) {
-            try {
-
-                for (cursor.moveToFirst(); !cursor.isAfterLast(); cursor.moveToNext()){
-                    SportTrackPoint trackPoint = new SportTrackPoint();
-
-                    trackPoint.Id = cursor.getInt(irowid);
-                    trackPoint.SportActivityId = cursor.getInt(iactivityid);
-
-                    try {
-                        trackPoint.TimeStampUTC = Config.TimestampFormat.parse(cursor.getString(itimestamputc));
-                    } catch (ParseException e) {}
-
-                    trackPoint.Latitude = cursor.getDouble(ilatitude);
-                    trackPoint.Longitude = cursor.getInt(ilongitude);
-                    trackPoint.Altitude = cursor.getInt(ialtitude);
-                    trackPoint.Accuracy = cursor.getInt(iaccuracy);
-                    trackPoint.Speed = cursor.getInt(ispeed);
-                    trackPoint.Bearing = cursor.getInt(ibearing);
-                    trackPoint.HeartRate = cursor.getInt(iheartrate);
-
-                    retVal.add(trackPoint);
-                }
-
-            } finally {
-                cursor.close();
+            for (cursor.moveToFirst();
+                 !cursor.isAfterLast();
+                 cursor.moveToNext()) {
+                SportTrackPoint trackPoint = new SportTrackPoint();
+                trackPoint.Id = cursor.getInt(irowid);
+                trackPoint.SportActivityId = cursor.getInt(iactivityid);
+                trackPoint.TimeStampUTC =
+                        parseOptionalTimestamp(cursor, itimestamputc);
+                trackPoint.Latitude = cursor.getDouble(ilatitude);
+                trackPoint.Longitude = cursor.getDouble(ilongitude);
+                trackPoint.Altitude = cursor.getDouble(ialtitude);
+                trackPoint.Accuracy = cursor.getDouble(iaccuracy);
+                trackPoint.Speed = cursor.getDouble(ispeed);
+                trackPoint.Bearing = cursor.getDouble(ibearing);
+                trackPoint.HeartRate = cursor.getDouble(iheartrate);
+                retVal.add(trackPoint);
             }
         }
-        db.close();
 
         return retVal;
     }
@@ -462,5 +479,54 @@ public class SqlLogger implements Runnable, AutoCloseable {
         values.put(T_HEARTRATE, trackPoint.HeartRate);
 
         return values;
+    }
+
+    private synchronized SQLiteDatabase database() {
+        if (_db == null || !_db.isOpen()) {
+            throw new IllegalStateException("SqlLogger is closed.");
+        }
+        return _db;
+    }
+
+    private static String currentUtcTimestamp() {
+        GregorianCalendar greg = new GregorianCalendar();
+        TimeZone tz = greg.getTimeZone();
+        int offset = tz.getOffset(System.currentTimeMillis());
+        greg.add(Calendar.SECOND, (offset / 1000) * -1);
+        synchronized (Config.TimestampFormat) {
+            return Config.TimestampFormat.format(greg.getTime());
+        }
+    }
+
+    private static Date parseRequiredTimestamp(
+            Cursor cursor, int columnIndex, String columnName, int activityId) {
+        Date timestamp = parseOptionalTimestamp(cursor, columnIndex);
+        if (timestamp == null) {
+            throw new IllegalStateException(
+                    "Activity " + activityId + " has no valid "
+                            + columnName + " value.");
+        }
+        return timestamp;
+    }
+
+    private static Date parseOptionalTimestamp(
+            Cursor cursor, int columnIndex) {
+        if (cursor.isNull(columnIndex)) {
+            return null;
+        }
+        String value = cursor.getString(columnIndex);
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+        DateFormat timestampFormat;
+        synchronized (Config.TimestampFormat) {
+            timestampFormat = (DateFormat) Config.TimestampFormat.clone();
+        }
+        timestampFormat.setLenient(false);
+        ParsePosition position = new ParsePosition(0);
+        Date timestamp = timestampFormat.parse(value, position);
+        return timestamp != null && position.getIndex() == value.length()
+                ? timestamp
+                : null;
     }
 }

@@ -44,8 +44,10 @@ import com.long2know.utilities.models.Session;
 import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.models.SportActivity;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -58,6 +60,13 @@ public class MainActivity extends FragmentActivity implements
     private static final int FOREGROUND_PERMISSION_REQUEST_CODE = 1;
     private static final int BACKGROUND_SENSOR_PERMISSION_REQUEST_CODE = 2;
     private static final String TAG = "MainActivity";
+    private static final ExecutorService TERMINAL_EXPORT_EXECUTOR =
+            Executors.newSingleThreadExecutor();
+    private static final TerminalExportCoordinator TERMINAL_EXPORT_COORDINATOR =
+            new TerminalExportCoordinator();
+    private static final Object TERMINAL_EXPORT_ACTIVITY_LOCK = new Object();
+    private static WeakReference<MainActivity> _activeTerminalExportActivity =
+            new WeakReference<>(null);
 
     private SensorFragment _sensorFragment;
     private StartActivityFragment _startFragment;
@@ -74,18 +83,20 @@ public class MainActivity extends FragmentActivity implements
     private boolean _permissionRequestInFlight;
     private boolean _permissionLossMessagePending;
     private boolean _recoveryRetryPending;
+    private boolean _terminalReplayPending;
+    private volatile boolean _terminalExportPending;
+    private volatile boolean _terminalRetryEnabled;
     private long _pendingOperationToken;
     private RecordingOperationResult.Operation _pendingOperation =
             RecordingOperationResult.Operation.NONE;
-    private final ExecutorService _exportExecutor =
-            Executors.newSingleThreadExecutor();
-    private final TerminalExportCoordinator _terminalExportCoordinator =
-            new TerminalExportCoordinator();
     private final RecordingUiState _recordingUiState = new RecordingUiState();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        synchronized (TERMINAL_EXPORT_ACTIVITY_LOCK) {
+            _activeTerminalExportActivity = new WeakReference<>(this);
+        }
         setContentView(R.layout.activity_main);
 
         // Enables Ambient mode.
@@ -165,8 +176,10 @@ public class MainActivity extends FragmentActivity implements
             public void onServiceDisconnected(ComponentName name)            {
                 _loggingService = null;
                 Session.setBoundToService(false);
-                _terminalExportCoordinator.abandon();
                 clearPendingOperation();
+                if (_terminalExportPending) {
+                    showTerminalExportPending(true);
+                }
                 reconcileRecordingUi();
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
@@ -176,6 +189,11 @@ public class MainActivity extends FragmentActivity implements
                 if (_recoveryRetryPending) {
                     _recoveryRetryPending = false;
                     retryRecordingRecovery();
+                    return;
+                }
+                if (_terminalReplayPending) {
+                    _terminalReplayPending = false;
+                    retryPendingTerminalExport();
                     return;
                 }
                 reconcileRecordingUi();
@@ -196,7 +214,7 @@ public class MainActivity extends FragmentActivity implements
         reconcileRecordingPermissions();
         reconcileRecordingUi();
         if (_loggingService != null
-                && !_terminalExportCoordinator.isInFlight()) {
+                && !TERMINAL_EXPORT_COORDINATOR.isInFlight()) {
             _loggingService.requestPendingTerminalCompletionReplay();
         }
     }
@@ -221,8 +239,11 @@ public class MainActivity extends FragmentActivity implements
         if (Config.activityContext == this) {
             Config.activityContext = null;
         }
-        _terminalExportCoordinator.abandon();
-        _exportExecutor.shutdownNow();
+        synchronized (TERMINAL_EXPORT_ACTIVITY_LOCK) {
+            if (_activeTerminalExportActivity.get() == this) {
+                _activeTerminalExportActivity.clear();
+            }
+        }
         super.onDestroy();
     }
 
@@ -280,8 +301,8 @@ public class MainActivity extends FragmentActivity implements
             case STOP:
                 _sensorFragment.pauseTimer();
                 _sensorFragment.resetTimer();
+                showTerminalExportPending(false);
                 exportActivityAsync(result);
-                showStartScreenIfPossible();
                 break;
             case DISCARD:
                 _sensorFragment.pauseTimer();
@@ -403,6 +424,26 @@ public class MainActivity extends FragmentActivity implements
         handleOperationRequest(result);
     }
 
+    public void retryPendingTerminalExport() {
+        showTerminalExportPending(false);
+        if (_loggingService == null) {
+            if (!hasRequiredRecordingPermissions()) {
+                _terminalReplayPending = false;
+                showTerminalExportPending(true);
+                requestMissingPermissions();
+                return;
+            }
+            _terminalReplayPending = true;
+            startAndBindServiceIfPermitted();
+            if (_loggingService == null) {
+                return;
+            }
+        }
+        if (!_loggingService.requestPendingTerminalCompletionReplay()) {
+            showTerminalExportPending(true);
+        }
+    }
+
     private void handleOperationRequest(RecordingOperationResult result) {
         if (result.isAccepted() || result.isPending()) {
             _pendingOperation = result.getOperation();
@@ -444,84 +485,117 @@ public class MainActivity extends FragmentActivity implements
 
     private void exportActivityAsync(
             final RecordingOperationResult terminalResult) {
-        if (!terminalResult.hasTerminalCompletion()
-                || !_terminalExportCoordinator.begin(
-                        terminalResult.getTerminalCompletionId())) {
+        if (!terminalResult.hasTerminalCompletion()) {
+            return;
+        }
+        final TerminalExportCoordinator.Attempt attempt =
+                TERMINAL_EXPORT_COORDINATOR.begin(
+                        terminalResult.getTerminalCompletionId());
+        if (attempt == null) {
             return;
         }
         final int activityId = terminalResult.getActivityId();
-        final long terminalCompletionId =
-                terminalResult.getTerminalCompletionId();
+        final Context applicationContext = getApplicationContext();
+        final String wearPath = getString(R.string.wear_path);
         try {
-            _exportExecutor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try (SqlLogger sqlLogger = new SqlLogger()) {
-                        SportActivity activity =
-                                sqlLogger.getSportActivity(activityId);
-                        activity.SportTrackPoints =
-                                sqlLogger.getTrackPointsByActivity(activityId);
-                        byte[] bytes = SportActivity.serialize(activity);
-                        Asset asset = Asset.createFromBytes(bytes);
-                        PutDataMapRequest dataMap =
-                                PutDataMapRequest.create(
-                                        getString(R.string.wear_path));
-                        dataMap.getDataMap().putAsset("sportActivity", asset);
-                        PutDataRequest request = dataMap.asPutDataRequest();
-                        Task<DataItem> putTask =
-                                Wearable.getDataClient(MainActivity.this)
-                                        .putDataItem(request);
-                        putTask.addOnSuccessListener(dataItem ->
-                                handleTerminalExportSuccess(
-                                        terminalCompletionId));
-                        putTask.addOnFailureListener(exception ->
-                                handleTerminalExportFailure(
-                                        terminalCompletionId,
-                                        activityId,
-                                        exception));
-                    } catch (Exception exception) {
-                        handleTerminalExportFailure(
-                                terminalCompletionId,
-                                activityId,
-                                exception);
-                    }
-                }
-            });
+            TERMINAL_EXPORT_EXECUTOR.execute(
+                    terminalExportTask(
+                            applicationContext,
+                            wearPath,
+                            activityId,
+                            attempt));
         } catch (RuntimeException exception) {
             handleTerminalExportFailure(
-                    terminalCompletionId, activityId, exception);
+                    attempt, activityId, exception);
         }
     }
 
-    private void handleTerminalExportSuccess(long terminalCompletionId) {
-        boolean acknowledged = _terminalExportCoordinator.succeeded(
-                terminalCompletionId,
-                operationId -> {
-                    SportLoggerService service = _loggingService;
-                    return service != null
-                            && service.acknowledgeTerminalCompletion(
-                                    operationId);
-                });
-        if (!acknowledged) {
-            SportLoggerService service = _loggingService;
-            if (service != null) {
-                service.releaseTerminalCompletion(terminalCompletionId);
-            }
-            Log.e(
-                    TAG,
-                    "Data Layer handoff succeeded but its durable terminal "
-                            + "acknowledgment remains pending.");
-        }
-    }
-
-    private void handleTerminalExportFailure(
-            long terminalCompletionId,
+    private static Runnable terminalExportTask(
+            Context applicationContext,
+            String wearPath,
             int activityId,
-            Exception exception) {
-        _terminalExportCoordinator.failed(terminalCompletionId);
-        SportLoggerService service = _loggingService;
+            TerminalExportCoordinator.Attempt attempt) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                try (SqlLogger sqlLogger = new SqlLogger()) {
+                    SportActivity activity =
+                            sqlLogger.getStoppedActivityForExport(activityId);
+                    byte[] bytes = SportActivity.serialize(activity);
+                    Asset asset = Asset.createFromBytes(bytes);
+                    PutDataMapRequest dataMap =
+                            PutDataMapRequest.create(wearPath);
+                    dataMap.getDataMap().putAsset("sportActivity", asset);
+                    PutDataRequest request = dataMap.asPutDataRequest();
+                    Task<DataItem> putTask =
+                            Wearable.getDataClient(applicationContext)
+                                    .putDataItem(request);
+                    putTask.addOnSuccessListener(dataItem ->
+                            handleTerminalExportSuccess(attempt));
+                    putTask.addOnFailureListener(exception ->
+                            handleTerminalExportFailure(
+                                    attempt,
+                                    activityId,
+                                    exception));
+                    putTask.addOnCanceledListener(() ->
+                            handleTerminalExportFailure(
+                                    attempt,
+                                    activityId,
+                                    new CancellationException(
+                                            "Data Layer export was cancelled.")));
+                } catch (Exception exception) {
+                    handleTerminalExportFailure(
+                            attempt,
+                            activityId,
+                            exception);
+                }
+            }
+        };
+    }
+
+    private static void handleTerminalExportSuccess(
+            TerminalExportCoordinator.Attempt attempt) {
+        if (!TERMINAL_EXPORT_COORDINATOR.succeeded(attempt)) {
+            return;
+        }
+        long terminalCompletionId = attempt.getOperationId();
+        MainActivity activity = activeTerminalExportActivity();
+        SportLoggerService service =
+                activity == null ? null : activity._loggingService;
+        if (service != null
+                && service.requestTerminalCompletionAcknowledgment(
+                        terminalCompletionId)) {
+            return;
+        }
+        TERMINAL_EXPORT_COORDINATOR.acknowledgmentStartFailed(attempt);
         if (service != null) {
             service.releaseTerminalCompletion(terminalCompletionId);
+        }
+        if (activity != null) {
+            activity.showTerminalExportPending(true);
+        }
+        Log.e(
+                TAG,
+                "Data Layer handoff succeeded but its durable terminal "
+                        + "acknowledgment remains pending.");
+    }
+
+    private static void handleTerminalExportFailure(
+            TerminalExportCoordinator.Attempt attempt,
+            int activityId,
+            Exception exception) {
+        if (!TERMINAL_EXPORT_COORDINATOR.failed(attempt)) {
+            return;
+        }
+        long terminalCompletionId = attempt.getOperationId();
+        MainActivity activity = activeTerminalExportActivity();
+        SportLoggerService service =
+                activity == null ? null : activity._loggingService;
+        if (service != null) {
+            service.releaseTerminalCompletion(terminalCompletionId);
+        }
+        if (activity != null) {
+            activity.showTerminalExportPending(true);
         }
         Log.e(
                 TAG,
@@ -529,6 +603,28 @@ public class MainActivity extends FragmentActivity implements
                         + activityId
                         + "; durable retry remains pending.",
                 exception);
+    }
+
+    @Override
+    public void onTerminalCompletionAcknowledged(
+            long operationId, boolean acknowledged) {
+        if (!TERMINAL_EXPORT_COORDINATOR.acknowledgmentFinished(
+                operationId)) {
+            return;
+        }
+        if (acknowledged) {
+            _terminalExportPending = false;
+            _terminalRetryEnabled = false;
+            showStartScreenIfPossible();
+        } else {
+            showTerminalExportPending(true);
+        }
+    }
+
+    private static MainActivity activeTerminalExportActivity() {
+        synchronized (TERMINAL_EXPORT_ACTIVITY_LOCK) {
+            return _activeTerminalExportActivity.get();
+        }
     }
 
     @Override
@@ -740,14 +836,45 @@ public class MainActivity extends FragmentActivity implements
         applyPendingRecordingRenderIfSafe();
     }
 
+    private void showTerminalExportPending(boolean retryEnabled) {
+        _terminalExportPending = true;
+        _terminalRetryEnabled = retryEnabled;
+        Runnable render = new Runnable() {
+            @Override
+            public void run() {
+                _recordingUiState.requestStatus(
+                        RecordingUiState.Screen.TERMINAL_PENDING);
+                applyPendingRecordingRenderIfSafe();
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            render.run();
+        } else if (_activityHandler != null) {
+            _activityHandler.post(render);
+        }
+    }
+
     private void renderRecordingStatus(SportLoggerService.RecordingStatus status) {
-        if (status == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
+        if (status == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+            _terminalExportPending = true;
+            _recordingUiState.requestStatus(
+                    RecordingUiState.Screen.TERMINAL_PENDING);
+        } else if (status
+                == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
+            _terminalExportPending = false;
+            _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.RECOVERY);
         } else if (status == SportLoggerService.RecordingStatus.PAUSED) {
+            _terminalExportPending = false;
+            _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.PAUSED);
         } else if (status == SportLoggerService.RecordingStatus.RECORDING) {
+            _terminalExportPending = false;
+            _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.RECORDING);
         } else {
+            _terminalExportPending = false;
+            _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.START);
         }
         applyPendingRecordingRenderIfSafe();
@@ -781,6 +908,10 @@ public class MainActivity extends FragmentActivity implements
                 shared.ActivityId = result.getActivityId();
                 shared.IsRecording = true;
                 shared.IsPaused = true;
+            } else {
+                shared.ActivityId = 0;
+                shared.IsRecording = false;
+                shared.IsPaused = false;
             }
             shared.RequiresRecovery = true;
             shared.RecoveryCurrentProcessOnly =
@@ -817,6 +948,9 @@ public class MainActivity extends FragmentActivity implements
 
     private SportLoggerService.RecordingStatus recordingStatusFromSharedData() {
         SharedData shared = SharedData.getInstance();
+        if (_terminalExportPending) {
+            return SportLoggerService.RecordingStatus.TERMINAL_PENDING;
+        }
         if (shared.RequiresRecovery) {
             return SportLoggerService.RecordingStatus.RECOVERY_REQUIRED;
         }
@@ -831,6 +965,9 @@ public class MainActivity extends FragmentActivity implements
 
     private RecordingUiState.Screen recordingScreenFromSharedData() {
         SportLoggerService.RecordingStatus status = recordingStatusFromSharedData();
+        if (status == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+            return RecordingUiState.Screen.TERMINAL_PENDING;
+        }
         if (status == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
             return RecordingUiState.Screen.RECOVERY;
         }
@@ -855,7 +992,16 @@ public class MainActivity extends FragmentActivity implements
 
     private void renderRecordingUiNow(
             RecordingUiState.Screen screen, RecordingOperationResult failure) {
-        if (screen == RecordingUiState.Screen.RECOVERY) {
+        if (screen == RecordingUiState.Screen.TERMINAL_PENDING) {
+            _recoveryFragment.showTerminalExportPending(
+                    _terminalRetryEnabled);
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _recoveryFragment)
+                    .commit();
+            _wearableActionDrawer.setIsLocked(true);
+            _wearableActionDrawer.getController().closeDrawer();
+        } else if (screen == RecordingUiState.Screen.RECOVERY) {
+            _recoveryFragment.showRecordingRecovery();
             _fragmentManager.beginTransaction()
                     .replace(R.id.content_frame, _recoveryFragment)
                     .commit();
