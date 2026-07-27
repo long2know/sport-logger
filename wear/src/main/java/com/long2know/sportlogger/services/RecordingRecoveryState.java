@@ -61,6 +61,38 @@ final class RecordingRecoveryState {
         }
     }
 
+    static final class Transition {
+        private final Snapshot _snapshot;
+        private final boolean _accepted;
+        private final boolean _persisted;
+
+        private Transition(Snapshot snapshot, boolean accepted, boolean persisted) {
+            _snapshot = snapshot;
+            _accepted = accepted;
+            _persisted = persisted;
+        }
+
+        static Transition rejected(Snapshot snapshot) {
+            return new Transition(snapshot, false, false);
+        }
+
+        static Transition accepted(Snapshot snapshot, boolean persisted) {
+            return new Transition(snapshot, true, persisted);
+        }
+
+        boolean isAccepted() {
+            return _accepted;
+        }
+
+        boolean isPersisted() {
+            return _accepted && _persisted;
+        }
+
+        boolean isCurrentProcessOnly() {
+            return _accepted && !_persisted && _snapshot.ownsActivity();
+        }
+    }
+
     private final Store _store;
     private Snapshot _snapshot;
 
@@ -74,7 +106,7 @@ final class RecordingRecoveryState {
         return _snapshot;
     }
 
-    synchronized boolean prepareForServiceReplacement(boolean activityExists) {
+    synchronized Transition prepareForServiceReplacement(boolean activityExists) {
         if (!_snapshot.ownsActivity()) {
             return clearIdle();
         }
@@ -87,49 +119,61 @@ final class RecordingRecoveryState {
                 _snapshot.getGeneration()));
     }
 
-    synchronized boolean recordActivityCreated(int activityId) {
+    synchronized Transition recordActivityCreated(int activityId) {
         if (_snapshot.ownsActivity() || activityId <= 0) {
-            return false;
+            return Transition.rejected(_snapshot);
         }
         return update(Snapshot.owned(
                 Phase.RECOVERY_REQUIRED, activityId, 0L));
     }
 
-    synchronized boolean recordRecording(int activityId, long generation) {
+    synchronized Transition recordRecording(int activityId, long generation) {
         if (!matchesActivity(activityId)
                 || generation <= _snapshot.getGeneration()) {
-            return false;
+            return Transition.rejected(_snapshot);
         }
         return update(Snapshot.owned(
                 Phase.RECORDING, activityId, generation));
     }
 
-    synchronized boolean recordPaused(int activityId, long generation) {
+    synchronized Transition recordPaused(int activityId, long generation) {
         if (!matches(activityId, generation)) {
-            return false;
+            return Transition.rejected(_snapshot);
         }
         return update(Snapshot.owned(
                 Phase.PAUSED, activityId, generation));
     }
 
-    synchronized boolean requireRecovery(int activityId, long generation) {
+    synchronized Transition requireRecovery(int activityId, long generation) {
         if (!matches(activityId, generation)) {
-            return false;
+            return Transition.rejected(_snapshot);
         }
         return update(Snapshot.owned(
                 Phase.RECOVERY_REQUIRED, activityId, generation));
     }
 
-    synchronized boolean clearAfterStop(int activityId) {
+    synchronized Transition clearAfterStop(int activityId) {
         return clearOwnedActivity(activityId);
     }
 
-    synchronized boolean clearAfterDiscard(int activityId) {
-        return clearOwnedActivity(activityId);
+    synchronized Transition clearAfterDiscard(int activityId) {
+        if (!matchesActivity(activityId)) {
+            return Transition.rejected(_snapshot);
+        }
+        _snapshot = Snapshot.idle();
+        boolean persisted;
+        try {
+            persisted = _store.clear();
+        } catch (RuntimeException exception) {
+            persisted = false;
+        }
+        return Transition.accepted(_snapshot, persisted);
     }
 
-    synchronized boolean clearAfterPreRecordingFailure() {
-        return !_snapshot.ownsActivity() && clearIdle();
+    synchronized Transition clearAfterPreRecordingFailure() {
+        return !_snapshot.ownsActivity()
+                ? clearIdle()
+                : Transition.rejected(_snapshot);
     }
 
     private boolean matchesActivity(int activityId) {
@@ -142,23 +186,35 @@ final class RecordingRecoveryState {
                 && _snapshot.getGeneration() == generation;
     }
 
-    private boolean clearOwnedActivity(int activityId) {
+    private Transition clearOwnedActivity(int activityId) {
         if (!matchesActivity(activityId)) {
-            return false;
+            return Transition.rejected(_snapshot);
         }
         return clearIdle();
     }
 
-    private boolean clearIdle() {
-        if (!_store.clear()) {
-            return false;
+    private Transition clearIdle() {
+        boolean persisted;
+        try {
+            persisted = _store.clear();
+        } catch (RuntimeException exception) {
+            persisted = false;
+        }
+        if (!persisted) {
+            return Transition.accepted(_snapshot, false);
         }
         _snapshot = Snapshot.idle();
-        return true;
+        return Transition.accepted(_snapshot, true);
     }
 
-    private boolean update(Snapshot snapshot) {
+    private Transition update(Snapshot snapshot) {
         _snapshot = snapshot;
-        return _store.save(snapshot);
+        boolean persisted;
+        try {
+            persisted = _store.save(snapshot);
+        } catch (RuntimeException exception) {
+            persisted = false;
+        }
+        return Transition.accepted(_snapshot, persisted);
     }
 }

@@ -287,8 +287,11 @@ final class RecordingWriterCoordinator {
                         ? LifecycleTermination.TERMINATED_WITH_FAILURE
                         : LifecycleTermination.TERMINATED;
             }
-            return _current == generation
-                    ? LifecycleTermination.TIMED_OUT
+            if (_current == generation) {
+                return LifecycleTermination.TIMED_OUT;
+            }
+            return generation.token.failed()
+                    ? LifecycleTermination.TERMINATED_WITH_FAILURE
                     : LifecycleTermination.TERMINATED;
         }
     }

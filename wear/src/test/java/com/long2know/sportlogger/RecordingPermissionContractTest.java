@@ -69,7 +69,7 @@ public class RecordingPermissionContractTest {
         int cleanup = service.indexOf("private void handleRecordingPermissionLoss()");
         int pause = service.indexOf("_stopWatch.pauseTimer();", cleanup);
         int cancelWrites = service.indexOf("WRITERS.fenceOwned(", cleanup);
-        int stopListeners = service.indexOf("LISTENERS.release(", cleanup);
+        int stopListeners = service.indexOf("releaseOwnedListeners();", cleanup);
         int reset = service.indexOf("_stopWatch.resetTimer();", cleanup);
         int callback = service.indexOf("client.onRecordingPermissionLost();", cleanup);
         int shutdown = service.indexOf("stopSelf();", cleanup);

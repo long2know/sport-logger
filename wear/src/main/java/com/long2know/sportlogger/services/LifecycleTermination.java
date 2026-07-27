@@ -12,6 +12,6 @@ enum LifecycleTermination {
     }
 
     boolean quiesced() {
-        return this == TERMINATED || this == TERMINATED_WITH_FAILURE;
+        return this == TERMINATED;
     }
 }

@@ -12,7 +12,9 @@ public final class RecordingOperationResult {
         LISTENER_FAILED,
         INTERRUPTED,
         START_FAILED,
-        DATABASE_FAILED
+        DATABASE_FAILED,
+        RECOVERY_PERSISTENCE_FAILED,
+        RECOVERY_IN_PROGRESS
     }
 
     public enum RecoveryAction {
@@ -22,25 +24,53 @@ public final class RecordingOperationResult {
         SHOW_RECOVERY_RETRY
     }
 
+    public enum RecoveryRetention {
+        NONE,
+        DURABLE,
+        CURRENT_PROCESS_ONLY
+    }
+
     private final Status _status;
     private final int _activityId;
     private final RecoveryAction _recoveryAction;
+    private final RecoveryRetention _recoveryRetention;
 
     private RecordingOperationResult(
-            Status status, int activityId, RecoveryAction recoveryAction) {
+            Status status,
+            int activityId,
+            RecoveryAction recoveryAction,
+            RecoveryRetention recoveryRetention) {
         _status = status;
         _activityId = activityId;
         _recoveryAction = recoveryAction;
+        _recoveryRetention = recoveryRetention;
     }
 
     public static RecordingOperationResult of(Status status, int activityId) {
         return new RecordingOperationResult(
-                status, activityId, RecoveryAction.NONE);
+                status,
+                activityId,
+                RecoveryAction.NONE,
+                RecoveryRetention.NONE);
     }
 
     public static RecordingOperationResult recovery(
             Status status, int activityId, RecoveryAction recoveryAction) {
-        return new RecordingOperationResult(status, activityId, recoveryAction);
+        RecoveryRetention retention =
+                activityId > 0
+                        && recoveryAction != RecoveryAction.RETURN_TO_START
+                        ? RecoveryRetention.DURABLE
+                        : RecoveryRetention.NONE;
+        return recovery(status, activityId, recoveryAction, retention);
+    }
+
+    public static RecordingOperationResult recovery(
+            Status status,
+            int activityId,
+            RecoveryAction recoveryAction,
+            RecoveryRetention recoveryRetention) {
+        return new RecordingOperationResult(
+                status, activityId, recoveryAction, recoveryRetention);
     }
 
     static RecordingOperationResult success(int activityId) {
@@ -61,6 +91,10 @@ public final class RecordingOperationResult {
 
     public RecoveryAction getRecoveryAction() {
         return _recoveryAction;
+    }
+
+    public RecoveryRetention getRecoveryRetention() {
+        return _recoveryRetention;
     }
 
     public boolean isSuccess() {

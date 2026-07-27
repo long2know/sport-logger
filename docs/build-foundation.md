@@ -109,7 +109,11 @@ writer coordinator permits at most one generation and fences cancellation plus a
 before pause, stop/export, discard/delete, permission-loss completion, or a later recording. The
 fence is bounded to two seconds and honors interruption. If it times out or otherwise fails, the
 operation returns a typed failure, keeps the activity and database rows, and does not export or
-delete as though shutdown succeeded.
+delete as though shutdown succeeded. A generation that terminates because its write threw is also a
+failed fence, not successful quiescence. Writer-failure callbacks and terminal state transitions are
+serialized through the service, and stop/discard must commit the exact state-machine transition
+before ownership clearing, export, or deletion is allowed. A raced write failure therefore retains
+the exact activity/generation in retry-only recovery and returns `WRITER_FAILED`.
 
 Recovery metadata is synchronously committed to private `SharedPreferences` as the exact activity
 ID, last writer generation, and phase. This metadata is not service ownership: writer and listener
@@ -118,8 +122,9 @@ the activity row still exists, restores the writer-generation floor, marks the t
 required, and fences only that exact prior generation. Paused controls appear only after the writer
 is quiescent and the replacement listener group acknowledges startup. The same activity ID can then
 be resumed with a newer generation, stopped/exported, or discarded. An uncaught scheduled-write
-failure is surfaced as `WRITER_FAILED`; once its failed generation is confirmed terminated, the
-retained partial activity may be resumed, stopped, or discarded without overlapping writes.
+failure is surfaced as `WRITER_FAILED`, closes writer and listener ownership, pauses the stopwatch,
+and remains retry-only. An explicit recovery retry must establish a clean fence and listener
+generation before paused controls can be restored.
 
 A listener or service-startup failure before an activity row exists remains `IDLE`, clears the
 non-authoritative shared UI mirror, and returns to the start screen. A failure with an owned activity
@@ -133,6 +138,11 @@ in memory and may restart from their last displayed/default values. A process de
 legacy interval between SQLite row insertion and the synchronous metadata commit can leave an
 unclaimed unfinished row; the app does not guess that row's ownership. Commit or rollback failures
 are kept in the explicit recovery state while the current service can still retain the known ID.
+Validation and in-memory retention are separate from durable-store success: if a
+`RECOVERY_REQUIRED` commit fails, the service still fences the writer and listeners, pauses the
+stopwatch, retains the exact tuple in memory, and renders the retry screen. The result is typed
+`RECOVERY_PERSISTENCE_FAILED` with `CURRENT_PROCESS_ONLY` retention, and the screen explicitly warns
+that process-death recovery is not guaranteed until a later retry commits successfully.
 
 Sensor and GPS loopers are owned by one service-instance listener group. Replacement first disables
 the old generation, unregisters both listener sets, requests safe looper quit, and waits for both
@@ -154,7 +164,10 @@ presenting permission shutdown as successful.
 `SensorFragment` uses one main-thread handler through a generation-guarded callback loop. Repeated
 resume/start calls cannot create parallel chains, and pause, permission-loss state, view destruction,
 or fragment destruction removes the callback through the same handler and prevents stale callbacks
-from rescheduling.
+from rescheduling. Activity failure/status rendering is also retained when fragment transactions are
+unsafe after state save. `onStart`, `onResume`, and service reconnection reconcile the authoritative
+service or retained recovery status, then render the pending idle, recording, paused, or retry screen
+once the `FragmentManager` can safely commit.
 
 ## Pinned direct dependencies
 
@@ -234,8 +247,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Twenty-four unit-test
-reports contained 96 tests with zero failures, errors, or skips. Lint completed with zero errors and
+The final clean local run completed successfully with 202 actionable tasks. Thirty-four unit-test
+reports contained 154 tests with zero failures, errors, or skips. Lint completed with zero errors and
 82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:

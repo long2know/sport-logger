@@ -174,6 +174,42 @@ public class RecordingWriterCoordinatorTest {
     }
 
     @Test
+    public void concurrentTerminalFencesCannotHideGenerationFailure()
+            throws Exception {
+        ConcurrentFenceScheduler scheduler = new ConcurrentFenceScheduler();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(() -> scheduler);
+        Object owner = new Object();
+        coordinator.start(
+                owner,
+                10,
+                token -> () -> {
+                    throw new RuntimeException("write failed");
+                });
+        scheduler.task.run();
+
+        AtomicReference<LifecycleTermination> first = new AtomicReference<>();
+        AtomicReference<LifecycleTermination> second = new AtomicReference<>();
+        Thread firstFence = new Thread(
+                () -> first.set(coordinator.fenceOwned(owner, 1_000)));
+        Thread secondFence = new Thread(
+                () -> second.set(coordinator.fenceOwned(owner, 1_000)));
+        firstFence.start();
+        secondFence.start();
+
+        assertTrue(scheduler.awaitersEntered.await(1, TimeUnit.SECONDS));
+        scheduler.terminated = true;
+        scheduler.releaseAwaiters.countDown();
+        firstFence.join(1_000L);
+        secondFence.join(1_000L);
+
+        assertEquals(
+                LifecycleTermination.TERMINATED_WITH_FAILURE, first.get());
+        assertEquals(
+                LifecycleTermination.TERMINATED_WITH_FAILURE, second.get());
+    }
+
+    @Test
     public void replacementCanFenceOnlyTheExactRetainedGeneration() {
         FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
         RecordingWriterCoordinator coordinator =
@@ -314,6 +350,37 @@ public class RecordingWriterCoordinatorTest {
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    private static final class ConcurrentFenceScheduler
+            implements RecordingWriterCoordinator.Scheduler {
+        final CountDownLatch awaitersEntered = new CountDownLatch(2);
+        final CountDownLatch releaseAwaiters = new CountDownLatch(1);
+        volatile boolean terminated;
+        Runnable task;
+
+        @Override
+        public void scheduleAtFixedRate(
+                Runnable task, long initialDelay, long period, TimeUnit unit) {
+            this.task = task;
+        }
+
+        @Override
+        public void shutdownNow() {
+        }
+
+        @Override
+        public boolean awaitTermination(long timeoutMillis)
+                throws InterruptedException {
+            awaitersEntered.countDown();
+            return releaseAwaiters.await(
+                    timeoutMillis, TimeUnit.MILLISECONDS) && terminated;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return terminated;
         }
     }
 }

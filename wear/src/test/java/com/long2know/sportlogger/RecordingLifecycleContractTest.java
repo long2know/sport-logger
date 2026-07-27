@@ -64,6 +64,34 @@ public class RecordingLifecycleContractTest {
         assertFalse(fragment.contains("postDelayed(this, 0)"));
     }
 
+    @Test
+    public void terminalEffectsRequireCleanWriterAndCommittedStateTransition()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String stop = service.substring(
+                service.indexOf("public synchronized RecordingOperationResult stopActivity()"),
+                service.indexOf(
+                        "public synchronized RecordingOperationResult discardActivity()"));
+        String discard = service.substring(
+                service.indexOf(
+                        "public synchronized RecordingOperationResult discardActivity()"),
+                service.indexOf(
+                        "public synchronized RecordingOperationResult retryRecovery()"));
+
+        assertTrue(stop.contains("RecordingTerminalTransition.finish("));
+        assertTrue(discard.contains("RecordingTerminalTransition.finish("));
+        assertTrue(
+                stop.indexOf("RecordingTerminalTransition.finish(")
+                        < stop.indexOf("_recoveryState.clearAfterStop("));
+        assertTrue(
+                discard.indexOf("RecordingTerminalTransition.finish(")
+                        < discard.indexOf("new SqlLogger().deleteActivity("));
+        assertFalse(stop.contains(".quiesced()"));
+        assertFalse(discard.contains(".quiesced()"));
+    }
+
     private static String read(String relativePath) throws Exception {
         return new String(
                 Files.readAllBytes(findRepositoryFile(relativePath)),

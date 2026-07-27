@@ -12,7 +12,7 @@ public class RecordingRecoveryStateTest {
         FakeStore store = new FakeStore();
         RecordingRecoveryState recovery = new RecordingRecoveryState(store);
 
-        assertTrue(recovery.clearAfterPreRecordingFailure());
+        assertTrue(recovery.clearAfterPreRecordingFailure().isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.IDLE,
                 recovery.snapshot().getPhase());
@@ -24,9 +24,9 @@ public class RecordingRecoveryStateTest {
         FakeStore store = new FakeStore();
         RecordingRecoveryState recovery = createRecording(store, 42, 7L);
 
-        assertTrue(recovery.requireRecovery(42, 7L));
-        assertFalse(recovery.requireRecovery(42, 6L));
-        assertFalse(recovery.requireRecovery(41, 7L));
+        assertTrue(recovery.requireRecovery(42, 7L).isPersisted());
+        assertFalse(recovery.requireRecovery(42, 6L).isAccepted());
+        assertFalse(recovery.requireRecovery(41, 7L).isAccepted());
 
         RecordingRecoveryState.Snapshot retained = recovery.snapshot();
         assertEquals(
@@ -42,14 +42,14 @@ public class RecordingRecoveryStateTest {
         createRecording(store, 51, 12L);
 
         RecordingRecoveryState replacement = new RecordingRecoveryState(store);
-        assertTrue(replacement.prepareForServiceReplacement(true));
+        assertTrue(replacement.prepareForServiceReplacement(true).isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.RECOVERY_REQUIRED,
                 replacement.snapshot().getPhase());
         assertEquals(51, replacement.snapshot().getActivityId());
         assertEquals(12L, replacement.snapshot().getGeneration());
 
-        assertTrue(replacement.recordPaused(51, 12L));
+        assertTrue(replacement.recordPaused(51, 12L).isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.PAUSED,
                 replacement.snapshot().getPhase());
@@ -61,7 +61,7 @@ public class RecordingRecoveryStateTest {
         createRecording(store, 61, 2L);
 
         RecordingRecoveryState replacement = new RecordingRecoveryState(store);
-        assertTrue(replacement.prepareForServiceReplacement(false));
+        assertTrue(replacement.prepareForServiceReplacement(false).isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.IDLE,
                 replacement.snapshot().getPhase());
@@ -76,8 +76,8 @@ public class RecordingRecoveryStateTest {
         replacement.prepareForServiceReplacement(true);
         replacement.recordPaused(71, 4L);
 
-        assertTrue(replacement.recordRecording(71, 5L));
-        assertFalse(replacement.recordRecording(71, 5L));
+        assertTrue(replacement.recordRecording(71, 5L).isPersisted());
+        assertFalse(replacement.recordRecording(71, 5L).isAccepted());
         assertEquals(
                 RecordingRecoveryState.Phase.RECORDING,
                 replacement.snapshot().getPhase());
@@ -93,8 +93,8 @@ public class RecordingRecoveryStateTest {
         replacement.prepareForServiceReplacement(true);
         replacement.recordPaused(81, 9L);
 
-        assertFalse(replacement.clearAfterStop(80));
-        assertTrue(replacement.clearAfterStop(81));
+        assertFalse(replacement.clearAfterStop(80).isAccepted());
+        assertTrue(replacement.clearAfterStop(81).isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.IDLE,
                 replacement.snapshot().getPhase());
@@ -108,23 +108,95 @@ public class RecordingRecoveryStateTest {
         replacement.prepareForServiceReplacement(true);
         replacement.recordPaused(91, 3L);
 
-        assertTrue(replacement.clearAfterDiscard(91));
+        assertTrue(replacement.clearAfterDiscard(91).isPersisted());
         assertEquals(
                 RecordingRecoveryState.Phase.IDLE,
                 replacement.snapshot().getPhase());
     }
 
+    @Test
+    public void failedRecoveryPersistenceRetainsExactTupleInMemory() {
+        FakeStore store = new FakeStore();
+        RecordingRecoveryState recovery = createRecording(store, 101, 13L);
+        store.failSaves = true;
+
+        RecordingRecoveryState.Transition transition =
+                recovery.requireRecovery(101, 13L);
+
+        assertTrue(transition.isAccepted());
+        assertFalse(transition.isPersisted());
+        assertTrue(transition.isCurrentProcessOnly());
+        assertEquals(
+                RecordingRecoveryState.Phase.RECOVERY_REQUIRED,
+                recovery.snapshot().getPhase());
+        assertEquals(101, recovery.snapshot().getActivityId());
+        assertEquals(13L, recovery.snapshot().getGeneration());
+    }
+
+    @Test
+    public void failedFirstTuplePersistenceCannotPromiseProcessDeathRecovery() {
+        FakeStore store = new FakeStore();
+        store.failSaves = true;
+        RecordingRecoveryState recovery = new RecordingRecoveryState(store);
+
+        RecordingRecoveryState.Transition transition =
+                recovery.recordActivityCreated(111);
+
+        assertTrue(transition.isCurrentProcessOnly());
+        assertTrue(recovery.snapshot().ownsActivity());
+
+        RecordingRecoveryState replacement = new RecordingRecoveryState(store);
+        assertFalse(replacement.snapshot().ownsActivity());
+        assertEquals(
+                RecordingRecoveryState.Phase.IDLE,
+                replacement.snapshot().getPhase());
+    }
+
+    @Test
+    public void failedRecoveryPhasePersistenceReloadsOnlyLastDurableState() {
+        FakeStore store = new FakeStore();
+        RecordingRecoveryState recovery = createRecording(store, 121, 17L);
+        store.failSaves = true;
+
+        assertFalse(recovery.requireRecovery(121, 17L).isPersisted());
+
+        RecordingRecoveryState replacement = new RecordingRecoveryState(store);
+        assertEquals(
+                RecordingRecoveryState.Phase.RECORDING,
+                replacement.snapshot().getPhase());
+        assertEquals(121, replacement.snapshot().getActivityId());
+        assertEquals(17L, replacement.snapshot().getGeneration());
+    }
+
+    @Test
+    public void failedStopClearKeepsOwnedTupleInMemory() {
+        FakeStore store = new FakeStore();
+        RecordingRecoveryState recovery = createRecording(store, 131, 19L);
+        store.failClears = true;
+
+        RecordingRecoveryState.Transition transition =
+                recovery.clearAfterStop(131);
+
+        assertTrue(transition.isAccepted());
+        assertFalse(transition.isPersisted());
+        assertTrue(recovery.snapshot().ownsActivity());
+        assertEquals(131, recovery.snapshot().getActivityId());
+        assertEquals(19L, recovery.snapshot().getGeneration());
+    }
+
     private static RecordingRecoveryState createRecording(
             FakeStore store, int activityId, long generation) {
         RecordingRecoveryState recovery = new RecordingRecoveryState(store);
-        assertTrue(recovery.recordActivityCreated(activityId));
-        assertTrue(recovery.recordRecording(activityId, generation));
+        assertTrue(recovery.recordActivityCreated(activityId).isPersisted());
+        assertTrue(recovery.recordRecording(activityId, generation).isPersisted());
         return recovery;
     }
 
     private static final class FakeStore implements RecordingRecoveryState.Store {
         RecordingRecoveryState.Snapshot snapshot =
                 RecordingRecoveryState.Snapshot.idle();
+        boolean failSaves;
+        boolean failClears;
 
         @Override
         public RecordingRecoveryState.Snapshot load() {
@@ -133,12 +205,18 @@ public class RecordingRecoveryStateTest {
 
         @Override
         public boolean save(RecordingRecoveryState.Snapshot value) {
+            if (failSaves) {
+                return false;
+            }
             snapshot = value;
             return true;
         }
 
         @Override
         public boolean clear() {
+            if (failClears) {
+                return false;
+            }
             snapshot = RecordingRecoveryState.Snapshot.idle();
             return true;
         }

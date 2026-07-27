@@ -6,6 +6,7 @@ public class SharedData {
     public boolean IsRecording;
     public boolean IsPaused;
     public boolean RequiresRecovery;
+    public boolean RecoveryCurrentProcessOnly;
 
     public int ActivityId;
 

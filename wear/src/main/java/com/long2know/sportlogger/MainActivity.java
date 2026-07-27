@@ -71,6 +71,7 @@ public class MainActivity extends FragmentActivity implements
     private boolean _permissionRequestInFlight;
     private boolean _permissionLossMessagePending;
     private boolean _recoveryRetryPending;
+    private final RecordingUiState _recordingUiState = new RecordingUiState();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -148,25 +149,13 @@ public class MainActivity extends FragmentActivity implements
 
         requestMissingPermissions();
 
-        // If the service indicates that a recording is in progress, continue
-        SharedData shared = SharedData.getInstance();
-        if (shared.RequiresRecovery) {
-            _fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, _recoveryFragment)
-                    .commit();
-        } else if (shared.IsRecording && !shared.IsPaused) {
-            _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
-            _wearableActionDrawer.getController().peekDrawer();
-        } else if (shared.IsPaused) {
-            _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
-        } else {
-            _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
-        }
+        renderRecordingStatus(recordingStatusFromSharedData());
 
         _loggingServiceConnection = new ServiceConnection() {
             public void onServiceDisconnected(ComponentName name)            {
                 _loggingService = null;
                 Session.setBoundToService(false);
+                reconcileRecordingUi();
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
                 _loggingService = ((SportLoggerService.LocalBinder) service).getService();
@@ -176,7 +165,7 @@ public class MainActivity extends FragmentActivity implements
                     retryRecordingRecovery();
                     return;
                 }
-                renderRecordingStatus(_loggingService.getRecordingStatus());
+                reconcileRecordingUi();
             }
         };
     }
@@ -185,12 +174,14 @@ public class MainActivity extends FragmentActivity implements
     protected void onStart() {
         super.onStart();
         startAndBindServiceIfPermitted();
+        reconcileRecordingUi();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         reconcileRecordingPermissions();
+        reconcileRecordingUi();
     }
 
     @Override
@@ -286,8 +277,7 @@ public class MainActivity extends FragmentActivity implements
             return;
         }
         _sensorFragment.startTImer();
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
-        _wearableActionDrawer.getController().peekDrawer();
+        showRecordingScreenIfPossible();
     }
 
     public void stopActivity() {
@@ -328,8 +318,7 @@ public class MainActivity extends FragmentActivity implements
             Log.e(TAG,"Could not serialize activity");
         }
 
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
-        _wearableActionDrawer.getController().closeDrawer();
+        showStartScreenIfPossible();
     }
 
     public void pauseActivity() {
@@ -344,8 +333,7 @@ public class MainActivity extends FragmentActivity implements
             return;
         }
         _sensorFragment.pauseTimer();
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
-        _wearableActionDrawer.getController().closeDrawer();
+        showPausedScreenIfPossible();
     }
 
     public void resumeActivity() {
@@ -360,8 +348,7 @@ public class MainActivity extends FragmentActivity implements
             return;
         }
         _sensorFragment.startTImer();
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
-        _wearableActionDrawer.getController().peekDrawer();
+        showRecordingScreenIfPossible();
     }
 
     public void discardActivity() {
@@ -377,8 +364,7 @@ public class MainActivity extends FragmentActivity implements
         }
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
-        _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
-        _wearableActionDrawer.getController().closeDrawer();
+        showStartScreenIfPossible();
     }
 
     public void retryRecordingRecovery() {
@@ -540,13 +526,18 @@ public class MainActivity extends FragmentActivity implements
             handleRecordingFailure(RecordingOperationResult.recovery(
                     RecordingOperationResult.Status.LISTENER_FAILED,
                     shared.ActivityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY));
+                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
+                    shared.RecoveryCurrentProcessOnly
+                            ? RecordingOperationResult.RecoveryRetention
+                                    .CURRENT_PROCESS_ONLY
+                            : RecordingOperationResult.RecoveryRetention.DURABLE));
             return;
         }
 
         shared.IsRecording = false;
         shared.IsPaused = false;
         shared.RequiresRecovery = false;
+        shared.RecoveryCurrentProcessOnly = false;
 
         if (_sensorFragment != null) {
             _sensorFragment.pauseTimer();
@@ -590,118 +581,167 @@ public class MainActivity extends FragmentActivity implements
     }
 
     private void showStartScreenIfPossible() {
-        if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
-            _fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, _startFragment)
-                    .commit();
-        }
-        if (_wearableActionDrawer != null) {
-            _wearableActionDrawer.getController().closeDrawer();
-        }
+        _recordingUiState.requestStatus(RecordingUiState.Screen.START);
+        applyPendingRecordingRenderIfSafe();
     }
 
     private void showPausedScreenIfPossible() {
-        if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
-            _fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, _endFragment)
-                    .commit();
-        }
-        if (_wearableActionDrawer != null) {
-            _wearableActionDrawer.getController().closeDrawer();
-        }
-    }
-
-    private void showRecoveryScreenIfPossible() {
-        if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
-            _fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, _recoveryFragment)
-                    .commit();
-        }
-        if (_wearableActionDrawer != null) {
-            _wearableActionDrawer.getController().closeDrawer();
-        }
+        _recordingUiState.requestStatus(RecordingUiState.Screen.PAUSED);
+        applyPendingRecordingRenderIfSafe();
     }
 
     private void showRecordingScreenIfPossible() {
-        if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
-            _fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, _sensorFragment)
-                    .commit();
-        }
-        if (_wearableActionDrawer != null) {
-            _wearableActionDrawer.getController().peekDrawer();
-        }
+        _recordingUiState.requestStatus(RecordingUiState.Screen.RECORDING);
+        applyPendingRecordingRenderIfSafe();
     }
 
     private void renderRecordingStatus(SportLoggerService.RecordingStatus status) {
         if (status == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
-            showRecoveryScreenIfPossible();
+            _recordingUiState.requestStatus(RecordingUiState.Screen.RECOVERY);
         } else if (status == SportLoggerService.RecordingStatus.PAUSED) {
-            showPausedScreenIfPossible();
+            _recordingUiState.requestStatus(RecordingUiState.Screen.PAUSED);
         } else if (status == SportLoggerService.RecordingStatus.RECORDING) {
-            showRecordingScreenIfPossible();
+            _recordingUiState.requestStatus(RecordingUiState.Screen.RECORDING);
         } else {
-            showStartScreenIfPossible();
+            _recordingUiState.requestStatus(RecordingUiState.Screen.START);
         }
+        applyPendingRecordingRenderIfSafe();
     }
 
     private void handleRecordingFailure(RecordingOperationResult result) {
         _sensorFragment.pauseTimer();
         RecordingOperationResult.RecoveryAction recoveryAction =
                 result.getRecoveryAction();
+        RecordingUiState.Screen screen = recordingScreenFromSharedData();
+        SharedData shared = SharedData.getInstance();
         if (recoveryAction
                 == RecordingOperationResult.RecoveryAction.RETURN_TO_START) {
-            SharedData shared = SharedData.getInstance();
             shared.ActivityId = 0;
             shared.IsRecording = false;
             shared.IsPaused = false;
             shared.RequiresRecovery = false;
-            showStartScreenIfPossible();
-            Toast.makeText(
-                    this,
-                    R.string.recording_startup_failed,
-                    Toast.LENGTH_LONG)
-                    .show();
-            return;
-        }
-        if (recoveryAction
+            shared.RecoveryCurrentProcessOnly = false;
+            screen = RecordingUiState.Screen.START;
+        } else if (recoveryAction
                 == RecordingOperationResult.RecoveryAction.SHOW_PAUSED_CONTROLS) {
-            SharedData shared = SharedData.getInstance();
             shared.ActivityId = result.getActivityId();
             shared.IsRecording = true;
             shared.IsPaused = true;
             shared.RequiresRecovery = false;
-            Toast.makeText(
-                    this,
-                    R.string.recording_shutdown_failed,
-                    Toast.LENGTH_LONG)
-                    .show();
-            showPausedScreenIfPossible();
-            return;
-        }
-        if (recoveryAction
+            shared.RecoveryCurrentProcessOnly = false;
+            screen = RecordingUiState.Screen.PAUSED;
+        } else if (recoveryAction
                 == RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY) {
-            SharedData shared = SharedData.getInstance();
             if (result.getActivityId() > 0) {
                 shared.ActivityId = result.getActivityId();
                 shared.IsRecording = true;
                 shared.IsPaused = true;
             }
             shared.RequiresRecovery = true;
-            Toast.makeText(
-                    this,
-                    R.string.recording_recovery_required,
-                    Toast.LENGTH_LONG)
-                    .show();
-            showRecoveryScreenIfPossible();
-            return;
+            shared.RecoveryCurrentProcessOnly =
+                    result.getRecoveryRetention()
+                            == RecordingOperationResult.RecoveryRetention
+                                    .CURRENT_PROCESS_ONLY;
+            screen = RecordingUiState.Screen.RECOVERY;
         }
 
-        Toast.makeText(
-                this,
-                R.string.recording_operation_failed,
-                Toast.LENGTH_SHORT)
-                .show();
+        _recordingUiState.requestFailure(screen, result);
+        applyPendingRecordingRenderIfSafe();
+    }
+
+    private void reconcileRecordingUi() {
+        renderRecordingStatus(
+                _loggingService == null
+                        ? recordingStatusFromSharedData()
+                        : _loggingService.getRecordingStatus());
+    }
+
+    private SportLoggerService.RecordingStatus recordingStatusFromSharedData() {
+        SharedData shared = SharedData.getInstance();
+        if (shared.RequiresRecovery) {
+            return SportLoggerService.RecordingStatus.RECOVERY_REQUIRED;
+        }
+        if (shared.IsRecording && !shared.IsPaused) {
+            return SportLoggerService.RecordingStatus.RECORDING;
+        }
+        if (shared.IsPaused) {
+            return SportLoggerService.RecordingStatus.PAUSED;
+        }
+        return SportLoggerService.RecordingStatus.IDLE;
+    }
+
+    private RecordingUiState.Screen recordingScreenFromSharedData() {
+        SportLoggerService.RecordingStatus status = recordingStatusFromSharedData();
+        if (status == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
+            return RecordingUiState.Screen.RECOVERY;
+        }
+        if (status == SportLoggerService.RecordingStatus.PAUSED) {
+            return RecordingUiState.Screen.PAUSED;
+        }
+        if (status == SportLoggerService.RecordingStatus.RECORDING) {
+            return RecordingUiState.Screen.RECORDING;
+        }
+        return RecordingUiState.Screen.START;
+    }
+
+    private void applyPendingRecordingRenderIfSafe() {
+        boolean safe = _fragmentManager != null
+                && !_fragmentManager.isStateSaved()
+                && !isFinishing()
+                && !isDestroyed()
+                && getLifecycle().getCurrentState().isAtLeast(
+                        Lifecycle.State.CREATED);
+        _recordingUiState.renderIfSafe(safe, this::renderRecordingUiNow);
+    }
+
+    private void renderRecordingUiNow(
+            RecordingUiState.Screen screen, RecordingOperationResult failure) {
+        if (screen == RecordingUiState.Screen.RECOVERY) {
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _recoveryFragment)
+                    .commit();
+            _recoveryFragment.refreshStatus();
+            _wearableActionDrawer.getController().closeDrawer();
+        } else if (screen == RecordingUiState.Screen.PAUSED) {
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _endFragment)
+                    .commit();
+            _wearableActionDrawer.getController().closeDrawer();
+        } else if (screen == RecordingUiState.Screen.RECORDING) {
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _sensorFragment)
+                    .commit();
+            _wearableActionDrawer.getController().peekDrawer();
+        } else {
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _startFragment)
+                    .commit();
+            _wearableActionDrawer.getController().closeDrawer();
+        }
+
+        if (failure == null) {
+            return;
+        }
+        int message;
+        int duration = Toast.LENGTH_LONG;
+        if (failure.getRecoveryRetention()
+                == RecordingOperationResult.RecoveryRetention
+                        .CURRENT_PROCESS_ONLY) {
+            message = R.string.recording_recovery_not_persisted;
+        } else if (failure.getRecoveryAction()
+                == RecordingOperationResult.RecoveryAction.RETURN_TO_START) {
+            message = R.string.recording_startup_failed;
+        } else if (failure.getRecoveryAction()
+                == RecordingOperationResult.RecoveryAction.SHOW_PAUSED_CONTROLS) {
+            message = R.string.recording_shutdown_failed;
+        } else if (failure.getRecoveryAction()
+                == RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY) {
+            message = R.string.recording_recovery_required;
+        } else {
+            message = R.string.recording_operation_failed;
+            duration = Toast.LENGTH_SHORT;
+        }
+        Toast.makeText(this, message, duration).show();
     }
 
     @Override

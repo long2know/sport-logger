@@ -17,4 +17,17 @@ public class RecordingOperationResultTest {
                 RecordingOperationResult.RecoveryAction.SHOW_PAUSED_CONTROLS,
                 result.getRecoveryAction());
     }
+
+    @Test
+    public void failedRecoveryPersistenceExposesCurrentProcessOnlyLimit() {
+        RecordingOperationResult result = RecordingOperationResult.recovery(
+                RecordingOperationResult.Status.RECOVERY_PERSISTENCE_FAILED,
+                24,
+                RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
+                RecordingOperationResult.RecoveryRetention.CURRENT_PROCESS_ONLY);
+
+        assertEquals(
+                RecordingOperationResult.RecoveryRetention.CURRENT_PROCESS_ONLY,
+                result.getRecoveryRetention());
+    }
 }
