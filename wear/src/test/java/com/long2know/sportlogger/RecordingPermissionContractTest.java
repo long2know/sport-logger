@@ -51,6 +51,42 @@ public class RecordingPermissionContractTest {
         assertTrue(documentation.contains("separate runtime request"));
         assertTrue(documentation.contains("recording remains gated"));
         assertTrue(documentation.contains("hard-restricted permission"));
+        assertTrue(documentation.contains("pauses and resets the stopwatch"));
+        assertTrue(documentation.contains("rejects start and resume"));
+    }
+
+    @Test
+    public void permissionLossStopsAndResetsStopwatchBeforeServiceShutdown() throws Exception {
+        String service = new String(
+                Files.readAllBytes(findRepositoryFile(
+                        "wear/src/main/java/com/long2know/sportlogger/services/"
+                                + "SportLoggerService.java")),
+                StandardCharsets.UTF_8);
+        int cleanup = service.indexOf("private synchronized void handleRecordingPermissionLoss()");
+        int cancelWrites = service.indexOf("cancelScheduledWrites();", cleanup);
+        int stopListeners = service.indexOf("requestListenerShutdown();", cleanup);
+        int pause = service.indexOf("_stopWatch.pauseTimer();", cleanup);
+        int reset = service.indexOf("_stopWatch.resetTimer();", cleanup);
+        int callback = service.indexOf("_serviceClient.onRecordingPermissionLost();", cleanup);
+        int shutdown = service.indexOf("stopSelf();", cleanup);
+
+        assertTrue(cleanup >= 0);
+        assertTrue(cancelWrites > cleanup);
+        assertTrue(stopListeners > cancelWrites);
+        assertTrue(pause > stopListeners);
+        assertTrue(reset > pause);
+        assertTrue(callback > reset);
+        assertTrue(shutdown > callback);
+        assertTrue(service.contains("return recordingMayContinue()"));
+
+        String start = service.substring(
+                service.indexOf("public synchronized boolean startNewActivity()"),
+                service.indexOf("public synchronized void stopActivity()"));
+        String resume = service.substring(
+                service.indexOf("public synchronized boolean resumeActivity()"),
+                service.indexOf("public synchronized void discardActivity()"));
+        assertTrue(start.contains("if (_permissionLossHandled)"));
+        assertTrue(resume.contains("if (_permissionLossHandled)"));
     }
 
     private static Path findRepositoryFile(String relativePath) {

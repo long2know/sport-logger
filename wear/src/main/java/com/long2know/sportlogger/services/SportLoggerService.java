@@ -45,6 +45,7 @@ public class SportLoggerService extends Service {
     private ScheduledExecutorService _scheduler;
     private StopWatch _stopWatch = new StopWatch();
     private boolean _permissionLossHandled;
+    private final Handler _mainHandler = new Handler(Looper.getMainLooper());
 
     // Below is the service framework methods
     @Override
@@ -108,36 +109,11 @@ public class SportLoggerService extends Service {
 
     @Override
     public void onDestroy() {
-        if (_scheduler != null) {
-            AsyncTask.execute(new Runnable() {
-                @Override
-                public void run() {
-                try {
-                    _scheduler.awaitTermination(100, TimeUnit.MILLISECONDS);
-                    _scheduler.shutdownNow();
-                } catch (InterruptedException e) { }
-                }
-            });
-        }
-
-        Handler sensorHandler = SensorListener.WorkerHandler;
-        if (sensorHandler != null) {
-            Message lmsg = sensorHandler.obtainMessage(0);
-            sensorHandler.sendMessage(lmsg);
-        }
-
-        Handler locationHandler = GpsListener.WorkerHandler;
-        if (locationHandler != null) {
-            Message gmsg = locationHandler.obtainMessage(0);
-            locationHandler.sendMessage(gmsg);
-        }
-
-        if (_sensorThread != null) {
-            _sensorThread.interrupt();
-        }
-        if (_locationThread != null) {
-            _locationThread.interrupt();
-        }
+        ScheduledExecutorService scheduler = cancelScheduledWrites();
+        awaitSchedulerTermination(scheduler, 100);
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        requestListenerShutdown();
 
         _serviceClient = null;
         super.onDestroy();
@@ -194,7 +170,10 @@ public class SportLoggerService extends Service {
         }
     }
 
-    public boolean startNewActivity() {
+    public synchronized boolean startNewActivity() {
+        if (_permissionLossHandled) {
+            return false;
+        }
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
             handleRecordingPermissionLoss();
             return false;
@@ -213,18 +192,9 @@ public class SportLoggerService extends Service {
         return true;
     }
 
-    public void stopActivity() {
-        // We don't want to block the UI
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                    _scheduler.shutdownNow();
-                } catch (InterruptedException e) {
-                }
-            }
-        });
+    public synchronized void stopActivity() {
+        ScheduledExecutorService scheduler = cancelScheduledWrites();
+        awaitSchedulerTermination(scheduler, 300);
 
         _stopWatch.pauseTimer();
         _stopWatch.resetTimer();
@@ -235,26 +205,23 @@ public class SportLoggerService extends Service {
         SharedData.getInstance().IsPaused = false;
     }
 
-    public void pauseActivity() {
-        // We don't want to block the UI
+    public synchronized void pauseActivity() {
+        if (_permissionLossHandled) {
+            return;
+        }
         SharedData.getInstance().IsPaused = true;
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                    _scheduler.shutdownNow();
-                } catch (InterruptedException e) {
-                }
-            }
-        });
+        ScheduledExecutorService scheduler = cancelScheduledWrites();
+        awaitSchedulerTermination(scheduler, 300);
 
         _stopWatch.pauseTimer();
         CharSequence text = "Paused activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
     }
 
-    public boolean resumeActivity() {
+    public synchronized boolean resumeActivity() {
+        if (_permissionLossHandled) {
+            return false;
+        }
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
             handleRecordingPermissionLoss();
             return false;
@@ -270,23 +237,25 @@ public class SportLoggerService extends Service {
         return true;
     }
 
-    public void discardActivity() {
+    public synchronized void discardActivity() {
         SharedData.getInstance().IsRecording = false;
         SharedData.getInstance().IsPaused = false;
+        final int activityId = SharedData.getInstance().ActivityId;
+        final ScheduledExecutorService scheduler = cancelScheduledWrites();
 
-        // We don't want to block the UI
         AsyncTask.execute(new Runnable() {
             @Override
             public void run() {
                 try {
-                    _scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                    _scheduler.shutdownNow();
+                    if (scheduler != null) {
+                        scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
+                    }
                 } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
-                int id = SharedData.getInstance().ActivityId;
 
                 SqlLogger sqlLogger = new SqlLogger();
-                sqlLogger.deleteActivity(id);
+                sqlLogger.deleteActivity(activityId);
             }
         });
 
@@ -303,8 +272,9 @@ public class SportLoggerService extends Service {
                 new PermissionCheckedTask.PermissionCheck() {
                     @Override
                     public boolean allRequiredPermissionsGranted() {
-                        return RecordingPermissions.allRequiredForRecordingGranted(
-                                SportLoggerService.this);
+                        return recordingMayContinue()
+                                && RecordingPermissions.allRequiredForRecordingGranted(
+                                        SportLoggerService.this);
                     }
                 },
                 sqlLogger,
@@ -327,19 +297,72 @@ public class SportLoggerService extends Service {
         shared.IsPaused = false;
         shared.setHeartRate(0);
 
-        if (_scheduler != null) {
-            _scheduler.shutdownNow();
-            _scheduler = null;
-        }
+        ScheduledExecutorService scheduler = cancelScheduledWrites();
+        awaitSchedulerTermination(scheduler, 100);
+        requestListenerShutdown();
 
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
+        _mainHandler.post(new Runnable() {
             @Override
             public void run() {
+                _stopWatch.pauseTimer();
+                _stopWatch.resetTimer();
                 if (_serviceClient != null) {
                     _serviceClient.onRecordingPermissionLost();
                 }
                 stopSelf();
             }
         });
+    }
+
+    private synchronized boolean recordingMayContinue() {
+        return !_permissionLossHandled;
+    }
+
+    private synchronized ScheduledExecutorService cancelScheduledWrites() {
+        ScheduledExecutorService scheduler = _scheduler;
+        _scheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+        return scheduler;
+    }
+
+    private void awaitSchedulerTermination(
+            final ScheduledExecutorService scheduler,
+            final long timeoutMillis) {
+        if (scheduler == null) {
+            return;
+        }
+        AsyncTask.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    scheduler.awaitTermination(timeoutMillis, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+    }
+
+    private void requestListenerShutdown() {
+        Handler sensorHandler = SensorListener.WorkerHandler;
+        if (sensorHandler != null) {
+            Message sensorMessage = sensorHandler.obtainMessage(0);
+            sensorHandler.sendMessage(sensorMessage);
+        }
+
+        Handler locationHandler = GpsListener.WorkerHandler;
+        if (locationHandler != null) {
+            Message locationMessage = locationHandler.obtainMessage(0);
+            locationHandler.sendMessage(locationMessage);
+        }
+
+        if (_sensorThread != null) {
+            _sensorThread.interrupt();
+        }
+        if (_locationThread != null) {
+            _locationThread.interrupt();
+        }
     }
 }
