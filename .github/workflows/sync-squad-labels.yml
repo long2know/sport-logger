@@ -102,7 +102,7 @@ jobs:
 
             // Ensure the base "squad" triage label exists
             const labels = [
-              { name: 'squad', color: SQUAD_COLOR, description: 'Squad triage inbox — Lead will assign to a member' }
+              { name: 'squad', color: SQUAD_COLOR, description: 'Squad triage inbox — Ralph will assign one member' }
             ];
 
             for (const member of members) {

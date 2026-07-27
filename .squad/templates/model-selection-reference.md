@@ -10,6 +10,8 @@ Before spawning an agent, determine which model to use. Check these layers in or
 - **When user says "use X for {agent}":** Write to `agentModelOverrides.{agent}` in `.squad/config.json`. Acknowledge: `✅ {Agent} will always use {model} — saved to config.`
 - **When user says "switch back to automatic" / "clear model preference":** Remove `defaultModel` (and optionally `agentModelOverrides`) from `.squad/config.json`. Acknowledge: `✅ Model preference cleared — returning to automatic selection.`
 
+**Reasoning effort:** Valid values are `low`, `medium`, `high`, `xhigh`, `max`, and `auto`. Resolve `agentReasoningEffortOverrides.{agentName}` before `defaultReasoningEffort`. Keep that preference independent from model selection, but pass a configured value such as `max` unchanged only when the selected model advertises reasoning-effort support. For an incompatible fallback, omit `reasoning_effort` for that attempt and retain the stored preference for future compatible spawns.
+
 **Layer 1 — Session Directive:** Did the user specify a model for this session? ("use opus for this session", "save costs"). If yes, use that model. Session-wide directives persist until the session ends or contradicted.
 
 **Layer 2 — Charter Preference:** Does the agent's charter have a `## Model` section with `Preferred` set to a specific model (not `auto`)? If yes, use that model.
@@ -50,25 +52,31 @@ Before spawning an agent, determine which model to use. Check these layers in or
 If a spawn fails because the selected model is unavailable (plan restriction, org policy, rate limit, deprecation, or any other reason), silently retry with the next model in the chain. Do NOT tell the user about fallback attempts. Maximum 3 retries before jumping to the nuclear fallback.
 
 ```
-Premium:  claude-opus-4.6 → claude-opus-4.5 → claude-sonnet-4.6 → claude-sonnet-4.5 → (omit model param)
-Standard: claude-sonnet-4.6 → claude-sonnet-4.5 → gpt-5.4 → gpt-5.3-codex → claude-sonnet-4 → (omit model param)
-Fast:     claude-haiku-4.5 → gpt-5.4-mini → gpt-5.1-codex-mini → gpt-4.1 → (omit model param)
+Repository default: gpt-5.6-sol → gpt-5.4 → claude-sonnet-4.6 → claude-sonnet-4.5 → (omit model and reasoning_effort)
+Premium:  claude-opus-4.6 → claude-opus-4.5 → claude-sonnet-4.6 → claude-sonnet-4.5 → (omit model and reasoning_effort)
+Standard: claude-sonnet-4.6 → claude-sonnet-4.5 → gpt-5.4 → gpt-5.3-codex → claude-sonnet-4 → (omit model and reasoning_effort)
+Fast:     claude-haiku-4.5 → gpt-5.4-mini → gpt-5.1-codex-mini → gpt-4.1 → (omit model and reasoning_effort)
 ```
 
-`(omit model param)` = call the `task` tool WITHOUT the `model` parameter. The platform uses its built-in default. This is the nuclear fallback — it always works.
+Runtime model metadata is authoritative for effort capability. `claude-sonnet-4.5` and `claude-haiku-4.5` do not accept `reasoning_effort`; omit it when either is selected. Treat any model whose capability is unknown or unadvertised the same way rather than guessing.
+
+`(omit model and reasoning_effort)` = call the `task` tool WITHOUT either parameter. The platform uses its built-in defaults. This is the nuclear fallback — it always works.
 
 **Fallback rules:**
 - If the user specified a provider ("use Claude"), fall back within that provider only before hitting nuclear
 - Never fall back UP in tier — a fast/cheap task should not land on a premium model
+- Re-check effort support for every retry; an incompatible retry omits `reasoning_effort` without changing persistent config
 - Log fallbacks to the orchestration log for debugging, but never surface to the user unless asked
 
-**Passing the model to spawns:**
+**Passing model and effort to spawns:**
 
-Pass the resolved model as the `model` parameter on every `task` tool call:
+For a normal (non-nuclear) spawn, pass the resolved model and include effort only when capability allows:
 
 ```
 agent_type: "general-purpose"
 model: "{resolved_model}"
+# Include only when supported and not auto/unset:
+reasoning_effort: "{resolved_reasoning_effort}"
 mode: "background"
 name: "{name}"
 description: "{emoji} {Name}: {brief task summary}"
@@ -76,16 +84,18 @@ prompt: |
   ...
 ```
 
-Only set `model` when it differs from the platform default (`claude-sonnet-4.6`). If the resolved model IS `claude-sonnet-4.6`, you MAY omit the `model` parameter — the platform uses it as default.
+Only omit `model` when the resolved choice is the runtime's actual platform default. Always pass a persistent configured value such as `gpt-5.6-sol` explicitly; never substitute a hardcoded alternative.
 
-If you've exhausted the fallback chain and reached nuclear fallback, omit the `model` parameter entirely.
+Pass `reasoning_effort` only when the resolved value is not `auto` or unset and the current model advertises support. A configured `max` value stays `max`; if the current fallback cannot accept it, omit the parameter for that attempt instead of coercing the value.
+
+If you've exhausted the fallback chain and reached nuclear fallback, omit both `model` and `reasoning_effort`.
 
 **Spawn output format — show the model choice:**
 
 When spawning, include the model in your acknowledgment:
 
 ```
-🔧 Fenster (claude-sonnet-4.6) — refactoring auth module
+🔄 Neo (gpt-5.6-sol · max) — revising integration automation
 🎨 Redfoot (claude-opus-4.5 · vision) — designing color system
 📋 Scribe (claude-haiku-4.5 · fast) — logging session
 ⚡ Keaton (claude-opus-4.6 · bumped for architecture) — reviewing proposal
@@ -96,6 +106,7 @@ Include tier annotation only when the model was bumped or a specialist was chose
 
 **Valid models (current platform catalog):**
 
+Repository-approved default: `gpt-5.6-sol` (supports reasoning effort `max`)
 Premium: `claude-opus-4.6`, `claude-opus-4.6-1m` (Internal only), `claude-opus-4.5`
-Standard: `claude-sonnet-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4`, `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2`, `gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1`, `gemini-3-pro-preview`
-Fast/Cheap: `claude-haiku-4.5`, `gpt-5.4-mini`, `gpt-5.1-codex-mini`, `gpt-5-mini`, `gpt-4.1`
+Standard: `claude-sonnet-4.6`, `claude-sonnet-4.5` (no reasoning effort), `claude-sonnet-4`, `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2`, `gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1`, `gemini-3-pro-preview`
+Fast/Cheap: `claude-haiku-4.5` (no reasoning effort), `gpt-5.4-mini`, `gpt-5.1-codex-mini`, `gpt-5-mini`, `gpt-4.1`

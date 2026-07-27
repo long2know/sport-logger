@@ -50,7 +50,7 @@ gh pr list --state open --draft --json number,title,author,labels,checks --limit
 
 | Category | Signal | Action |
 |----------|--------|--------|
-| **Untriaged issues** | `squad` label, no `squad:{member}` label | Lead triages: reads issue, assigns `squad:{member}` label |
+| **Untriaged issues** | `squad` label, no `squad:{member}` label | Ralph reads the Routing Table and assigns one `squad:{member}` label |
 | **Assigned but unstarted** | `squad:{member}` label, no assignee or no PR | Spawn the assigned agent to pick it up |
 | **Draft PRs** | PR in draft from squad member | Check if agent needs to continue; if stalled, nudge |
 | **Review feedback** | PR has `CHANGES_REQUESTED` review | Route feedback to PR author agent to address |

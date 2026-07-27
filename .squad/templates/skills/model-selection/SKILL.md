@@ -13,7 +13,8 @@ source: "extracted"
 ## SCOPE
 
 ✅ THIS SKILL PRODUCES:
-- A resolved `model` parameter for every `task` tool call
+- A resolved model choice for every `task` call (`model` is omitted only for nuclear fallback)
+- A resolved `reasoning_effort` parameter only when the chosen model supports it
 - Persistent model preferences in `.squad/config.json`
 - Spawn acknowledgments that include the resolved model
 
@@ -24,7 +25,7 @@ source: "extracted"
 
 ## Context
 
-Squad supports 18+ models across three tiers (premium, standard, fast). The coordinator must select the right model for each agent spawn. Users can set persistent preferences that survive across sessions.
+Squad supports models across three tiers (premium, standard, fast). The coordinator must select the right model for each agent spawn. Users can set persistent preferences that survive across sessions; `gpt-5.6-sol` is a valid configured model.
 
 ## 5-Layer Model Resolution Hierarchy
 
@@ -48,7 +49,8 @@ Resolution is **first-match-wins** — the highest layer with a value wins.
 1. READ `.squad/config.json`
 2. CHECK for `defaultModel` field — if present, this is the Layer 0 override for all spawns
 3. CHECK for `agentModelOverrides` field — if present, these are per-agent Layer 0a overrides
-4. STORE both values in session context for the duration
+4. CHECK `agentReasoningEffortOverrides` and `defaultReasoningEffort`
+5. STORE all resolved preferences in session context for the duration
 
 ### On Every Agent Spawn
 
@@ -62,7 +64,9 @@ Resolution is **first-match-wins** — the highest layer with a value wins.
    - Visual/design with image analysis → `claude-opus-4.6`
    - Non-code (docs, planning, triage, changelogs) → `claude-haiku-4.5`
 6. FALLBACK Layer 4: `claude-haiku-4.5`
-7. INCLUDE model in spawn acknowledgment: `🔧 {Name} ({resolved_model}) — {task}`
+7. RESOLVE `agentReasoningEffortOverrides.{agentName}` before `defaultReasoningEffort`; `auto` or unset means omit the parameter.
+8. CHECK the chosen model's runtime capability. Pass the resolved effort unchanged only if supported; otherwise omit `reasoning_effort` for this spawn without changing the stored preference.
+9. INCLUDE model in spawn acknowledgment: `🔧 {Name} ({resolved_model}) — {task}`
 
 ### When User Sets a Preference
 
@@ -87,7 +91,7 @@ Resolution is **first-match-wins** — the highest layer with a value wins.
 
 ### STOP
 
-After resolving the model and including it in the spawn template, this skill is done. Do NOT:
+After constructing capability-compatible spawn parameters, this skill is done. Do NOT:
 - Generate model comparison reports
 - Run benchmarks or speed tests
 - Create new config files (only modify existing `.squad/config.json`)
@@ -100,26 +104,35 @@ After resolving the model and including it in the spawn template, this skill is 
 ```json
 {
   "version": 1,
-  "defaultModel": "claude-opus-4.6",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultReasoningEffort": "max",
   "agentModelOverrides": {
     "fenster": "claude-sonnet-4.6",
     "mcmanus": "claude-haiku-4.5"
+  },
+  "agentReasoningEffortOverrides": {
+    "mcmanus": "auto"
   }
 }
 ```
 
 - `defaultModel` — applies to ALL agents unless overridden by `agentModelOverrides`
 - `agentModelOverrides` — per-agent overrides that take priority over `defaultModel`
-- Both fields are optional. When absent, Layers 1-4 apply normally.
+- `defaultReasoningEffort` — independent reasoning level; valid values include `low`, `medium`, `high`, `xhigh`, `max`, and `auto`
+- `agentReasoningEffortOverrides` — per-agent effort overrides; use `auto` for a model such as `claude-haiku-4.5` that does not accept reasoning effort
+- These fields are optional. When absent, Layers 1-4 apply normally.
 
 ## Fallback Chains
 
 If a model is unavailable (rate limit, plan restriction), retry within the same tier:
 
 ```
-Premium:  claude-opus-4.6 → claude-opus-4.6-fast → claude-opus-4.5 → claude-sonnet-4.6
-Standard: claude-sonnet-4.6 → gpt-5.4 → claude-sonnet-4.5 → gpt-5.3-codex → claude-sonnet-4
-Fast:     claude-haiku-4.5 → gpt-5.1-codex-mini → gpt-4.1 → gpt-5-mini
+Repository default: gpt-5.6-sol → gpt-5.4 → claude-sonnet-4.6 → claude-sonnet-4.5 → (omit model and reasoning_effort)
+Premium:  claude-opus-4.6 → claude-opus-4.6-fast → claude-opus-4.5 → claude-sonnet-4.6 → (omit model and reasoning_effort)
+Standard: claude-sonnet-4.6 → gpt-5.4 → claude-sonnet-4.5 → gpt-5.3-codex → claude-sonnet-4 → (omit model and reasoning_effort)
+Fast:     claude-haiku-4.5 → gpt-5.1-codex-mini → gpt-4.1 → gpt-5-mini → (omit model and reasoning_effort)
 ```
+
+Runtime model metadata is authoritative. `claude-sonnet-4.5` and `claude-haiku-4.5` do not support `reasoning_effort`; unknown or unadvertised capability is treated as unsupported. Re-check on every retry, pass a configured effort unchanged only for compatible models, and never rewrite persistent preferences because of a fallback. Nuclear fallback omits both parameters.
 
 **Never fall UP in tier.** A fast task won't land on a premium model via fallback.

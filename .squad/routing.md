@@ -35,7 +35,7 @@ How to decide who handles what.
 
 | Label | Action | Who |
 |-------|--------|-----|
-| `squad` | Triage and assign the correct member label | Tank |
+| `squad` | Automatically triage and assign the correct member label | Ralph |
 | `squad:tank` | Architecture, modernization, or cross-cutting work | Tank |
 | `squad:trinity` | Wear OS tracking and measurement work | Trinity |
 | `squad:switch` | Android/Wear UI and product experience | Switch |
@@ -44,7 +44,7 @@ How to decide who handles what.
 
 ### How Issue Assignment Works
 
-1. When a GitHub issue gets the `squad` label, Tank triages it and assigns the best `squad:{member}` label.
+1. When a GitHub issue gets the `squad` label, Ralph's heartbeat reads this routing table and assigns the best `squad:{member}` label.
 2. When a `squad:{member}` label is applied, that member owns the issue.
 3. Cross-domain issues get one primary owner and named collaborators.
 4. Members can recommend reassignment; the Coordinator enforces reviewer lockouts.

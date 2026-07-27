@@ -65,9 +65,9 @@ Controlled by the HTML comment in team.md:
 | `true` | Lead assigns routed issues to @copilot automatically via `gh issue edit --add-assignee @copilot` |
 | `false` | Lead presents recommendation; user confirms before assignment |
 
-## Lead Triage Integration
+## Manual Lead Override
 
-During triage, Lead evaluates each issue against @copilot's capability profile:
+Ralph remains the automatic triage path. When the Lead manually considers routing an issue to @copilot, evaluate it against @copilot's capability profile:
 
 1. **🟢 Match** — Auto-assign (if enabled) or recommend assignment.
 2. **🟡 Match** — Assign with note: "⚠️ May need review — @copilot is 🟡 for this type of work."
