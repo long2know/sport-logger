@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
@@ -11,22 +13,24 @@
           "calendar": "gregory",
           "legacy_activity_id": 1,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 2,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 3,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -70,7 +74,7 @@
   "idempotency": {
     "canonical_insert_rows": 9,
     "expected_sessions": 3,
-    "expected_state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
+    "expected_state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d",
     "expected_track_points": 6,
     "scenarios": {
       "interrupt_after_partial_point_prefix": {
@@ -118,7 +122,7 @@
         "replay_attempts_cover_canonical_set": true,
         "rerun_record_count": 9,
         "rerun_records_exactly_canonical": true,
-        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+        "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
       },
       "interrupt_after_session_row": {
         "canonical_record_count": 9,
@@ -165,7 +169,7 @@
         "replay_attempts_cover_canonical_set": true,
         "rerun_record_count": 9,
         "rerun_records_exactly_canonical": true,
-        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+        "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
       },
       "receipt_gap_replay": {
         "committed_rows": {
@@ -207,7 +211,7 @@
           "sessions": 3,
           "track_points": 6
         },
-        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+        "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
       },
       "same_run_duplicates": {
         "attempted_rows": 18,
@@ -226,7 +230,7 @@
         "receipt_completed": true,
         "receipt_present": true,
         "sessions": 3,
-        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
+        "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d",
         "track_points": 6
       }
     }
@@ -237,7 +241,7 @@
   "rejected_rows": [],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "First committed group before interruption.",
       "deterministic_id": "dc02c118-ae81-5331-8d78-7def82325160",
       "distance": 100.125,
@@ -255,7 +259,7 @@
       "timestamp_locale": "en-US"
     },
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "First group processed after restart.",
       "deterministic_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
       "distance": 101.25,
@@ -273,7 +277,7 @@
       "timestamp_locale": "en-US"
     },
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Final group processed after restart.",
       "deterministic_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
       "distance": 102.5,
@@ -307,7 +311,7 @@
       "activity_legacy_id": 1,
       "altitude": 5.1,
       "bearing": 4.1,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "320e04b2-6402-54df-9c2b-43d781978285",
       "gmt_timestamp": "20240601080000",
       "gmt_timestamp_utc": "2024-06-01T08:00:00Z",
@@ -326,7 +330,7 @@
       "activity_legacy_id": 1,
       "altitude": 5.2,
       "bearing": 4.2,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "c0484780-4c39-570e-bff8-1861670e4481",
       "gmt_timestamp": "20240601080001",
       "gmt_timestamp_utc": "2024-06-01T08:00:01Z",
@@ -345,7 +349,7 @@
       "activity_legacy_id": 2,
       "altitude": 6.1,
       "bearing": 5.1,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "77a8d40c-5f43-5715-9306-b4797b779fd4",
       "gmt_timestamp": "20240602080000",
       "gmt_timestamp_utc": "2024-06-02T08:00:00Z",
@@ -364,7 +368,7 @@
       "activity_legacy_id": 2,
       "altitude": 6.2,
       "bearing": 5.2,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "62c9794b-411e-55a5-87ec-7e96f49917d0",
       "gmt_timestamp": "20240602080001",
       "gmt_timestamp_utc": "2024-06-02T08:00:01Z",
@@ -383,7 +387,7 @@
       "activity_legacy_id": 3,
       "altitude": 7.1,
       "bearing": 6.1,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "a475883b-3ba0-53a3-9887-3681e198d9c6",
       "gmt_timestamp": "20240603080000",
       "gmt_timestamp_utc": "2024-06-03T08:00:00Z",
@@ -402,7 +406,7 @@
       "activity_legacy_id": 3,
       "altitude": 7.2,
       "bearing": 6.2,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "2cc43175-70ef-50cd-ab10-37769203280f",
       "gmt_timestamp": "20240603080001",
       "gmt_timestamp_utc": "2024-06-03T08:00:01Z",

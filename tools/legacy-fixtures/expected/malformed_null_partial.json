@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:malformed_null_partial:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
@@ -11,16 +13,18 @@
           "calendar": "gregory",
           "legacy_activity_id": 1,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 2,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -137,7 +141,7 @@
   ],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": null,
       "deterministic_id": "5bbfaf14-dfef-5e75-84ab-4dcb5592b534",
       "distance": null,
@@ -171,7 +175,7 @@
       "activity_legacy_id": 1,
       "altitude": null,
       "bearing": null,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "5c53c183-05cd-5157-a96a-c4d53fdc8812",
       "gmt_timestamp": "20240506070809",
       "gmt_timestamp_utc": "2024-05-06T07:08:09Z",

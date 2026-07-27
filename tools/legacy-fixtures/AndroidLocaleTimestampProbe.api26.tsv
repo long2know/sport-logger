@@ -1,0 +1,69 @@
+meta	format_version	1
+meta	platform	Android
+meta	api_level	26
+meta	release	8.0.0
+meta	pattern	yyyy-MM-dd HH:mm:ss.SSS
+meta	legacy_pattern	yyyyMMddHHmmss
+meta	timezone	UTC
+meta	available_locale_count	710
+meta	locale_rows_sha256	12ff0cc92e4de3e03534b7c42b502b99e8d7ac588c752b263824dc4e6c8467c6
+meta	fixed_instants_utc	2000-02-29T12:34:56.789Z,2024-07-08T09:10:11.123Z,2032-02-29T23:59:59.999Z,2567-07-08T09:10:11.123Z
+signature	U+0030	java.util.GregorianCalendar	gregory	2024-07-08 09:10:11.123	20240708091011	1234567890	651	af
+signature	U+0660	java.util.GregorianCalendar	gregory	٢٠٢٤-٠٧-٠٨ ٠٩:١٠:١١.١٢٣	٢٠٢٤٠٧٠٨٠٩١٠١١	١٢٣٤٥٦٧٨٩٠	28	ar
+signature	U+06F0	java.util.GregorianCalendar	gregory	۲۰۲۴-۰۷-۰۸ ۰۹:۱۰:۱۱.۱۲۳	۲۰۲۴۰۷۰۸۰۹۱۰۱۱	۱۲۳۴۵۶۷۸۹۰	17	fa
+signature	U+0966	java.util.GregorianCalendar	gregory	२०२४-०७-०८ ०९:१०:११.१२३	२०२४०७०८०९१०११	१२३४५६७८९०	5	mr
+signature	U+09E6	java.util.GregorianCalendar	gregory	২০২৪-০৭-০৮ ০৯:১০:১১.১২৩	২০২৪০৭০৮০৯১০১১	১২৩৪৫৬৭৮৯০	5	as
+signature	U+0F20	java.util.GregorianCalendar	gregory	༢༠༢༤-༠༧-༠༨ ༠༩:༡༠:༡༡.༡༢༣	༢༠༢༤༠༧༠༨༠༩༡༠༡༡	༡༢༣༤༥༦༧༨༩༠	2	dz
+signature	U+1040	java.util.GregorianCalendar	gregory	၂၀၂၄-၀၇-၀၈ ၀၉:၁၀:၁၁.၁၂၃	၂၀၂၄၀၇၀၈၀၉၁၀၁၁	၁၂၃၄၅၆၇၈၉၀	2	my
+candidate	U+0030	af	af			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	2000-02-29 12:34:56.789	20000229123456	1234567890	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+0030	af	af			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	2024-07-08 09:10:11.123	20240708091011	1234567890	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+0030	af	af			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	2032-02-29 23:59:59.999	20320229235959	1234567890	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+0030	af	af			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	2567-07-08 09:10:11.123	25670708091011	1234567890	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+0660	ar	ar			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	٢٠٠٠-٠٢-٢٩ ١٢:٣٤:٥٦.٧٨٩	٢٠٠٠٠٢٢٩١٢٣٤٥٦	١٢٣٤٥٦٧٨٩٠	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+0660	ar	ar			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	٢٠٢٤-٠٧-٠٨ ٠٩:١٠:١١.١٢٣	٢٠٢٤٠٧٠٨٠٩١٠١١	١٢٣٤٥٦٧٨٩٠	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+0660	ar	ar			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	٢٠٣٢-٠٢-٢٩ ٢٣:٥٩:٥٩.٩٩٩	٢٠٣٢٠٢٢٩٢٣٥٩٥٩	١٢٣٤٥٦٧٨٩٠	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+0660	ar	ar			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	٢٥٦٧-٠٧-٠٨ ٠٩:١٠:١١.١٢٣	٢٥٦٧٠٧٠٨٠٩١٠١١	١٢٣٤٥٦٧٨٩٠	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+06F0	fa	fa			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	۲۰۰۰-۰۲-۲۹ ۱۲:۳۴:۵۶.۷۸۹	۲۰۰۰۰۲۲۹۱۲۳۴۵۶	۱۲۳۴۵۶۷۸۹۰	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+06F0	fa	fa			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	۲۰۲۴-۰۷-۰۸ ۰۹:۱۰:۱۱.۱۲۳	۲۰۲۴۰۷۰۸۰۹۱۰۱۱	۱۲۳۴۵۶۷۸۹۰	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+06F0	fa	fa			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	۲۰۳۲-۰۲-۲۹ ۲۳:۵۹:۵۹.۹۹۹	۲۰۳۲۰۲۲۹۲۳۵۹۵۹	۱۲۳۴۵۶۷۸۹۰	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+06F0	fa	fa			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	۲۵۶۷-۰۷-۰۸ ۰۹:۱۰:۱۱.۱۲۳	۲۵۶۷۰۷۰۸۰۹۱۰۱۱	۱۲۳۴۵۶۷۸۹۰	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+0966	mr	mr			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	२०००-०२-२९ १२:३४:५६.७८९	२००००२२९१२३४५६	१२३४५६७८९०	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+0966	mr	mr			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	२०२४-०७-०८ ०९:१०:११.१२३	२०२४०७०८०९१०११	१२३४५६७८९०	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+0966	mr	mr			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	२०३२-०२-२९ २३:५९:५९.९९९	२०३२०२२९२३५९५९	१२३४५६७८९०	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+0966	mr	mr			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	२५६७-०७-०८ ०९:१०:११.१२३	२५६७०७०८०९१०११	१२३४५६७८९०	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+09E6	as	as			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	২০০০-০২-২৯ ১২:৩৪:৫৬.৭৮৯	২০০০০২২৯১২৩৪৫৬	১২৩৪৫৬৭৮৯০	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+09E6	as	as			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	২০২৪-০৭-০৮ ০৯:১০:১১.১২৩	২০২৪০৭০৮০৯১০১১	১২৩৪৫৬৭৮৯০	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+09E6	as	as			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	২০৩২-০২-২৯ ২৩:৫৯:৫৯.৯৯৯	২০৩২০২২৯২৩৫৯৫৯	১২৩৪৫৬৭৮৯০	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+09E6	as	as			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	২৫৬৭-০৭-০৮ ০৯:১০:১১.১২৩	২৫৬৭০৭০৮০৯১০১১	১২৩৪৫৬৭৮৯০	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+0F20	dz	dz			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	༢༠༠༠-༠༢-༢༩ ༡༢:༣༤:༥༦.༧༨༩	༢༠༠༠༠༢༢༩༡༢༣༤༥༦	༡༢༣༤༥༦༧༨༩༠	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+0F20	dz	dz			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	༢༠༢༤-༠༧-༠༨ ༠༩:༡༠:༡༡.༡༢༣	༢༠༢༤༠༧༠༨༠༩༡༠༡༡	༡༢༣༤༥༦༧༨༩༠	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+0F20	dz	dz			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	༢༠༣༢-༠༢-༢༩ ༢༣:༥༩:༥༩.༩༩༩	༢༠༣༢༠༢༢༩༢༣༥༩༥༩	༡༢༣༤༥༦༧༨༩༠	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+0F20	dz	dz			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	༢༥༦༧-༠༧-༠༨ ༠༩:༡༠:༡༡.༡༢༣	༢༥༦༧༠༧༠༨༠༩༡༠༡༡	༡༢༣༤༥༦༧༨༩༠	true	18855796211123	true	java.util.GregorianCalendar	gregory
+candidate	U+1040	my	my			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	၂၀၀၀-၀၂-၂၉ ၁၂:၃၄:၅၆.၇၈၉	၂၀၀၀၀၂၂၉၁၂၃၄၅၆	၁၂၃၄၅၆၇၈၉၀	true	951827696789	true	java.util.GregorianCalendar	gregory
+candidate	U+1040	my	my			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	၂၀၂၄-၀၇-၀၈ ၀၉:၁၀:၁၁.၁၂၃	၂၀၂၄၀၇၀၈၀၉၁၀၁၁	၁၂၃၄၅၆၇၈၉၀	true	1720429811123	true	java.util.GregorianCalendar	gregory
+candidate	U+1040	my	my			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	၂၀၃၂-၀၂-၂၉ ၂၃:၅၉:၅၉.၉၉၉	၂၀၃၂၀၂၂၉၂၃၅၉၅၉	၁၂၃၄၅၆၇၈၉၀	true	1961711999999	true	java.util.GregorianCalendar	gregory
+candidate	U+1040	my	my			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	၂၅၆၇-၀၇-၀၈ ၀၉:၁၀:၁၁.၁၂၃	၂၅၆၇၀၇၀၈၀၉၁၀၁၁	၁၂၃၄၅၆၇၈၉၀	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH	th_TH			java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	2000-02-29 12:34:56.789	20000229123456	1234567890	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH	th_TH			java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	2024-07-08 09:10:11.123	20240708091011	1234567890	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH	th_TH			java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	2032-02-29 23:59:59.999	20320229235959	1234567890	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH	th_TH			java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	2567-07-08 09:10:11.123	25670708091011	1234567890	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-nu-thai	th_TH_#u-nu-thai	thai		java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	๒๐๐๐-๐๒-๒๙ ๑๒:๓๔:๕๖.๗๘๙	๒๐๐๐๐๒๒๙๑๒๓๔๕๖	๑๒๓๔๕๖๗๘๙๐	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-nu-thai	th_TH_#u-nu-thai	thai		java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	๒๐๒๔-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๐๒๔๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-nu-thai	th_TH_#u-nu-thai	thai		java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	๒๐๓๒-๐๒-๒๙ ๒๓:๕๙:๕๙.๙๙๙	๒๐๓๒๐๒๒๙๒๓๕๙๕๙	๑๒๓๔๕๖๗๘๙๐	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-nu-thai	th_TH_#u-nu-thai	thai		java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	๒๕๖๗-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๕๖๗๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-nu-latn	th_TH_#u-nu-latn	latn		java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	2000-02-29 12:34:56.789	20000229123456	1234567890	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-nu-latn	th_TH_#u-nu-latn	latn		java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	2024-07-08 09:10:11.123	20240708091011	1234567890	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-nu-latn	th_TH_#u-nu-latn	latn		java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	2032-02-29 23:59:59.999	20320229235959	1234567890	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-nu-latn	th_TH_#u-nu-latn	latn		java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	2567-07-08 09:10:11.123	25670708091011	1234567890	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-ca-buddhist	th_TH_#u-ca-buddhist		buddhist	java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	2000-02-29 12:34:56.789	20000229123456	1234567890	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-ca-buddhist	th_TH_#u-ca-buddhist		buddhist	java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	2024-07-08 09:10:11.123	20240708091011	1234567890	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-ca-buddhist	th_TH_#u-ca-buddhist		buddhist	java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	2032-02-29 23:59:59.999	20320229235959	1234567890	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0030	th-TH-u-ca-buddhist	th_TH_#u-ca-buddhist		buddhist	java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	2567-07-08 09:10:11.123	25670708091011	1234567890	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-buddhist-nu-thai	th_TH_#u-ca-buddhist-nu-thai	thai	buddhist	java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	๒๐๐๐-๐๒-๒๙ ๑๒:๓๔:๕๖.๗๘๙	๒๐๐๐๐๒๒๙๑๒๓๔๕๖	๑๒๓๔๕๖๗๘๙๐	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-buddhist-nu-thai	th_TH_#u-ca-buddhist-nu-thai	thai	buddhist	java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	๒๐๒๔-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๐๒๔๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-buddhist-nu-thai	th_TH_#u-ca-buddhist-nu-thai	thai	buddhist	java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	๒๐๓๒-๐๒-๒๙ ๒๓:๕๙:๕๙.๙๙๙	๒๐๓๒๐๒๒๙๒๓๕๙๕๙	๑๒๓๔๕๖๗๘๙๐	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-buddhist-nu-thai	th_TH_#u-ca-buddhist-nu-thai	thai	buddhist	java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	๒๕๖๗-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๕๖๗๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	18855796211123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-gregory-nu-thai	th_TH_#u-ca-gregory-nu-thai	thai	gregory	java.util.GregorianCalendar	gregory	2000-02-29T12:34:56.789Z	๒๐๐๐-๐๒-๒๙ ๑๒:๓๔:๕๖.๗๘๙	๒๐๐๐๐๒๒๙๑๒๓๔๕๖	๑๒๓๔๕๖๗๘๙๐	true	951827696789	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-gregory-nu-thai	th_TH_#u-ca-gregory-nu-thai	thai	gregory	java.util.GregorianCalendar	gregory	2024-07-08T09:10:11.123Z	๒๐๒๔-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๐๒๔๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	1720429811123	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-gregory-nu-thai	th_TH_#u-ca-gregory-nu-thai	thai	gregory	java.util.GregorianCalendar	gregory	2032-02-29T23:59:59.999Z	๒๐๓๒-๐๒-๒๙ ๒๓:๕๙:๕๙.๙๙๙	๒๐๓๒๐๒๒๙๒๓๕๙๕๙	๑๒๓๔๕๖๗๘๙๐	true	1961711999999	true	java.util.GregorianCalendar	gregory
+thai_control	U+0E50	th-TH-u-ca-gregory-nu-thai	th_TH_#u-ca-gregory-nu-thai	thai	gregory	java.util.GregorianCalendar	gregory	2567-07-08T09:10:11.123Z	๒๕๖๗-๐๗-๐๘ ๐๙:๑๐:๑๑.๑๒๓	๒๕๖๗๐๗๐๘๐๙๑๐๑๑	๑๒๓๔๕๖๗๘๙๐	true	18855796211123	true	java.util.GregorianCalendar	gregory

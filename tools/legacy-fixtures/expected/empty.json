@@ -2,12 +2,16 @@
   "database_identity": "synthetic:sport-logger:legacy:empty:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
       "migration_readiness": "ready",
       "per_activity": [],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "empty",
     "ordering": {

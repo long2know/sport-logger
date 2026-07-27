@@ -21,14 +21,13 @@ Tagged v0.11
 ## Legacy migration oracle
 
 `tools/legacy-fixtures/` contains the synthetic, executable contract for the
-watch SQLite database. Its 20 fixtures cover every digit block emitted by the
-pinned Temurin 17 formatter matrix, evidence-based calendar interpretation,
-database-wide ambiguity quarantine, WAL snapshots, capability-selected schema
-preflight down to Android API 26, FTS4-compatible virtual-table checks, explicit
-N/A reporting for unsupported generated-column/FTS5 detectors, corruption,
-precision, ordering, and idempotent replay. Any
-calendar-ambiguous row retains and quarantines the whole source migration with
-zero target writes and no receipt.
+watch SQLite database. Its 18 fixtures use byte-pinned API26/API36 Android
+formatter evidence, cover all 10 emitted decimal digit blocks, and model Thai
+and other localized timestamps with Android's Gregorian semantics. They also
+cover WAL snapshots, capability-selected schema preflight down to Android API
+26, safe FTS4/FTS5 module probes, explicit N/A reporting for unsupported
+generated-column/FTS detectors, corruption, precision, ordering, and idempotent
+replay.
 
 See [the legacy database contract](docs/legacy-database-contract.md) and
 [`tools/legacy-fixtures/README.md`](tools/legacy-fixtures/README.md) for all

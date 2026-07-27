@@ -16,7 +16,7 @@ import sys
 import unicodedata
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -24,7 +24,71 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 
 
 TOOL_ROOT = Path(__file__).resolve().parent
-FORMATTER_MATRIX_PATH = TOOL_ROOT / "LocaleTimestampProbe.expected.tsv"
+ANDROID_FORMATTER_PROBE_SOURCE_PATH = (
+    TOOL_ROOT / "AndroidLocaleTimestampProbeTest.java"
+)
+ANDROID_FORMATTER_EVIDENCE_PATHS = (
+    TOOL_ROOT / "AndroidLocaleTimestampProbe.api26.tsv",
+    TOOL_ROOT / "AndroidLocaleTimestampProbe.api36.tsv",
+)
+ANDROID_FORMATTER_PROBE_SOURCE_SHA256 = (
+    "dc9cec0cdf72e975fe19ed97779ba1fe75563fc94574cc2c02b446920f4c0998"
+)
+ANDROID_FORMATTER_EVIDENCE_SHA256 = {
+    26: "c0132a43f9a23a2a2856e848e7ee5d10f5185932043f202bbd3016fa95f7a23d",
+    36: "eb060dc423c9eb7a29221205faa0b576c550eab1d5c5b2eef38825cabad24810",
+}
+ANDROID_FORMATTER_EXPECTED_METADATA = {
+    26: {
+        "format_version": "1",
+        "platform": "Android",
+        "api_level": "26",
+        "release": "8.0.0",
+        "pattern": "yyyy-MM-dd HH:mm:ss.SSS",
+        "legacy_pattern": "yyyyMMddHHmmss",
+        "timezone": "UTC",
+        "available_locale_count": "710",
+        "locale_rows_sha256": (
+            "12ff0cc92e4de3e03534b7c42b502b99e8d7ac588c752b263824dc4e6c8467c6"
+        ),
+        "fixed_instants_utc": (
+            "2000-02-29T12:34:56.789Z,"
+            "2024-07-08T09:10:11.123Z,"
+            "2032-02-29T23:59:59.999Z,"
+            "2567-07-08T09:10:11.123Z"
+        ),
+    },
+    36: {
+        "format_version": "1",
+        "platform": "Android",
+        "api_level": "36",
+        "release": "16",
+        "pattern": "yyyy-MM-dd HH:mm:ss.SSS",
+        "legacy_pattern": "yyyyMMddHHmmss",
+        "timezone": "UTC",
+        "available_locale_count": "881",
+        "locale_rows_sha256": (
+            "b53a8fb0f2686af24f282eafaaf82b43dd6f7ee4b4b311c1820d130cb7f4fd62"
+        ),
+        "fixed_instants_utc": (
+            "2000-02-29T12:34:56.789Z,"
+            "2024-07-08T09:10:11.123Z,"
+            "2032-02-29T23:59:59.999Z,"
+            "2567-07-08T09:10:11.123Z"
+        ),
+    },
+}
+ANDROID_FORMATTER_CALENDAR_CLASS = "java.util.GregorianCalendar"
+ANDROID_FORMATTER_CALENDAR_TYPE = "gregory"
+ANDROID_FORMATTER_SIGNATURE_INSTANT = "2024-07-08T09:10:11.123Z"
+ANDROID_FORMATTER_THAI_CONTROL_TAGS = (
+    "th-TH",
+    "th-TH-u-nu-thai",
+    "th-TH-u-nu-latn",
+    "th-TH-u-ca-buddhist",
+    "th-TH-u-ca-buddhist-nu-thai",
+    "th-TH-u-ca-gregory-nu-thai",
+)
 FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
 ANDROID_METADATA_LOCALE = "en_US"
@@ -50,9 +114,8 @@ SQLITE_ROLLBACK_FORMAT_VERSIONS = (1, 1)
 SQLITE_WAL_FORMAT_VERSIONS = (2, 2)
 
 CALENDAR_GREGORIAN = "gregory"
-CALENDAR_BUDDHIST = "buddhist"
-CALENDAR_EVIDENCE_SOURCE = "synthetic_fixture_generation_record"
-FORMATTER_MATRIX_EVIDENCE_SOURCE = "pinned_temurin_17_formatter_matrix"
+CALENDAR_EVIDENCE_SOURCE = "android_java_text_gregorian_invariant"
+ANDROID_FORMATTER_EVIDENCE_SOURCE = "android_api26_api36_formatter_probe"
 
 SCHEMA_PATH_AUTO = "auto"
 SCHEMA_PATH_MODERN = "modern_table_xinfo_sqlite_master"
@@ -294,9 +357,8 @@ class FixtureCase:
         CalendarEvidence
     ] = DEFAULT_GREGORIAN_CALENDAR_EVIDENCE
     activity_calendar_evidence: Tuple[
-        Tuple[int, Optional[CalendarEvidence]], ...
+        Tuple[int, CalendarEvidence], ...
     ] = ()
-    calendar_ambiguous: bool = False
 
     @property
     def database_identity(self) -> str:
@@ -350,137 +412,415 @@ def parse_code_point(value: str) -> int:
     return int(value[2:], 16)
 
 
-def matrix_timestamp_source_year(value: str, zero_code_point: int) -> int:
-    if len(value) != 14:
-        raise FixtureValidationError(
-            "Formatter-matrix candidate timestamp must contain 14 digits"
-        )
+def normalize_matrix_digits(value: str, zero_code_point: int) -> str:
     normalized: List[str] = []
     for character in value:
         if unicodedata.category(character) != "Nd":
             raise FixtureValidationError(
-                "Formatter-matrix timestamp contains non-Nd text"
+                "Formatter evidence contains non-Nd numeric text"
             )
         decimal = unicodedata.decimal(character)
         if ord(character) - decimal != zero_code_point:
             raise FixtureValidationError(
-                "Formatter-matrix timestamp mixes numbering systems"
+                "Formatter evidence mixes numbering systems"
             )
         normalized.append(str(decimal))
-    return int("".join(normalized[:4]))
+    return "".join(normalized)
 
 
-@lru_cache(maxsize=1)
-def formatter_probe_matrix() -> Mapping[str, Any]:
-    if not FORMATTER_MATRIX_PATH.is_file():
+def matrix_timestamp_source_year(value: str, zero_code_point: int) -> int:
+    if len(value) != 14:
         raise FixtureValidationError(
-            "Missing pinned formatter matrix {}".format(FORMATTER_MATRIX_PATH)
+            "Formatter evidence candidate timestamp must contain 14 digits"
         )
+    return int(normalize_matrix_digits(value, zero_code_point)[:4])
+
+
+def formatter_instant_fields(instant_utc: str) -> Tuple[str, ...]:
+    match = re.fullmatch(
+        r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z",
+        instant_utc,
+    )
+    if match is None:
+        raise FixtureValidationError(
+            "Invalid formatter evidence instant {!r}".format(instant_utc)
+        )
+    return match.groups()
+
+
+def legacy_digits_for_instant(instant_utc: str) -> str:
+    return "".join(formatter_instant_fields(instant_utc)[:6])
+
+
+def localized_formatter_digits(value: str, zero_code_point: int) -> str:
+    return "".join(
+        chr(zero_code_point + int(character))
+        if "0" <= character <= "9"
+        else character
+        for character in value
+    )
+
+
+def formatted_timestamp_for_instant(
+    instant_utc: str,
+    zero_code_point: int,
+) -> str:
+    year, month, day, hour, minute, second, millis = formatter_instant_fields(
+        instant_utc
+    )
+    return localized_formatter_digits(
+        "{}-{}-{} {}:{}:{}.{}".format(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millis,
+        ),
+        zero_code_point,
+    )
+
+
+def epoch_millis_for_instant(instant_utc: str) -> int:
+    year, month, day, hour, minute, second, millis = formatter_instant_fields(
+        instant_utc
+    )
+    instant = datetime(
+        int(year),
+        int(month),
+        int(day),
+        int(hour),
+        int(minute),
+        int(second),
+        int(millis) * 1000,
+    )
+    delta = instant - datetime(1970, 1, 1)
+    return (
+        delta.days * 86_400_000
+        + delta.seconds * 1000
+        + delta.microseconds // 1000
+    )
+
+
+def parse_android_formatter_evidence(path: Path) -> Mapping[str, Any]:
+    if not path.is_file():
+        raise FixtureValidationError(
+            "Missing Android formatter evidence {}".format(path)
+        )
+    data = path.read_bytes()
+    if not data.endswith(b"\n") or b"\r" in data:
+        raise FixtureValidationError(
+            "{} must be UTF-8 text with LF line endings".format(path.name)
+        )
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise FixtureValidationError(
+            "{} is not valid UTF-8".format(path.name)
+        ) from error
+
     metadata: Dict[str, str] = {}
     signatures: List[Mapping[str, Any]] = []
     candidates: List[Mapping[str, Any]] = []
     controls: List[Mapping[str, Any]] = []
-    for line_number, line in enumerate(
-        FORMATTER_MATRIX_PATH.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
+    for line_number, line in enumerate(text.splitlines(), start=1):
         fields = line.split("\t")
-        if fields[0] == "meta" and len(fields) == 3:
+        kind = fields[0]
+        if kind == "meta" and len(fields) == 3:
             if fields[1] in metadata:
                 raise FixtureValidationError(
-                    "Duplicate formatter-matrix metadata key {!r}".format(
-                        fields[1]
+                    "{} line {} duplicates metadata key {!r}".format(
+                        path.name,
+                        line_number,
+                        fields[1],
                     )
                 )
             metadata[fields[1]] = fields[2]
             continue
-        if fields[0] == "signature" and len(fields) == 6:
+        if kind == "signature" and len(fields) == 9:
             signatures.append(
                 {
                     "zero_code_point": parse_code_point(fields[1]),
-                    "calendar": fields[2],
-                    "formatted": fields[3],
-                    "locale_count": int(fields[4]),
-                    "first_locale": fields[5],
-                }
-            )
-            continue
-        if fields[0] == "candidate" and len(fields) == 6:
-            zero_code_point = parse_code_point(fields[1])
-            source_year = matrix_timestamp_source_year(
-                fields[5],
-                zero_code_point,
-            )
-            candidates.append(
-                {
-                    "zero_code_point": zero_code_point,
-                    "locale_tag": fields[2],
+                    "calendar_class": fields[2],
                     "calendar": fields[3],
-                    "instant_utc": fields[4],
-                    "formatted": fields[5],
-                    "source_year": source_year,
-                    "gregorian_year": int(fields[4][0:4]),
+                    "formatted": fields[4],
+                    "legacy_formatted": fields[5],
+                    "number_digits": fields[6],
+                    "locale_count": int(fields[7]),
+                    "first_locale": fields[8],
                 }
             )
             continue
-        if fields[0] == "control" and len(fields) == 7:
-            zero_code_point = parse_code_point(fields[3])
+        if kind in ("candidate", "thai_control") and len(fields) == 17:
+            zero_code_point = parse_code_point(fields[1])
+            legacy_formatted = fields[10]
             source_year = matrix_timestamp_source_year(
-                fields[6],
+                legacy_formatted,
                 zero_code_point,
             )
-            controls.append(
-                {
-                    "name": fields[1],
-                    "locale_tag": fields[2],
-                    "zero_code_point": zero_code_point,
-                    "calendar": fields[4],
-                    "instant_utc": fields[5],
-                    "formatted": fields[6],
-                    "source_year": source_year,
-                    "gregorian_year": int(fields[5][0:4]),
-                }
-            )
+            detailed = {
+                "kind": kind,
+                "zero_code_point": zero_code_point,
+                "locale_tag": fields[2],
+                "locale_string": fields[3],
+                "numbering_system": fields[4],
+                "calendar_keyword": fields[5],
+                "calendar_class": fields[6],
+                "calendar": fields[7],
+                "instant_utc": fields[8],
+                "formatted": fields[9],
+                "legacy_formatted": legacy_formatted,
+                "number_digits": fields[11],
+                "strict_round_trip": fields[12],
+                "parsed_epoch_millis": fields[13],
+                "default_constructor_matches": fields[14],
+                "default_calendar_class": fields[15],
+                "default_calendar": fields[16],
+                "source_year": source_year,
+            }
+            if kind == "candidate":
+                candidates.append(detailed)
+            else:
+                controls.append(detailed)
             continue
         raise FixtureValidationError(
-            "Invalid formatter-matrix record at line {}".format(line_number)
+            "{} has an invalid record at line {}".format(path.name, line_number)
         )
 
-    expected_metadata = {
-        "format_version": "1",
-        "java_runtime_version": "17.0.20+8",
-        "java_vendor": "Eclipse Adoptium",
-        "locale_providers": "default",
-        "probe_instant_utc": "2024-07-08T09:10:11Z",
-        "available_locale_count": "1017",
-        "locale_rows_sha256": (
-            "5f270f635e4600e0fedd1f7501ad2803589bbefd94e83cf26310604608baac28"
-        ),
-    }
-    if metadata != expected_metadata:
-        raise FixtureValidationError("Pinned formatter-matrix metadata changed")
-    candidate_zeroes = [row["zero_code_point"] for row in candidates]
-    signature_zeroes = {row["zero_code_point"] for row in signatures}
+    try:
+        api_level = int(metadata["api_level"])
+    except (KeyError, ValueError) as error:
+        raise FixtureValidationError(
+            "{} lacks a valid API level".format(path.name)
+        ) from error
+    expected_metadata = ANDROID_FORMATTER_EXPECTED_METADATA.get(api_level)
+    if expected_metadata is None or metadata != expected_metadata:
+        raise FixtureValidationError(
+            "{} Android formatter metadata changed".format(path.name)
+        )
+    expected_sha256 = ANDROID_FORMATTER_EVIDENCE_SHA256[api_level]
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise FixtureValidationError(
+            "{} Android formatter evidence bytes changed".format(path.name)
+        )
+
+    fixed_instants = tuple(metadata["fixed_instants_utc"].split(","))
+    if len(fixed_instants) != len(set(fixed_instants)):
+        raise FixtureValidationError(
+            "{} formatter fixed instants are not unique".format(path.name)
+        )
+    for instant_utc in fixed_instants:
+        formatter_instant_fields(instant_utc)
+        epoch_millis_for_instant(instant_utc)
+    signature_zeroes = [row["zero_code_point"] for row in signatures]
     if (
-        candidate_zeroes != sorted(candidate_zeroes)
-        or len(candidate_zeroes) != len(set(candidate_zeroes))
-        or set(candidate_zeroes) != signature_zeroes
+        signature_zeroes != sorted(signature_zeroes)
+        or len(signature_zeroes) != len(set(signature_zeroes))
+        or sum(row["locale_count"] for row in signatures)
+        != int(metadata["available_locale_count"])
     ):
         raise FixtureValidationError(
-            "Formatter candidates must cover every unique emitted digit block once"
+            "{} formatter signatures do not partition available locales".format(
+                path.name
+            )
         )
     if any(
-        row["calendar"] not in (CALENDAR_GREGORIAN, CALENDAR_BUDDHIST)
-        for row in candidates
+        row["calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
+        or row["calendar"] != ANDROID_FORMATTER_CALENDAR_TYPE
+        or row["locale_count"] <= 0
+        or not row["first_locale"]
+        or row["formatted"]
+        != formatted_timestamp_for_instant(
+            ANDROID_FORMATTER_SIGNATURE_INSTANT,
+            row["zero_code_point"],
+        )
+        or row["legacy_formatted"]
+        != localized_formatter_digits(
+            legacy_digits_for_instant(ANDROID_FORMATTER_SIGNATURE_INSTANT),
+            row["zero_code_point"],
+        )
+        or matrix_timestamp_source_year(
+            row["legacy_formatted"],
+            row["zero_code_point"],
+        )
+        != 2024
+        or normalize_matrix_digits(
+            row["number_digits"],
+            row["zero_code_point"],
+        )
+        != "1234567890"
+        for row in signatures
     ):
         raise FixtureValidationError(
-            "Formatter candidate uses an unsupported calendar"
+            "{} contains a non-Gregorian or malformed signature".format(path.name)
         )
+
+    candidates_by_zero: Dict[int, List[Mapping[str, Any]]] = {}
+    for row in candidates:
+        candidates_by_zero.setdefault(row["zero_code_point"], []).append(row)
+    if set(candidates_by_zero) != set(signature_zeroes):
+        raise FixtureValidationError(
+            "{} candidates do not cover every signature digit block".format(
+                path.name
+            )
+        )
+    for zero_code_point, rows in candidates_by_zero.items():
+        if (
+            [row["instant_utc"] for row in rows] != list(fixed_instants)
+            or len({row["locale_tag"] for row in rows}) != 1
+        ):
+            raise FixtureValidationError(
+                "{} U+{:04X} candidate coverage changed".format(
+                    path.name,
+                    zero_code_point,
+                )
+            )
+
+    controls_by_tag: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in controls:
+        controls_by_tag.setdefault(row["locale_tag"], []).append(row)
+    if tuple(controls_by_tag) != ANDROID_FORMATTER_THAI_CONTROL_TAGS:
+        raise FixtureValidationError(
+            "{} Thai control locale coverage changed".format(path.name)
+        )
+    if any(
+        [row["instant_utc"] for row in rows] != list(fixed_instants)
+        for rows in controls_by_tag.values()
+    ):
+        raise FixtureValidationError(
+            "{} Thai control instant coverage changed".format(path.name)
+        )
+
+    for row in candidates + controls:
+        try:
+            parsed_epoch_millis = int(row["parsed_epoch_millis"])
+        except (TypeError, ValueError) as error:
+            raise FixtureValidationError(
+                "{} contains an invalid parsed epoch".format(path.name)
+            ) from error
+        normalized_legacy = normalize_matrix_digits(
+            row["legacy_formatted"],
+            row["zero_code_point"],
+        )
+        if (
+            row["calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
+            or row["calendar"] != ANDROID_FORMATTER_CALENDAR_TYPE
+            or row["default_calendar_class"] != ANDROID_FORMATTER_CALENDAR_CLASS
+            or row["default_calendar"] != ANDROID_FORMATTER_CALENDAR_TYPE
+            or row["strict_round_trip"] != "true"
+            or parsed_epoch_millis
+            != epoch_millis_for_instant(row["instant_utc"])
+            or row["default_constructor_matches"] != "true"
+            or row["formatted"]
+            != formatted_timestamp_for_instant(
+                row["instant_utc"],
+                row["zero_code_point"],
+            )
+            or row["legacy_formatted"]
+            != localized_formatter_digits(
+                legacy_digits_for_instant(row["instant_utc"]),
+                row["zero_code_point"],
+            )
+            or normalized_legacy != legacy_digits_for_instant(row["instant_utc"])
+            or row["source_year"]
+            != int(formatter_instant_fields(row["instant_utc"])[0])
+            or normalize_matrix_digits(
+                row["number_digits"],
+                row["zero_code_point"],
+            )
+            != "1234567890"
+        ):
+            raise FixtureValidationError(
+                "{} contains non-Gregorian or non-round-tripping formatter evidence".format(
+                    path.name
+                )
+            )
+
     return {
+        "path": path,
+        "sha256": expected_sha256,
+        "api_level": api_level,
         "metadata": metadata,
         "signatures": tuple(signatures),
-        "candidate_digit_blocks": tuple(candidates),
-        "calendar_controls": tuple(controls),
+        "candidates": tuple(candidates),
+        "thai_controls": tuple(controls),
+    }
+
+
+@lru_cache(maxsize=1)
+def formatter_probe_matrix() -> Mapping[str, Any]:
+    if not ANDROID_FORMATTER_PROBE_SOURCE_PATH.is_file():
+        raise FixtureValidationError(
+            "Missing Android instrumentation probe {}".format(
+                ANDROID_FORMATTER_PROBE_SOURCE_PATH
+            )
+        )
+    source_sha256 = hashlib.sha256(
+        ANDROID_FORMATTER_PROBE_SOURCE_PATH.read_bytes()
+    ).hexdigest()
+    if source_sha256 != ANDROID_FORMATTER_PROBE_SOURCE_SHA256:
+        raise FixtureValidationError(
+            "Android instrumentation probe source bytes changed"
+        )
+    platforms = tuple(
+        parse_android_formatter_evidence(path)
+        for path in ANDROID_FORMATTER_EVIDENCE_PATHS
+    )
+    if tuple(platform["api_level"] for platform in platforms) != (26, 36):
+        raise FixtureValidationError(
+            "Android formatter evidence must be ordered API26 then API36"
+        )
+
+    representative_by_zero: Dict[int, Mapping[str, Any]] = {}
+    api_levels_by_zero: Dict[int, set[int]] = {}
+    for platform in platforms:
+        for row in platform["candidates"]:
+            if row["instant_utc"] != ANDROID_FORMATTER_SIGNATURE_INSTANT:
+                continue
+            zero_code_point = row["zero_code_point"]
+            api_levels_by_zero.setdefault(zero_code_point, set()).add(
+                platform["api_level"]
+            )
+            representative_by_zero.setdefault(zero_code_point, row)
+        for row in platform["thai_controls"]:
+            if (
+                row["locale_tag"] != "th-TH-u-nu-thai"
+                or row["instant_utc"] != ANDROID_FORMATTER_SIGNATURE_INSTANT
+            ):
+                continue
+            zero_code_point = row["zero_code_point"]
+            api_levels_by_zero.setdefault(zero_code_point, set()).add(
+                platform["api_level"]
+            )
+            representative_by_zero.setdefault(zero_code_point, row)
+
+    candidate_digit_blocks = tuple(
+        {
+            "zero_code_point": zero_code_point,
+            "locale_tag": representative_by_zero[zero_code_point]["locale_tag"],
+            "calendar": representative_by_zero[zero_code_point]["calendar"],
+            "instant_utc": representative_by_zero[zero_code_point]["instant_utc"],
+            "formatted": representative_by_zero[zero_code_point][
+                "legacy_formatted"
+            ],
+            "source_year": representative_by_zero[zero_code_point]["source_year"],
+            "api_levels": tuple(sorted(api_levels_by_zero[zero_code_point])),
+        }
+        for zero_code_point in sorted(representative_by_zero)
+    )
+    if any(
+        row["calendar"] != CALENDAR_GREGORIAN
+        for row in candidate_digit_blocks
+    ):
+        raise FixtureValidationError(
+            "Android formatter candidate uses a non-Gregorian calendar"
+        )
+    return {
+        "probe_source": ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        "probe_source_sha256": source_sha256,
+        "platforms": platforms,
+        "candidate_digit_blocks": candidate_digit_blocks,
     }
 
 
@@ -488,45 +828,78 @@ def formatter_candidate_digit_blocks() -> Tuple[Mapping[str, Any], ...]:
     return tuple(formatter_probe_matrix()["candidate_digit_blocks"])
 
 
-def formatter_calendar_year_mappings() -> Mapping[Tuple[str, str, int], int]:
-    mappings: Dict[Tuple[str, str, int], int] = {}
-    rows = (
-        tuple(formatter_probe_matrix()["candidate_digit_blocks"])
-        + tuple(formatter_probe_matrix()["calendar_controls"])
+def formatter_source_emittable_zeroes() -> frozenset[int]:
+    return frozenset(
+        row["zero_code_point"] for row in formatter_candidate_digit_blocks()
     )
-    for row in rows:
-        key = (
-            row["calendar"],
-            row["locale_tag"],
-            row["source_year"],
-        )
-        gregorian_year = row["gregorian_year"]
-        previous = mappings.get(key)
-        if previous is not None and previous != gregorian_year:
-            raise FixtureValidationError(
-                "Formatter matrix has conflicting calendar-year mappings"
-            )
-        mappings[key] = gregorian_year
-    return mappings
 
 
 def formatter_oracle_manifest() -> Mapping[str, Any]:
     matrix = formatter_probe_matrix()
-    metadata = matrix["metadata"]
     return {
-        "matrix": FORMATTER_MATRIX_PATH.name,
-        "matrix_sha256": hashlib.sha256(
-            FORMATTER_MATRIX_PATH.read_bytes()
-        ).hexdigest(),
-        "java_runtime_version": metadata["java_runtime_version"],
-        "java_vendor": metadata["java_vendor"],
-        "available_locale_count": int(metadata["available_locale_count"]),
-        "locale_rows_sha256": metadata["locale_rows_sha256"],
+        "platform": "Android",
+        "writer": "java.text.SimpleDateFormat",
+        "legacy_pattern": "yyyyMMddHHmmss",
+        "probe_source": ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
+        "probe_source_sha256": matrix["probe_source_sha256"],
+        "evidence": [
+            {
+                "file": platform["path"].name,
+                "sha256": platform["sha256"],
+                "api_level": platform["api_level"],
+                "release": platform["metadata"]["release"],
+                "available_locale_count": int(
+                    platform["metadata"]["available_locale_count"]
+                ),
+                "locale_rows_sha256": platform["metadata"][
+                    "locale_rows_sha256"
+                ],
+            }
+            for platform in matrix["platforms"]
+        ],
+        "calendar_class": ANDROID_FORMATTER_CALENDAR_CLASS,
+        "calendar_type": ANDROID_FORMATTER_CALENDAR_TYPE,
+        "platform_union_policy": (
+            "union_of_api26_api36_available_locale_outputs_plus_probed_"
+            "thai_numbering_control"
+        ),
         "source_emittable_digit_zero_code_points": [
             "U+{:04X}".format(row["zero_code_point"])
             for row in matrix["candidate_digit_blocks"]
         ],
         "candidate_fixture": "formatter_digit_blocks",
+    }
+
+
+def verify_android_formatter_evidence(
+    root: Path = TOOL_ROOT,
+) -> Mapping[str, Any]:
+    root = root.resolve()
+    matrix = formatter_probe_matrix()
+    for source in (
+        ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        *ANDROID_FORMATTER_EVIDENCE_PATHS,
+    ):
+        candidate = root / source.name
+        if not candidate.is_file():
+            raise FixtureValidationError(
+                "Missing Android formatter artifact {}".format(candidate)
+            )
+        compare_exact_artifact_bytes(
+            source.name,
+            source,
+            candidate,
+        )
+    return {
+        "platform_count": len(matrix["platforms"]),
+        "api_levels": [
+            platform["api_level"] for platform in matrix["platforms"]
+        ],
+        "digit_block_count": len(matrix["candidate_digit_blocks"]),
+        "detailed_row_count": sum(
+            len(platform["candidates"]) + len(platform["thai_controls"])
+            for platform in matrix["platforms"]
+        ),
     }
 
 
@@ -1125,6 +1498,19 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                     None,
                 ),
+                activity(
+                    11,
+                    "２０２４０７０８０９１３１１",
+                    None,
+                    "Synthetic Unsupported Fullwidth Digits",
+                    (
+                        "Unicode Nd digits not emitted by the probed Android "
+                        "formatter platforms remain unsupported."
+                    ),
+                    None,
+                    None,
+                    None,
+                ),
             ),
             track_points=(
                 point(
@@ -1271,6 +1657,18 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                     127.0,
                 ),
+                point(
+                    13,
+                    1,
+                    "２０２４０７０８０９１３１２",
+                    30.0452,
+                    31.2365,
+                    None,
+                    None,
+                    None,
+                    None,
+                    128.0,
+                ),
             ),
             representative_values=(
                 {
@@ -1334,9 +1732,9 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
         FixtureCase(
             key="formatter_digit_blocks",
             description=(
-                "One durably evidenced activity and point for every unique Unicode "
-                "Nd digit block emitted by the pinned Temurin 17 "
-                "SimpleDateFormat/DecimalFormatSymbols available-locale matrix."
+                "One activity and point for every Unicode Nd digit block emitted "
+                "by Android java.text.SimpleDateFormat across the API26/API36 "
+                "available-locale union plus the probed Thai numbering control."
             ),
             activities=tuple(
                 activity(
@@ -1347,9 +1745,11 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                         block["zero_code_point"]
                     ),
                     (
-                        "Source-backed by the pinned Temurin 17 formatter matrix "
-                        "for {}."
-                    ).format(block["locale_tag"]),
+                        "Source-backed by Android API {} formatter evidence for {}."
+                    ).format(
+                        "/".join(str(value) for value in block["api_levels"]),
+                        block["locale_tag"],
+                    ),
                     None,
                     None,
                     None,
@@ -1381,54 +1781,52 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 }
                 for index, block in enumerate(formatter_blocks, start=1)
             ),
-            default_calendar_evidence=None,
             activity_calendar_evidence=tuple(
                 (
                     index,
                     CalendarEvidence(
                         calendar=block["calendar"],
                         locale_tag=block["locale_tag"],
-                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                        source=ANDROID_FORMATTER_EVIDENCE_SOURCE,
                     ),
                 )
                 for index, block in enumerate(formatter_blocks, start=1)
             ),
         ),
         FixtureCase(
-            key="calendar_semantics",
+            key="android_thai_gregorian",
             description=(
-                "Checked Thai-digit timestamps with durable per-activity evidence "
-                "distinguishing the default Buddhist calendar from an explicit "
-                "historical Gregorian calendar, plus identical ASCII year-2567 "
-                "text under Buddhist and Gregorian calendars."
+                "Android API26/API36 Thai controls across years 2000, 2024, 2032, "
+                "and 2567 prove ordinary th-TH and explicit Thai digits retain "
+                "Gregorian calendar semantics without a 543-year conversion."
             ),
             activities=(
                 activity(
                     1,
-                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
-                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๓",
-                    "Synthetic Thai Buddhist Session",
-                    "The checked th-TH-u-nu-thai formatter maps Buddhist year 2567 to 2024.",
+                    "20000229123456",
+                    "20000229123458",
+                    "Synthetic Ordinary Thai Year 2000",
+                    "Android th-TH emits and parses Gregorian leap day 2000.",
                     120.0,
                     2.0,
                     16.666666666666668,
                 ),
                 activity(
                     2,
-                    "๒๐๒๔๐๗๐๘๐๙๑๑๑๑",
-                    "๒๐๒๔๐๗๐๘๐๙๑๑๑๓",
-                    "Synthetic Thai-Digit Gregorian Session",
-                    "An explicit ca-gregory locale proves Thai digits do not imply Buddhist years.",
+                    "20240708091011",
+                    "20240708091013",
+                    "Synthetic Ordinary Thai Year 2024",
+                    "Android th-TH emits Gregorian year 2024 with ASCII digits.",
                     121.0,
                     2.0,
                     16.52892561983471,
                 ),
                 activity(
                     3,
-                    "25670708091011",
-                    "25670708091013",
-                    "Synthetic Latin-Digit Buddhist Session",
-                    "The checked th-TH-u-nu-latn formatter emits Buddhist year 2567.",
+                    "20320229235957",
+                    "20320229235959",
+                    "Synthetic Ordinary Thai Year 2032",
+                    "Android th-TH emits and parses Gregorian leap day 2032.",
                     122.0,
                     2.0,
                     16.39344262295082,
@@ -1437,21 +1835,47 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     4,
                     "25670708091011",
                     "25670708091013",
-                    "Synthetic Gregorian Year 2567 Session",
+                    "Synthetic Ordinary Thai Year 2567",
                     (
-                        "The checked en-US formatter emits the same source text for "
-                        "valid Gregorian year 2567."
+                        "Android th-TH preserves valid Gregorian year 2567 rather "
+                        "than subtracting 543."
                     ),
                     123.0,
                     2.0,
                     16.260162601626018,
+                ),
+                activity(
+                    5,
+                    "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+                    "๒๐๒๔๐๗๐๘๐๙๑๐๑๓",
+                    "Synthetic Thai Digits Year 2024",
+                    (
+                        "Android th-TH-u-nu-thai changes digits but retains "
+                        "Gregorian year 2024."
+                    ),
+                    124.0,
+                    2.0,
+                    16.129032258064516,
+                ),
+                activity(
+                    6,
+                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๓",
+                    "Synthetic Thai Digits Year 2567",
+                    (
+                        "Android th-TH-u-nu-thai preserves Gregorian year 2567 "
+                        "without a Buddhist-calendar conversion."
+                    ),
+                    125.0,
+                    2.0,
+                    16.0,
                 ),
             ),
             track_points=(
                 point(
                     1,
                     1,
-                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+                    "20000229123456",
                     13.7563,
                     100.5018,
                     5.0,
@@ -1463,7 +1887,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 point(
                     2,
                     2,
-                    "๒๐๒๔๐๗๐๘๐๙๑๑๑๑",
+                    "20240708091011",
                     13.7564,
                     100.5019,
                     5.125,
@@ -1475,7 +1899,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 point(
                     3,
                     3,
-                    "25670708091011",
+                    "20320229235957",
                     13.7565,
                     100.5020,
                     5.25,
@@ -1496,27 +1920,51 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     93.0,
                     123.0,
                 ),
+                point(
+                    5,
+                    5,
+                    "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+                    13.7567,
+                    100.5022,
+                    5.5,
+                    3.5,
+                    2.5,
+                    94.0,
+                    124.0,
+                ),
+                point(
+                    6,
+                    6,
+                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+                    13.7568,
+                    100.5023,
+                    5.625,
+                    3.625,
+                    2.625,
+                    95.0,
+                    125.0,
+                ),
             ),
             representative_values=(
                 {
                     "table": "ACTIVITY",
                     "legacy_id": 1,
                     "column": "GMTSTART",
-                    "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+                    "expected": "20000229123456",
                     "comparison": exact,
                 },
                 {
                     "table": "ACTIVITY",
                     "legacy_id": 2,
                     "column": "GMTSTART",
-                    "expected": "๒๐๒๔๐๗๐๘๐๙๑๑๑๑",
+                    "expected": "20240708091011",
                     "comparison": exact,
                 },
                 {
                     "table": "ACTIVITY",
                     "legacy_id": 3,
                     "column": "GMTSTART",
-                    "expected": "25670708091011",
+                    "expected": "20320229235957",
                     "comparison": exact,
                 },
                 {
@@ -1526,205 +1974,45 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "expected": "25670708091011",
                     "comparison": exact,
                 },
-            ),
-            android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
-            default_calendar_evidence=CalendarEvidence(
-                calendar=CALENDAR_BUDDHIST,
-                locale_tag="th-TH-u-nu-thai",
-                source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
-            ),
-            activity_calendar_evidence=(
-                (
-                    2,
-                    CalendarEvidence(
-                        calendar=CALENDAR_GREGORIAN,
-                        locale_tag="th-TH-u-ca-gregory-nu-thai",
-                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
-                    ),
-                ),
-                (
-                    3,
-                    CalendarEvidence(
-                        calendar=CALENDAR_BUDDHIST,
-                        locale_tag="th-TH-u-nu-latn",
-                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
-                    ),
-                ),
-                (
-                    4,
-                    CalendarEvidence(
-                        calendar=CALENDAR_GREGORIAN,
-                        locale_tag="en-US",
-                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
-                    ),
-                ),
-            ),
-        ),
-        FixtureCase(
-            key="calendar_ambiguous",
-            description=(
-                "Current Thai locale metadata with Thai-digit and ASCII Buddhist-year "
-                "rows but no durable row-level calendar evidence; the whole migration "
-                "unit is quarantined without target writes or a receipt."
-            ),
-            activities=(
-                activity(
-                    1,
-                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
-                    None,
-                    "Synthetic Ambiguous Thai-Digit Session",
-                    "Current locale metadata is not durable evidence for this historical row.",
-                    None,
-                    None,
-                    None,
-                ),
-                activity(
-                    2,
-                    "25670708091011",
-                    None,
-                    "Synthetic Ambiguous ASCII-Digit Session",
-                    "A Buddhist locale can emit Latin digits, so ASCII is not Gregorian evidence.",
-                    None,
-                    None,
-                    None,
-                ),
-            ),
-            track_points=(
-                point(
-                    1,
-                    1,
-                    "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
-                    13.7563,
-                    100.5018,
-                    None,
-                    None,
-                    None,
-                    None,
-                    120.0,
-                ),
-                point(
-                    2,
-                    2,
-                    "25670708091011",
-                    13.7564,
-                    100.5019,
-                    None,
-                    None,
-                    None,
-                    None,
-                    121.0,
-                ),
-            ),
-            representative_values=(
                 {
                     "table": "ACTIVITY",
-                    "legacy_id": 1,
+                    "legacy_id": 5,
+                    "column": "GMTSTART",
+                    "expected": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 6,
                     "column": "GMTSTART",
                     "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
                     "comparison": exact,
                 },
-                {
-                    "table": "ACTIVITY",
-                    "legacy_id": 2,
-                    "column": "GMTSTART",
-                    "expected": "25670708091011",
-                    "comparison": exact,
-                },
             ),
             android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
-            default_calendar_evidence=None,
-            calendar_ambiguous=True,
-        ),
-        FixtureCase(
-            key="calendar_mixed_evidence",
-            description=(
-                "One durably evidenced Gregorian activity and one calendar-ambiguous "
-                "activity in the same source database; database-wide policy "
-                "quarantines both with zero target writes and no receipt."
+            default_calendar_evidence=CalendarEvidence(
+                calendar=CALENDAR_GREGORIAN,
+                locale_tag="th-TH",
+                source=ANDROID_FORMATTER_EVIDENCE_SOURCE,
             ),
-            activities=(
-                activity(
-                    1,
-                    "20240708091011",
-                    None,
-                    "Synthetic Evidenced Control Session",
-                    (
-                        "Durable en-US Gregorian evidence exists, but another row "
-                        "blocks the whole migration unit."
-                    ),
-                    None,
-                    None,
-                    None,
-                ),
-                activity(
-                    2,
-                    "25670708091011",
-                    None,
-                    "Synthetic Ambiguous Peer Session",
-                    (
-                        "The same source database lacks durable calendar evidence "
-                        "for this row."
-                    ),
-                    None,
-                    None,
-                    None,
-                ),
-            ),
-            track_points=(
-                point(
-                    1,
-                    1,
-                    "20240708091011",
-                    47.6062,
-                    -122.3321,
-                    None,
-                    None,
-                    None,
-                    None,
-                    120.0,
-                ),
-                point(
-                    2,
-                    2,
-                    "25670708091011",
-                    13.7563,
-                    100.5018,
-                    None,
-                    None,
-                    None,
-                    None,
-                    121.0,
-                ),
-            ),
-            representative_values=(
-                {
-                    "table": "ACTIVITY",
-                    "legacy_id": 1,
-                    "column": "GMTSTART",
-                    "expected": "20240708091011",
-                    "comparison": exact,
-                },
-                {
-                    "table": "ACTIVITY",
-                    "legacy_id": 2,
-                    "column": "GMTSTART",
-                    "expected": "25670708091011",
-                    "comparison": exact,
-                },
-            ),
-            android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
-            default_calendar_evidence=None,
             activity_calendar_evidence=(
                 (
-                    1,
+                    5,
                     CalendarEvidence(
                         calendar=CALENDAR_GREGORIAN,
-                        locale_tag="en-US",
-                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                        locale_tag="th-TH-u-nu-thai",
+                        source=ANDROID_FORMATTER_EVIDENCE_SOURCE,
+                    ),
+                ),
+                (
+                    6,
+                    CalendarEvidence(
+                        calendar=CALENDAR_GREGORIAN,
+                        locale_tag="th-TH-u-nu-thai",
+                        source=ANDROID_FORMATTER_EVIDENCE_SOURCE,
                     ),
                 ),
             ),
-            calendar_ambiguous=True,
         ),
         FixtureCase(
             key="orphan",
@@ -2676,16 +2964,20 @@ def sqlite_runtime_version(
 
 def sqlite_compile_options(
     connection: sqlite3.Connection,
-) -> frozenset[str]:
+) -> Optional[frozenset[str]]:
     try:
         rows = connection.execute("PRAGMA compile_options")
     except Exception:
-        return frozenset()
-    return frozenset(
+        return None
+    options = frozenset(
         str(row[0]).upper()
         for row in rows
         if row and isinstance(row[0], str)
     )
+    return options or None
+
+
+_COMPILE_OPTIONS_UNSET = object()
 
 
 def probe_generated_columns_support(
@@ -2714,27 +3006,39 @@ def probe_generated_columns_support(
 def probe_virtual_table_module_support(
     connection: sqlite3.Connection,
     module: str,
-    compile_options: Optional[Iterable[str]] = None,
+    compile_options: Any = _COMPILE_OPTIONS_UNSET,
 ) -> bool:
     if module not in ("fts4", "fts5"):
         raise FixtureValidationError(
             "Unsupported virtual-table capability probe {!r}".format(module)
         )
-    options = (
-        frozenset(str(option).upper() for option in compile_options)
-        if compile_options is not None
-        else sqlite_compile_options(connection)
+    if compile_options is _COMPILE_OPTIONS_UNSET:
+        options = sqlite_compile_options(connection)
+    elif compile_options is None:
+        options = None
+    else:
+        options = frozenset(str(option).upper() for option in compile_options)
+    diagnostics_known = (
+        bool(options)
+        and "OMIT_COMPILEOPTION_DIAGS" not in options
     )
     if (
         module == "fts4"
-        and options
+        and diagnostics_known
         and not {"ENABLE_FTS3", "ENABLE_FTS4"} & options
     ):
         return False
-    if module == "fts5" and "ENABLE_FTS5" not in options:
+    if (
+        module == "fts5"
+        and diagnostics_known
+        and "ENABLE_FTS5" not in options
+    ):
         return False
-    probe_table = "__sport_logger_{}_capability_probe".format(module)
-    created = False
+    probe_table = "__sport_logger_{}_capability_probe_{:x}".format(
+        module,
+        id(connection),
+    )
+    supported = False
     try:
         connection.execute(
             "CREATE VIRTUAL TABLE temp.{} USING {}(value)".format(
@@ -2742,16 +3046,31 @@ def probe_virtual_table_module_support(
                 module,
             )
         )
-        created = True
-        connection.execute("DROP TABLE temp.{}".format(probe_table))
+        supported = True
     except Exception:
-        if created:
-            try:
-                connection.execute("DROP TABLE temp.{}".format(probe_table))
-            except Exception:
-                pass
-        return False
-    return True
+        supported = False
+    finally:
+        try:
+            connection.execute(
+                "DROP TABLE IF EXISTS temp.{}".format(probe_table)
+            )
+        except Exception:
+            supported = False
+        try:
+            prefix = probe_table + "_"
+            residual = tuple(
+                connection.execute(
+                    "SELECT name FROM sqlite_temp_master "
+                    "WHERE name = ? OR substr(name, 1, ?) = ?",
+                    (probe_table, len(prefix), prefix),
+                )
+            )
+        except Exception:
+            supported = False
+        else:
+            if residual:
+                supported = False
+    return supported
 
 
 def sqlite_detector_capabilities(
@@ -3826,153 +4145,6 @@ def blocked_migration_expectations(reason: str) -> Mapping[str, Any]:
     }
 
 
-def calendar_quarantine_migration_expectations(
-    source_rows_read: int,
-) -> Mapping[str, Any]:
-    return {
-        "status": "blocked",
-        "reason": "calendar_ambiguous",
-        "source_rows_read": source_rows_read,
-        "target_write_attempted": False,
-        "target_rows_written": 0,
-        "receipt_write_attempted": False,
-        "receipt_written": False,
-        "source_database_retained": True,
-        "source_text_retained": True,
-        "recovery_path": "user_supplied_durable_per_activity_calendar_evidence",
-    }
-
-
-def build_calendar_quarantine_output(
-    case: FixtureCase,
-    rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
-    source_schema_diagnostics: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    if not case.calendar_ambiguous:
-        raise FixtureValidationError(
-            "{} is not configured as calendar-ambiguous".format(case.key)
-        )
-    if source_schema_diagnostics["migration_readiness"] != "ready":
-        raise FixtureValidationError(
-            "{} calendar quarantine requires an otherwise migration-ready schema".format(
-                case.key
-            )
-        )
-
-    portable_schema = corpus_schema_diagnostics(source_schema_diagnostics)
-    activity_rows = [
-        row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
-    ]
-    point_rows = [
-        row_mapping(GPS_POINT_COLUMNS, row)
-        for row in rows_by_table["GPS_POINTS"]
-    ]
-    points_by_activity: Dict[Any, List[Mapping[str, Any]]] = {}
-    for row in point_rows:
-        points_by_activity.setdefault(row["ACTIVITYID"], []).append(dict(row))
-    activity_ids = {row["ID"] for row in activity_rows}
-    per_activity: List[Mapping[str, Any]] = []
-    evidence_by_activity: Dict[Any, Optional[CalendarEvidence]] = {}
-    for row in activity_rows:
-        evidence = activity_calendar_evidence(case, row["ID"])
-        evidence_by_activity[row["ID"]] = evidence
-        per_activity.append(
-            {
-                "legacy_activity_id": row["ID"],
-                "state": (
-                    "durably_evidenced"
-                    if evidence is not None
-                    else "calendar_ambiguous"
-                ),
-                "evidence": (
-                    calendar_evidence_payload(evidence)
-                    if evidence is not None
-                    else None
-                ),
-            }
-        )
-    evidenced_activity_ids = [
-        row["legacy_activity_id"]
-        for row in per_activity
-        if row["state"] == "durably_evidenced"
-    ]
-    ambiguous_activity_ids = [
-        row["legacy_activity_id"]
-        for row in per_activity
-        if row["state"] == "calendar_ambiguous"
-    ]
-    if not ambiguous_activity_ids:
-        raise FixtureValidationError(
-            "{} calendar quarantine lacks an ambiguous activity".format(case.key)
-        )
-    quarantined_activities = [
-        {
-            "legacy_activity_id": row["ID"],
-            "calendar_state": (
-                "durably_evidenced"
-                if evidence_by_activity[row["ID"]] is not None
-                else "calendar_ambiguous"
-            ),
-            "calendar_evidence": (
-                calendar_evidence_payload(evidence_by_activity[row["ID"]])
-                if evidence_by_activity[row["ID"]] is not None
-                else None
-            ),
-            "reason": (
-                "database_migration_unit_calendar_ambiguity"
-                if evidence_by_activity[row["ID"]] is not None
-                else "calendar_ambiguous"
-            ),
-            "raw_activity": dict(row),
-            "raw_track_points": points_by_activity.get(row["ID"], []),
-        }
-        for row in activity_rows
-    ]
-    quarantined_orphan_points = [
-        dict(row)
-        for row in point_rows
-        if row["ACTIVITYID"] not in activity_ids
-    ]
-    source_rows_read = len(activity_rows) + len(point_rows)
-    return {
-        "format_version": FORMAT_VERSION,
-        "output_kind": "calendar_quarantine",
-        "fixture": case.key,
-        "database_identity": case.database_identity,
-        "diagnostics": {
-            "schema": portable_schema,
-            "data_state": "calendar_ambiguous",
-            "calendar": {
-                "state": "calendar_ambiguous",
-                "migration_readiness": "blocked",
-                "current_android_locale": case.android_locale,
-                "current_locale_used_as_row_evidence": False,
-                "historical_locale_changes_possible": True,
-                "database_migration_unit_policy": (
-                    "any_ambiguous_activity_quarantines_entire_source_database"
-                ),
-                "evidenced_activity_ids": evidenced_activity_ids,
-                "ambiguous_activity_ids": ambiguous_activity_ids,
-                "per_activity": per_activity,
-                "reason": "at_least_one_activity_lacks_durable_calendar_evidence",
-            },
-        },
-        "quarantined_activities": quarantined_activities,
-        "quarantined_orphan_track_points": quarantined_orphan_points,
-        "summary": {
-            "source_activity_rows": len(activity_rows),
-            "source_track_point_rows": len(point_rows),
-            "quarantined_activities": len(quarantined_activities),
-            "quarantined_track_points": len(point_rows),
-            "evidenced_activities": len(evidenced_activity_ids),
-            "ambiguous_activities": len(ambiguous_activity_ids),
-        },
-        "migration_expectations": calendar_quarantine_migration_expectations(
-            source_rows_read
-        ),
-    }
-
-
 def build_blocked_preflight_output(
     case: FixtureCase,
     database: Path,
@@ -4234,9 +4406,11 @@ TimestampParser = Callable[[Any, CalendarEvidence], Optional[datetime]]
 
 
 def calendar_evidence_payload(evidence: CalendarEvidence) -> Mapping[str, str]:
-    if evidence.calendar not in (CALENDAR_GREGORIAN, CALENDAR_BUDDHIST):
+    if evidence.calendar != CALENDAR_GREGORIAN:
         raise FixtureValidationError(
-            "Unsupported calendar evidence {!r}".format(evidence.calendar)
+            "Android java.text source calendar must be Gregorian, found {!r}".format(
+                evidence.calendar
+            )
         )
     if not evidence.locale_tag or not evidence.source:
         raise FixtureValidationError("Calendar evidence must name a locale and source")
@@ -4250,22 +4424,28 @@ def calendar_evidence_payload(evidence: CalendarEvidence) -> Mapping[str, str]:
 def activity_calendar_evidence(
     case: FixtureCase,
     activity_id: Any,
-) -> Optional[CalendarEvidence]:
+) -> CalendarEvidence:
     overrides = dict(case.activity_calendar_evidence)
     if len(overrides) != len(case.activity_calendar_evidence):
         raise FixtureValidationError(
             "{} has duplicate per-activity calendar evidence".format(case.key)
         )
     evidence = overrides.get(activity_id, case.default_calendar_evidence)
-    if evidence is not None:
-        calendar_evidence_payload(evidence)
+    if evidence is None:
+        raise FixtureValidationError(
+            "{} lacks Android formatter evidence for activity {}".format(
+                case.key,
+                activity_id,
+            )
+        )
+    calendar_evidence_payload(evidence)
     return evidence
 
 
 def point_calendar_evidence(
     case: FixtureCase,
     row: Mapping[str, Any],
-) -> Optional[CalendarEvidence]:
+) -> CalendarEvidence:
     return activity_calendar_evidence(case, row.get("ACTIVITYID"))
 
 
@@ -4318,24 +4498,13 @@ def parse_evidenced_legacy_timestamp(
     if normalized is None:
         return None
     calendar_evidence_payload(evidence)
+    zero_code_point = ord(value[0]) - unicodedata.decimal(value[0])
+    if zero_code_point not in formatter_source_emittable_zeroes():
+        return None
     source_year = int(normalized[0:4])
-    if evidence.calendar == CALENDAR_GREGORIAN:
-        gregorian_year = source_year
-    elif evidence.calendar == CALENDAR_BUDDHIST:
-        gregorian_year = formatter_calendar_year_mappings().get(
-            (
-                evidence.calendar,
-                evidence.locale_tag,
-                source_year,
-            )
-        )
-        if gregorian_year is None:
-            return None
-    else:
-        raise AssertionError("Calendar evidence validation did not fail closed")
     try:
         return datetime(
-            gregorian_year,
+            source_year,
             int(normalized[4:6]),
             int(normalized[6:8]),
             int(normalized[8:10]),
@@ -4508,8 +4677,8 @@ def normalized_session(
     )
     if parsed_start is None or (row["GMTEND"] is not None and parsed_end is None):
         raise FixtureValidationError(
-            "Accepted activity {} could not be interpreted with durable calendar "
-            "evidence".format(legacy_id)
+            "Accepted activity {} could not be interpreted with Android "
+            "formatter semantics".format(legacy_id)
         )
     return {
         "source_key": source_key(database_identity, "ACTIVITY", legacy_id),
@@ -4546,8 +4715,8 @@ def normalized_point(
     parsed_timestamp = timestamp_parser(row["GMTTIMESTAMP"], evidence)
     if parsed_timestamp is None:
         raise FixtureValidationError(
-            "Accepted point {} could not be interpreted with durable calendar "
-            "evidence".format(legacy_id)
+            "Accepted point {} could not be interpreted with Android "
+            "formatter semantics".format(legacy_id)
         )
     return {
         "source_key": source_key(database_identity, "GPS_POINTS", legacy_id),
@@ -4597,13 +4766,6 @@ def calendar_diagnostics(
     evidence_rows = []
     for row in activity_rows:
         evidence = activity_calendar_evidence(case, row["ID"])
-        if evidence is None:
-            raise FixtureValidationError(
-                "{} lacks durable calendar evidence for activity {}".format(
-                    case.key,
-                    row["ID"],
-                )
-            )
         evidence_rows.append(
             {
                 "legacy_activity_id": row["ID"],
@@ -4612,8 +4774,12 @@ def calendar_diagnostics(
         )
     locale_tags = {row["locale_tag"] for row in evidence_rows}
     return {
-        "state": "durably_evidenced",
+        "state": "android_gregorian",
         "migration_readiness": "ready",
+        "source_platform": "Android java.text.SimpleDateFormat",
+        "calendar": CALENDAR_GREGORIAN,
+        "calendar_class": ANDROID_FORMATTER_CALENDAR_CLASS,
+        "platform_invariant": True,
         "current_android_locale": case.android_locale,
         "current_locale_used_as_row_evidence": False,
         "historical_locale_change": len(locale_tags) > 1,
@@ -4639,15 +4805,12 @@ def ordering_diagnostics(
         parsed
         for row in point_rows
         if (
-            (evidence := point_calendar_evidence(case, row)) is not None
-            and (
-                parsed := timestamp_parser(
-                    row["GMTTIMESTAMP"],
-                    evidence,
-                )
+            parsed := timestamp_parser(
+                row["GMTTIMESTAMP"],
+                point_calendar_evidence(case, row),
             )
-            is not None
         )
+        is not None
     ]
     return {
         "activity_rows_ordered_by_64_bit_id": activity_ids == sorted(activity_ids),
@@ -4672,12 +4835,6 @@ def build_canonical_output(
     source_schema_diagnostics: Mapping[str, Any],
     timestamp_parser: TimestampParser = parse_evidenced_legacy_timestamp,
 ) -> Mapping[str, Any]:
-    if case.calendar_ambiguous:
-        raise FixtureValidationError(
-            "{} must be built as a calendar quarantine, not canonical output".format(
-                case.key
-            )
-        )
     portable_schema = corpus_schema_diagnostics(source_schema_diagnostics)
     activity_rows = [
         row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
@@ -4694,13 +4851,6 @@ def build_canonical_output(
 
     for row in activity_rows:
         evidence = activity_calendar_evidence(case, row["ID"])
-        if evidence is None:
-            raise FixtureValidationError(
-                "{} lacks durable calendar evidence for activity {}".format(
-                    case.key,
-                    row["ID"],
-                )
-            )
         reasons = activity_rejection_reasons(row, evidence, timestamp_parser)
         if reasons:
             invalid_activity_ids.add(row["ID"])
@@ -4721,13 +4871,6 @@ def build_canonical_output(
     orphan_track_points: List[Mapping[str, Any]] = []
     for row in point_rows:
         evidence = point_calendar_evidence(case, row)
-        if evidence is None:
-            raise FixtureValidationError(
-                "{} lacks durable calendar evidence for point {}".format(
-                    case.key,
-                    row["ID"],
-                )
-            )
         reasons = point_rejection_reasons(row, evidence, timestamp_parser)
         if isinstance(row["ACTIVITYID"], int) and row["ACTIVITYID"] in invalid_activity_ids:
             reasons.append("invalid_parent_activity")
@@ -5225,10 +5368,6 @@ def timestamp_summary(
     for row in rows_by_table["ACTIVITY"]:
         mapped = row_mapping(ACTIVITY_COLUMNS, row)
         evidence = activity_calendar_evidence(case, mapped["ID"])
-        if evidence is None:
-            raise FixtureValidationError(
-                "{} lacks calendar evidence for timestamp summary".format(case.key)
-            )
         activity_values.extend(
             (
                 (mapped["GMTSTART"], evidence),
@@ -5239,12 +5378,6 @@ def timestamp_summary(
     for row in rows_by_table["GPS_POINTS"]:
         mapped = row_mapping(GPS_POINT_COLUMNS, row)
         evidence = point_calendar_evidence(case, mapped)
-        if evidence is None:
-            raise FixtureValidationError(
-                "{} lacks point calendar evidence for timestamp summary".format(
-                    case.key
-                )
-            )
         point_values.append((mapped["GMTTIMESTAMP"], evidence))
 
     def summarize(
@@ -5474,50 +5607,6 @@ def manifest_entry(
     }
 
 
-def calendar_quarantine_manifest_entry(
-    root: Path,
-    case: FixtureCase,
-    database: Path,
-    expected_output_path: Path,
-    connection: sqlite3.Connection,
-    rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
-    output: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    return {
-        "name": case.key,
-        "description": case.description,
-        "storage": case.storage,
-        "android_locale": case.android_locale,
-        "database": database.relative_to(root).as_posix(),
-        "expected_output": expected_output_path.relative_to(root).as_posix(),
-        "database_identity": case.database_identity,
-        "artifacts": artifact_manifest(root, database, case),
-        "storage_canonical_checksum": hash_value(
-            fixture_storage_snapshot(database, case)
-        ),
-        "expected": {
-            "activity_rows": len(rows_by_table["ACTIVITY"]),
-            "track_point_rows": len(rows_by_table["GPS_POINTS"]),
-            "physical_orphan_track_points": physical_orphan_count(rows_by_table),
-            "points_per_activity": points_per_activity(
-                rows_by_table["GPS_POINTS"]
-            ),
-            "quarantine": output["summary"],
-            "diagnostics": output["diagnostics"],
-            "migration_expectations": output["migration_expectations"],
-            "platform_metadata": platform_metadata_payload(connection),
-            "schema_logical_checksum": validate_schema_all_paths(
-                connection,
-                "{} manifest".format(case.key),
-                case.business_tables,
-            ),
-            "logical_checksums": logical_checksums(connection),
-            "canonical_output_logical_checksum": hash_value(output),
-            "representative_values": representative_values(connection, case),
-        },
-    }
-
-
 def blocked_manifest_entry(
     root: Path,
     case: FixtureCase,
@@ -5552,14 +5641,24 @@ def blocked_manifest_entry(
 def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     root = root.resolve()
     formatter_probe_matrix()
-    matrix_destination = root / FORMATTER_MATRIX_PATH.name
-    if matrix_destination.resolve() != FORMATTER_MATRIX_PATH.resolve():
-        matrix_destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(FORMATTER_MATRIX_PATH, matrix_destination)
+    exact_formatter_artifacts = (
+        ANDROID_FORMATTER_PROBE_SOURCE_PATH,
+        *ANDROID_FORMATTER_EVIDENCE_PATHS,
+    )
+    for source in exact_formatter_artifacts:
+        destination = root / source.name
+        if destination.resolve() != source.resolve():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
     fixtures_dir = root / "fixtures"
     expected_dir = root / "expected"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
     expected_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("*.db", "*.db-wal", "*.db-shm"):
+        for path in fixtures_dir.glob(pattern):
+            path.unlink()
+    for path in expected_dir.glob("*.json"):
+        path.unlink()
 
     entries: List[Mapping[str, Any]] = []
     for case in fixture_cases():
@@ -5587,43 +5686,25 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             )
             rows_by_table = read_all_rows(connection)
             source_schema_diagnostics = schema_diagnostics(connection)
-            if case.calendar_ambiguous:
-                output = build_calendar_quarantine_output(
-                    case,
-                    rows_by_table,
-                    source_schema_diagnostics,
-                )
-            else:
-                output = build_canonical_output(
-                    case,
-                    rows_by_table,
-                    source_schema_diagnostics,
-                )
+            output = build_canonical_output(
+                case,
+                rows_by_table,
+                source_schema_diagnostics,
+            )
             if case.storage == STORAGE_ACTIVE_WAL:
                 output["diagnostics"]["snapshot"] = (
                     active_wal_snapshot_diagnostics(database, case)
                 )
             write_json(expected_output_path, output)
-            if case.calendar_ambiguous:
-                entry = calendar_quarantine_manifest_entry(
-                    root,
-                    case,
-                    database,
-                    expected_output_path,
-                    connection,
-                    rows_by_table,
-                    output,
-                )
-            else:
-                entry = manifest_entry(
-                    root,
-                    case,
-                    database,
-                    expected_output_path,
-                    connection,
-                    rows_by_table,
-                    output,
-                )
+            entry = manifest_entry(
+                root,
+                case,
+                database,
+                expected_output_path,
+                connection,
+                rows_by_table,
+                output,
+            )
             entries.append(entry)
 
     manifest = {
@@ -5644,19 +5725,13 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             "combined in ACTIVITY/GPS_POINTS order"
         ),
         "calendar_oracle": {
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "source_calendar": CALENDAR_GREGORIAN,
+            "calendar_class": ANDROID_FORMATTER_CALENDAR_CLASS,
             "current_android_metadata_is_row_evidence": False,
-            "durable_per_activity_evidence_required": True,
-            "supported_calendars": [
-                CALENDAR_BUDDHIST,
-                CALENDAR_GREGORIAN,
-            ],
-            "calendar_interpretation": (
-                "pinned_formatter_calendar_evidence_without_year_magnitude_or_"
-                "fixed_offset_heuristics"
-            ),
-            "ambiguous_unit_policy": (
-                "quarantine_source_database_with_zero_target_writes_and_no_receipt"
-            ),
+            "durable_per_activity_evidence_required": False,
+            "locale_calendar_extension_changes_calendar": False,
+            "year_interpretation": "strict_proleptic_gregorian_without_offset",
         },
         "formatter_oracle": formatter_oracle_manifest(),
         "source_schema": {
@@ -5808,119 +5883,6 @@ def validate_output_invariants(
                     fixture_name, output.get("fixture")
                 )
             )
-        if output.get("output_kind") == "calendar_quarantine":
-            diagnostics = output.get("diagnostics", {})
-            schema_diagnostic = diagnostics.get("schema", {})
-            calendar = diagnostics.get("calendar", {})
-            summary = output.get("summary", {})
-            quarantined_activities = output.get("quarantined_activities", [])
-            quarantined_orphans = output.get(
-                "quarantined_orphan_track_points",
-                [],
-            )
-            expected_source_rows = (
-                summary.get("source_activity_rows", 0)
-                + summary.get("source_track_point_rows", 0)
-            )
-            per_activity = calendar.get("per_activity", [])
-            evidenced_activity_ids = calendar.get(
-                "evidenced_activity_ids",
-                [],
-            )
-            ambiguous_activity_ids = calendar.get(
-                "ambiguous_activity_ids",
-                [],
-            )
-            expectations = output.get("migration_expectations")
-            if (
-                schema_diagnostic.get("migration_readiness") != "ready"
-                or "validation_path" in schema_diagnostic
-                or schema_diagnostic.get(
-                    "unexpected_sqlite_internal_schema_objects"
-                )
-                or diagnostics.get("data_state") != "calendar_ambiguous"
-                or calendar.get("state") != "calendar_ambiguous"
-                or calendar.get("migration_readiness") != "blocked"
-                or calendar.get("current_locale_used_as_row_evidence") is not False
-                or calendar.get("database_migration_unit_policy")
-                != "any_ambiguous_activity_quarantines_entire_source_database"
-                or not ambiguous_activity_ids
-                or summary.get("quarantined_activities")
-                != len(quarantined_activities)
-                or summary.get("evidenced_activities")
-                != len(evidenced_activity_ids)
-                or summary.get("ambiguous_activities")
-                != len(ambiguous_activity_ids)
-                or summary.get("quarantined_track_points")
-                != sum(
-                    len(activity["raw_track_points"])
-                    for activity in quarantined_activities
-                )
-                + len(quarantined_orphans)
-                or expectations
-                != calendar_quarantine_migration_expectations(
-                    expected_source_rows
-                )
-            ):
-                raise FixtureValidationError(
-                    "{} calendar quarantine is incomplete or unsafe".format(
-                        fixture_name
-                    )
-                )
-            raw_activity_ids = [
-                activity["raw_activity"]["ID"]
-                for activity in quarantined_activities
-            ]
-            classified_activity_ids = [
-                activity["legacy_activity_id"] for activity in per_activity
-            ]
-            states_by_activity = {
-                activity["legacy_activity_id"]: activity
-                for activity in per_activity
-            }
-            if (
-                raw_activity_ids != classified_activity_ids
-                or raw_activity_ids
-                != [
-                    activity["legacy_activity_id"]
-                    for activity in quarantined_activities
-                ]
-                or evidenced_activity_ids
-                != [
-                    activity["legacy_activity_id"]
-                    for activity in per_activity
-                    if activity["state"] == "durably_evidenced"
-                ]
-                or ambiguous_activity_ids
-                != [
-                    activity["legacy_activity_id"]
-                    for activity in per_activity
-                    if activity["state"] == "calendar_ambiguous"
-                ]
-            ):
-                raise FixtureValidationError(
-                    "{} calendar quarantine lost raw activity identity".format(
-                        fixture_name
-                    )
-                )
-            for activity in quarantined_activities:
-                classification = states_by_activity[activity["legacy_activity_id"]]
-                expected_reason = (
-                    "database_migration_unit_calendar_ambiguity"
-                    if classification["state"] == "durably_evidenced"
-                    else "calendar_ambiguous"
-                )
-                if (
-                    activity["calendar_state"] != classification["state"]
-                    or activity["calendar_evidence"] != classification["evidence"]
-                    or activity["reason"] != expected_reason
-                ):
-                    raise FixtureValidationError(
-                        "{} calendar quarantine lost row-level diagnostics".format(
-                            fixture_name
-                        )
-                    )
-            continue
         if output.get("output_kind") == "blocked_preflight":
             expectations = output.get("migration_expectations")
             if (
@@ -6034,8 +5996,14 @@ def validate_output_invariants(
                 "{} reports unexpected schema objects".format(fixture_name)
             )
         if (
-            calendar_diagnostic["state"] != "durably_evidenced"
+            calendar_diagnostic["state"] != "android_gregorian"
             or calendar_diagnostic["migration_readiness"] != "ready"
+            or calendar_diagnostic["source_platform"]
+            != "Android java.text.SimpleDateFormat"
+            or calendar_diagnostic["calendar"] != CALENDAR_GREGORIAN
+            or calendar_diagnostic["calendar_class"]
+            != ANDROID_FORMATTER_CALENDAR_CLASS
+            or calendar_diagnostic["platform_invariant"] is not True
             or calendar_diagnostic["current_android_locale"]
             != cases[fixture_name].android_locale
             or calendar_diagnostic["current_locale_used_as_row_evidence"] is not False
@@ -6702,16 +6670,32 @@ def run_storage_detection_tests(
             if not isinstance(value, str) or len(value) != 14:
                 return None
             normalized: List[str] = []
+            zero_code_points = set()
             for character in value:
                 if unicodedata.category(character) != "Nd":
                     return None
                 try:
-                    normalized.append(
-                        chr(ord("0") + unicodedata.decimal(character))
-                    )
+                    decimal = unicodedata.decimal(character)
                 except ValueError:
                     return None
+                zero_code_points.add(ord(character) - decimal)
+                normalized.append(chr(ord("0") + decimal))
+            if not zero_code_points <= formatter_source_emittable_zeroes():
+                return None
             return parse_strict_gregorian_legacy_timestamp("".join(normalized))
+
+        def parse_any_single_nd_block(
+            value: Any,
+            evidence: CalendarEvidence,
+        ) -> Optional[datetime]:
+            del evidence
+            normalized = normalized_legacy_timestamp_digits(
+                value,
+                require_single_numbering_system=True,
+            )
+            if normalized is None:
+                return None
+            return parse_strict_gregorian_legacy_timestamp(normalized)
 
         def parse_limited_digit_blocks(
             value: Any,
@@ -6780,6 +6764,10 @@ def run_storage_detection_tests(
             ),
             ("mixed_numbering_system_accepted", parse_mixed_decimal_digits),
             (
+                "unsupported_android_digit_block_accepted",
+                parse_any_single_nd_block,
+            ),
+            (
                 "unicode_format_controls_stripped",
                 parse_after_stripping_format_controls,
             ),
@@ -6839,51 +6827,28 @@ def run_storage_detection_tests(
             )
         passed.append("source_emittable_digit_block_omitted")
 
-        calendar_case = cases["calendar_semantics"]
-        calendar_database = root / "fixtures" / "calendar_semantics.db"
+        calendar_case = cases["android_thai_gregorian"]
+        calendar_database = root / "fixtures" / "android_thai_gregorian.db"
         with open_readonly(calendar_database) as connection:
             calendar_rows = read_all_rows(connection)
             calendar_schema = schema_diagnostics(connection)
 
-        def parse_every_year_as_gregorian(
+        def parse_with_year_transform(
             value: Any,
             evidence: CalendarEvidence,
+            transform: Callable[[int, CalendarEvidence], int],
         ) -> Optional[datetime]:
-            del evidence
-            return parse_strict_gregorian_legacy_timestamp(value)
-
-        def parse_thai_digits_as_buddhist(
-            value: Any,
-            evidence: CalendarEvidence,
-        ) -> Optional[datetime]:
-            if timestamp_digit_zero_code_point(value) == ord("๐"):
-                return parse_evidenced_legacy_timestamp(
-                    value,
-                    CalendarEvidence(
-                        calendar=CALENDAR_BUDDHIST,
-                        locale_tag=evidence.locale_tag,
-                        source="unsafe_digit_shape_inference",
-                    ),
-                )
-            return parse_evidenced_legacy_timestamp(value, evidence)
-
-        def parse_year_magnitude_with_fixed_offset(
-            value: Any,
-            evidence: CalendarEvidence,
-        ) -> Optional[datetime]:
-            del evidence
             normalized = normalized_legacy_timestamp_digits(
                 value,
                 require_single_numbering_system=True,
             )
             if normalized is None:
                 return None
+            zero_code_point = timestamp_digit_zero_code_point(value)
+            if zero_code_point not in formatter_source_emittable_zeroes():
+                return None
             source_year = int(normalized[0:4])
-            guessed_year = (
-                source_year - 543
-                if source_year >= 2400
-                else source_year
-            )
+            guessed_year = transform(source_year, evidence)
             try:
                 return datetime(
                     guessed_year,
@@ -6896,22 +6861,56 @@ def run_storage_detection_tests(
             except ValueError:
                 return None
 
+        def parse_with_desktop_buddhist_assumption(
+            value: Any,
+            evidence: CalendarEvidence,
+        ) -> Optional[datetime]:
+            return parse_with_year_transform(
+                value,
+                evidence,
+                lambda year, context: (
+                    year - 543
+                    if context.locale_tag.startswith("th-TH")
+                    else year
+                ),
+            )
+
+        def parse_year_magnitude_with_fixed_offset(
+            value: Any,
+            evidence: CalendarEvidence,
+        ) -> Optional[datetime]:
+            return parse_with_year_transform(
+                value,
+                evidence,
+                lambda year, context: year - 543 if year >= 2400 else year,
+            )
+
+        def parse_with_single_year_lookup(
+            value: Any,
+            evidence: CalendarEvidence,
+        ) -> Optional[datetime]:
+            return parse_with_year_transform(
+                value,
+                evidence,
+                lambda year, context: 2024 if year == 2567 else year,
+            )
+
         for detector_name, timestamp_parser in (
             (
-                "calendar_gregorian_only_parser",
-                parse_every_year_as_gregorian,
+                "android_timestamp_desktop_buddhist_calendar_assumption",
+                parse_with_desktop_buddhist_assumption,
             ),
             (
-                "calendar_thai_digits_auto_buddhist_conversion",
-                parse_thai_digits_as_buddhist,
-            ),
-            (
-                "calendar_year_magnitude_fixed_offset_heuristic",
+                "android_timestamp_magic_543_year_offset",
                 parse_year_magnitude_with_fixed_offset,
+            ),
+            (
+                "android_timestamp_single_year_lookup",
+                parse_with_single_year_lookup,
             ),
         ):
             candidate = copy.deepcopy(expected_outputs)
-            candidate["calendar_semantics"] = build_canonical_output(
+            candidate["android_thai_gregorian"] = build_canonical_output(
                 calendar_case,
                 calendar_rows,
                 calendar_schema,
@@ -6925,97 +6924,6 @@ def run_storage_detection_tests(
                 raise FixtureValidationError(
                     "Validator self-test did not detect {}".format(detector_name)
                 )
-
-        ambiguous_case = cases["calendar_ambiguous"]
-        ambiguous_database = root / "fixtures" / "calendar_ambiguous.db"
-        with open_readonly(ambiguous_database) as connection:
-            ambiguous_rows = read_all_rows(connection)
-            ambiguous_schema = schema_diagnostics(connection)
-        unsafe_inferred_case = replace(
-            ambiguous_case,
-            default_calendar_evidence=CalendarEvidence(
-                calendar=CALENDAR_BUDDHIST,
-                locale_tag="th-TH-u-nu-thai",
-                source="unsafe_current_android_metadata_inference",
-            ),
-            calendar_ambiguous=False,
-        )
-        candidate = copy.deepcopy(expected_outputs)
-        candidate["calendar_ambiguous"] = build_canonical_output(
-            unsafe_inferred_case,
-            ambiguous_rows,
-            ambiguous_schema,
-        )
-        try:
-            validate_candidate_outputs(expected_outputs, candidate)
-        except FixtureValidationError:
-            passed.append("calendar_ambiguous_rows_migrated")
-        else:
-            raise FixtureValidationError(
-                "Validator self-test did not detect calendar_ambiguous_rows_migrated"
-            )
-
-        mixed_case = cases["calendar_mixed_evidence"]
-        mixed_database = root / "fixtures" / "calendar_mixed_evidence.db"
-        with open_readonly(mixed_database) as connection:
-            mixed_rows = read_all_rows(connection)
-            mixed_schema = schema_diagnostics(connection)
-        evidenced_activity_ids = {
-            row_id
-            for row_id, evidence in mixed_case.activity_calendar_evidence
-            if evidence is not None
-        }
-        row_scoped_rows = {
-            "ACTIVITY": tuple(
-                row
-                for row in mixed_rows["ACTIVITY"]
-                if row_mapping(ACTIVITY_COLUMNS, row)["ID"]
-                in evidenced_activity_ids
-            ),
-            "GPS_POINTS": tuple(
-                row
-                for row in mixed_rows["GPS_POINTS"]
-                if row_mapping(GPS_POINT_COLUMNS, row)["ACTIVITYID"]
-                in evidenced_activity_ids
-            ),
-        }
-        row_scoped_case = replace(
-            mixed_case,
-            calendar_ambiguous=False,
-        )
-        row_scoped_candidate = dict(
-            build_canonical_output(
-                row_scoped_case,
-                row_scoped_rows,
-                mixed_schema,
-            )
-        )
-        expected_mixed = expected_outputs["calendar_mixed_evidence"]
-        row_scoped_candidate["output_kind"] = "row_scoped_calendar_migration"
-        row_scoped_candidate["quarantined_activities"] = [
-            copy.deepcopy(activity)
-            for activity in expected_mixed["quarantined_activities"]
-            if activity["calendar_state"] == "calendar_ambiguous"
-        ]
-        row_scoped_candidate["migration_expectations"] = {
-            "status": "partially_migrated",
-            "reason": "calendar_ambiguous_rows_skipped",
-            "source_rows_read": 4,
-            "target_write_attempted": True,
-            "target_rows_written": 2,
-            "receipt_write_attempted": False,
-            "receipt_written": False,
-        }
-        candidate = copy.deepcopy(expected_outputs)
-        candidate["calendar_mixed_evidence"] = row_scoped_candidate
-        try:
-            validate_candidate_outputs(expected_outputs, candidate)
-        except FixtureValidationError:
-            passed.append("calendar_mixed_evidence_row_scoped_migration")
-        else:
-            raise FixtureValidationError(
-                "Validator self-test accepted row-scoped calendar quarantine"
-            )
 
         crlf_json = work_dir / "localized-timestamps-crlf.json"
         committed_json = root / "expected" / "localized_timestamps.json"
@@ -8061,19 +7969,13 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
     }:
         raise FixtureValidationError("Manifest determinism contract mismatch")
     if manifest.get("calendar_oracle") != {
+        "source_platform": "Android java.text.SimpleDateFormat",
+        "source_calendar": CALENDAR_GREGORIAN,
+        "calendar_class": ANDROID_FORMATTER_CALENDAR_CLASS,
         "current_android_metadata_is_row_evidence": False,
-        "durable_per_activity_evidence_required": True,
-        "supported_calendars": [
-            CALENDAR_BUDDHIST,
-            CALENDAR_GREGORIAN,
-        ],
-        "calendar_interpretation": (
-            "pinned_formatter_calendar_evidence_without_year_magnitude_or_"
-            "fixed_offset_heuristics"
-        ),
-        "ambiguous_unit_policy": (
-            "quarantine_source_database_with_zero_target_writes_and_no_receipt"
-        ),
+        "durable_per_activity_evidence_required": False,
+        "locale_calendar_extension_changes_calendar": False,
+        "year_interpretation": "strict_proleptic_gregorian_without_offset",
     }:
         raise FixtureValidationError("Manifest calendar oracle mismatch")
     if manifest.get("formatter_oracle") != formatter_oracle_manifest():
@@ -8106,16 +8008,7 @@ def verify_corpus(
     run_mutations: bool = True,
 ) -> Mapping[str, Any]:
     root = root.resolve()
-    matrix_path = root / FORMATTER_MATRIX_PATH.name
-    if not matrix_path.is_file():
-        raise FixtureValidationError(
-            "Missing formatter matrix {}".format(matrix_path)
-        )
-    compare_exact_artifact_bytes(
-        "pinned formatter matrix",
-        FORMATTER_MATRIX_PATH,
-        matrix_path,
-    )
+    verify_android_formatter_evidence(root)
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FixtureValidationError("Missing manifest {}".format(manifest_path))
@@ -8129,6 +8022,38 @@ def verify_corpus(
         raise FixtureValidationError(
             "Manifest cases mismatch; expected {}, found {}".format(
                 sorted(cases), sorted(manifest_entries)
+            )
+        )
+    expected_fixture_files = {
+        artifact["path"]
+        for entry in manifest_entries.values()
+        for artifact in entry["artifacts"]
+    }
+    actual_fixture_files = {
+        path.relative_to(root).as_posix()
+        for path in (root / "fixtures").iterdir()
+        if path.is_file()
+    }
+    if actual_fixture_files != expected_fixture_files:
+        raise FixtureValidationError(
+            "Fixture artifacts mismatch; expected {}, found {}".format(
+                sorted(expected_fixture_files),
+                sorted(actual_fixture_files),
+            )
+        )
+    expected_output_files = {
+        entry["expected_output"] for entry in manifest_entries.values()
+    }
+    actual_output_files = {
+        path.relative_to(root).as_posix()
+        for path in (root / "expected").iterdir()
+        if path.is_file()
+    }
+    if actual_output_files != expected_output_files:
+        raise FixtureValidationError(
+            "Expected-output artifacts mismatch; expected {}, found {}".format(
+                sorted(expected_output_files),
+                sorted(actual_output_files),
             )
         )
 
@@ -8179,18 +8104,11 @@ def verify_corpus(
             rows_by_table = read_all_rows(connection)
             compare_rows_to_case(case, rows_by_table)
             source_schema_diagnostics = schema_diagnostics(connection)
-            if case.calendar_ambiguous:
-                output = build_calendar_quarantine_output(
-                    case,
-                    rows_by_table,
-                    source_schema_diagnostics,
-                )
-            else:
-                output = build_canonical_output(
-                    case,
-                    rows_by_table,
-                    source_schema_diagnostics,
-                )
+            output = build_canonical_output(
+                case,
+                rows_by_table,
+                source_schema_diagnostics,
+            )
             if case.storage == STORAGE_ACTIVE_WAL:
                 output["diagnostics"]["snapshot"] = (
                     active_wal_snapshot_diagnostics(database, case)
@@ -8199,26 +8117,15 @@ def verify_corpus(
             compare_json(output, committed_output, "$.expected.{}".format(name))
             expected_outputs[name] = committed_output
 
-            if case.calendar_ambiguous:
-                recomputed_entry = calendar_quarantine_manifest_entry(
-                    root,
-                    case,
-                    database,
-                    expected_output_path,
-                    connection,
-                    rows_by_table,
-                    output,
-                )
-            else:
-                recomputed_entry = manifest_entry(
-                    root,
-                    case,
-                    database,
-                    expected_output_path,
-                    connection,
-                    rows_by_table,
-                    output,
-                )
+            recomputed_entry = manifest_entry(
+                root,
+                case,
+                database,
+                expected_output_path,
+                connection,
+                rows_by_table,
+                output,
+            )
             compare_json(
                 recomputed_entry,
                 entry,
@@ -8263,7 +8170,11 @@ def verify_corpus(
 def corpus_artifact_paths(root: Path) -> Mapping[str, Path]:
     paths = [
         root / "manifest.json",
-        root / FORMATTER_MATRIX_PATH.name,
+        root / ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
+        *(
+            root / evidence_path.name
+            for evidence_path in ANDROID_FORMATTER_EVIDENCE_PATHS
+        ),
     ]
     paths.extend(sorted((root / "expected").glob("*.json")))
     paths.extend(sorted(path for path in (root / "fixtures").iterdir() if path.is_file()))
@@ -8754,7 +8665,15 @@ def verify_deterministic_regeneration(
         expected_exact_artifact_paths = {"manifest.json"} | {
             "expected/{}.json".format(case.key) for case in fixture_cases()
         }
-        expected_exact_artifact_paths.add(FORMATTER_MATRIX_PATH.name)
+        expected_exact_artifact_paths.update(
+            {
+                ANDROID_FORMATTER_PROBE_SOURCE_PATH.name,
+                *(
+                    evidence_path.name
+                    for evidence_path in ANDROID_FORMATTER_EVIDENCE_PATHS
+                ),
+            }
+        )
         if exact_artifact_paths != expected_exact_artifact_paths:
             raise FixtureValidationError(
                 "Exact-byte text artifact set mismatch; expected {}, found {}".format(
@@ -9059,6 +8978,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
 
     subparsers.add_parser(
+        "verify-formatter-evidence",
+        help=(
+            "Verify the exact Android API26/API36 formatter probe source and "
+            "sanitized evidence."
+        ),
+    ).add_argument("--root", type=Path, default=TOOL_ROOT)
+
+    subparsers.add_parser(
         "verify-determinism",
         help=(
             "Regenerate the full corpus twice, compare SQLite artifacts through "
@@ -9136,6 +9063,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(
                 "Verified {} deterministic fixtures{}".format(
                     result["fixture_count"], suffix
+                )
+            )
+            return 0
+        if args.command == "verify-formatter-evidence":
+            result = verify_android_formatter_evidence(args.root)
+            print(
+                "Verified Android formatter evidence for API {}: {} digit "
+                "blocks and {} detailed rows".format(
+                    "/".join(str(value) for value in result["api_levels"]),
+                    result["digit_block_count"],
+                    result["detailed_row_count"],
                 )
             )
             return 0

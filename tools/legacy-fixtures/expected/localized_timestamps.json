@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "ar_EG",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": true,
@@ -11,64 +13,72 @@
           "calendar": "gregory",
           "legacy_activity_id": 1,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 2,
           "locale_tag": "bn-BD",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 3,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 4,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 5,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 6,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 7,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 8,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 9,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 10,
           "locale_tag": "ar-EG",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 11,
+          "locale_tag": "ar-EG",
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -241,6 +251,24 @@
       "table": "ACTIVITY"
     },
     {
+      "legacy_id": 11,
+      "raw": {
+        "DESCRIPTION": "Unicode Nd digits not emitted by the probed Android formatter platforms remain unsupported.",
+        "DISTANCE": null,
+        "GMTEND": null,
+        "GMTSTART": "２０２４０７０８０９１３１１",
+        "ID": 11,
+        "NAME": "Synthetic Unsupported Fullwidth Digits",
+        "PACE": null,
+        "TIME": null
+      },
+      "reasons": [
+        "invalid_gmtstart"
+      ],
+      "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:ACTIVITY:11",
+      "table": "ACTIVITY"
+    },
+    {
       "legacy_id": 7,
       "raw": {
         "ACCURACY": null,
@@ -359,11 +387,31 @@
       ],
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:12",
       "table": "GPS_POINTS"
+    },
+    {
+      "legacy_id": 13,
+      "raw": {
+        "ACCURACY": null,
+        "ACTIVITYID": 1,
+        "ALTITUDE": null,
+        "BEARING": null,
+        "GMTTIMESTAMP": "２０２４０７０８０９１３１２",
+        "HEARTRATE": 128.0,
+        "ID": 13,
+        "LATITUDE": 30.0452,
+        "LONGITUDE": 31.2365,
+        "SPEED": null
+      },
+      "reasons": [
+        "invalid_gmttimestamp"
+      ],
+      "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:13",
+      "table": "GPS_POINTS"
     }
   ],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Valid localized legacy timestamps retain their exact source text.",
       "deterministic_id": "53e29512-d75f-5049-b60d-3dae7e680331",
       "distance": 120.0,
@@ -381,7 +429,7 @@
       "timestamp_locale": "ar-EG"
     },
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Bengali digits predate the database's current ar_EG metadata.",
       "deterministic_id": "15b78afb-ac3e-594a-ae1d-9b9c48786d63",
       "distance": 121.0,
@@ -399,7 +447,7 @@
       "timestamp_locale": "bn-BD"
     },
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "ASCII digits predate the database's current ar_EG metadata.",
       "deterministic_id": "df5bf594-1bb4-5fb4-8a30-2cd24198df6d",
       "distance": 122.0,
@@ -420,11 +468,11 @@
   "summary": {
     "orphan_track_points": 0,
     "partial_sessions": 0,
-    "rejected_activity_rows": 7,
-    "rejected_track_point_rows": 6,
+    "rejected_activity_rows": 8,
+    "rejected_track_point_rows": 7,
     "sessions": 3,
-    "source_activity_rows": 10,
-    "source_track_point_rows": 12,
+    "source_activity_rows": 11,
+    "source_track_point_rows": 13,
     "track_points": 6
   },
   "track_points": [
@@ -433,7 +481,7 @@
       "activity_legacy_id": 1,
       "altitude": 23.5,
       "bearing": 90.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "995892f9-77ee-5079-a1b0-2d8589a7d4d1",
       "gmt_timestamp": "٢٠٢٤٠٧٠٨٠٩١٠١١",
       "gmt_timestamp_utc": "2024-07-08T09:10:11Z",
@@ -452,7 +500,7 @@
       "activity_legacy_id": 1,
       "altitude": 23.625,
       "bearing": 91.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "ca805ddc-c31e-5616-815a-002912114913",
       "gmt_timestamp": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
       "gmt_timestamp_utc": "2024-07-08T09:10:12Z",
@@ -471,7 +519,7 @@
       "activity_legacy_id": 2,
       "altitude": 7.5,
       "bearing": 92.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "d3079c75-1546-5d3d-a509-26d13f925efb",
       "gmt_timestamp": "২০২৪০৭০৮০৯১১১১",
       "gmt_timestamp_utc": "2024-07-08T09:11:11Z",
@@ -490,7 +538,7 @@
       "activity_legacy_id": 2,
       "altitude": 7.625,
       "bearing": 93.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "8e259647-3544-51a5-826d-4d9338ad5110",
       "gmt_timestamp": "২০২৪০৭০৮০৯১১১২",
       "gmt_timestamp_utc": "2024-07-08T09:11:12Z",
@@ -509,7 +557,7 @@
       "activity_legacy_id": 3,
       "altitude": 12.5,
       "bearing": 94.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "4e2d81f1-9705-50cd-92cd-dc7fbc2e0ffc",
       "gmt_timestamp": "20240708091211",
       "gmt_timestamp_utc": "2024-07-08T09:12:11Z",
@@ -528,7 +576,7 @@
       "activity_legacy_id": 3,
       "altitude": 12.625,
       "bearing": 95.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "e265c106-caad-58b2-ac32-6ccb2b1fe891",
       "gmt_timestamp": "20240708091212",
       "gmt_timestamp_utc": "2024-07-08T09:12:12Z",

@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
@@ -11,10 +13,12 @@
           "calendar": "gregory",
           "legacy_activity_id": 1,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -63,7 +67,7 @@
       "activity_legacy_id": 999,
       "altitude": 15.5,
       "bearing": 46.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "70632fa2-55a5-5b7d-9cbf-9585f6d7a481",
       "gmt_timestamp": "20240401090001",
       "gmt_timestamp_utc": "2024-04-01T09:00:01Z",
@@ -83,7 +87,7 @@
   "rejected_rows": [],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Parent row for the non-orphan control point.",
       "deterministic_id": "8d863b09-7094-5ef4-a490-ab5278c45788",
       "distance": 750.0,
@@ -117,7 +121,7 @@
       "activity_legacy_id": 1,
       "altitude": 15.25,
       "bearing": 45.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "a2372c7d-b56c-571f-adf4-36cea93877f5",
       "gmt_timestamp": "20240401090000",
       "gmt_timestamp_utc": "2024-04-01T09:00:00Z",

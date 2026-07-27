@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:precision:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
@@ -11,16 +13,18 @@
           "calendar": "gregory",
           "legacy_activity_id": 1,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         },
         {
           "calendar": "gregory",
           "legacy_activity_id": 9007199254740993,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -68,7 +72,7 @@
   "rejected_rows": [],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Values are chosen to expose integer and float narrowing.",
       "deterministic_id": "cb1ea97c-264f-575d-b949-45b72c2d152d",
       "distance": 12345.678901234567,
@@ -86,7 +90,7 @@
       "timestamp_locale": "en-US"
     },
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "Exercises SQLite INTEGER values above Java int and JSON safe ranges.",
       "deterministic_id": "b7c51a49-7c69-520f-b562-fd2d4e5bbd86",
       "distance": 1.23456789e-07,
@@ -120,7 +124,7 @@
       "activity_legacy_id": 1,
       "altitude": -12.3456789012345,
       "bearing": 359.9876543210987,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "96221f48-ddce-5579-ba63-9667ce2d052f",
       "gmt_timestamp": "20240229010203",
       "gmt_timestamp_utc": "2024-02-29T01:02:03Z",
@@ -139,7 +143,7 @@
       "activity_legacy_id": 9007199254740993,
       "altitude": 8848.860123456,
       "bearing": 0.0001220703125,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "23a0b0f7-bfb7-5464-9b58-f5c13d3e8d75",
       "gmt_timestamp": "20240301000000",
       "gmt_timestamp_utc": "2024-03-01T00:00:00Z",

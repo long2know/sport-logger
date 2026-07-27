@@ -2,6 +2,8 @@
   "database_identity": "synthetic:sport-logger:legacy:timestamp_ordering:v1",
   "diagnostics": {
     "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
       "current_android_locale": "en_US",
       "current_locale_used_as_row_evidence": false,
       "historical_locale_change": false,
@@ -11,10 +13,12 @@
           "calendar": "gregory",
           "legacy_activity_id": 9007199254740993,
           "locale_tag": "en-US",
-          "source": "synthetic_fixture_generation_record"
+          "source": "android_java_text_gregorian_invariant"
         }
       ],
-      "state": "durably_evidenced"
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
     },
     "data_state": "contains_business_rows",
     "ordering": {
@@ -62,7 +66,7 @@
   "rejected_rows": [],
   "sessions": [
     {
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "description": "ID order is authoritative even when timestamps duplicate or regress.",
       "deterministic_id": "e050dd08-1b7f-549b-9dd3-69f454f0ecfa",
       "distance": 3.0,
@@ -96,7 +100,7 @@
       "activity_legacy_id": 9007199254740993,
       "altitude": 1.0,
       "bearing": 4.0,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "0c22cc30-0bcf-579e-819d-b9513283ecca",
       "gmt_timestamp": "20240801000002",
       "gmt_timestamp_utc": "2024-08-01T00:00:02Z",
@@ -115,7 +119,7 @@
       "activity_legacy_id": 9007199254740993,
       "altitude": 1.1,
       "bearing": 4.1,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "f0eae2c2-e02d-5c2c-9aec-f06c20398513",
       "gmt_timestamp": "20240801000001",
       "gmt_timestamp_utc": "2024-08-01T00:00:01Z",
@@ -134,7 +138,7 @@
       "activity_legacy_id": 9007199254740993,
       "altitude": 1.2,
       "bearing": 4.2,
-      "calendar_evidence_source": "synthetic_fixture_generation_record",
+      "calendar_evidence_source": "android_java_text_gregorian_invariant",
       "deterministic_id": "31587bd0-eeb3-5b90-82ad-4fc3a7def251",
       "gmt_timestamp": "20240801000002",
       "gmt_timestamp_utc": "2024-08-01T00:00:02Z",

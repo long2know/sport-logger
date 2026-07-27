@@ -1,13 +1,12 @@
 {
   "calendar_oracle": {
-    "ambiguous_unit_policy": "quarantine_source_database_with_zero_target_writes_and_no_receipt",
-    "calendar_interpretation": "pinned_formatter_calendar_evidence_without_year_magnitude_or_fixed_offset_heuristics",
+    "calendar_class": "java.util.GregorianCalendar",
     "current_android_metadata_is_row_evidence": false,
-    "durable_per_activity_evidence_required": true,
-    "supported_calendars": [
-      "buddhist",
-      "gregory"
-    ]
+    "durable_per_activity_evidence_required": false,
+    "locale_calendar_extension_changes_calendar": false,
+    "source_calendar": "gregory",
+    "source_platform": "Android java.text.SimpleDateFormat",
+    "year_interpretation": "strict_proleptic_gregorian_without_offset"
   },
   "database_name": "GPSLOGGERDB_LONG2KNOW",
   "determinism": {
@@ -45,12 +44,16 @@
       "expected": {
         "activity_rows": 0,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
           "migration_readiness": "ready",
           "per_activity": [],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -62,15 +65,19 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "cbf4c7110c709869ab615ecfd0d5fe954cdd0efd619d404c903bf2a73e59d336",
+        "canonical_output_logical_checksum": "2ccf7fbf5b9a52c8800cf94eb3f0cac0cb44b93082080ecfe0b93d2dfc12e0a6",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
             "migration_readiness": "ready",
             "per_activity": [],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "empty",
           "ordering": {
@@ -175,12 +182,16 @@
       "expected": {
         "activity_rows": 0,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
           "migration_readiness": "ready",
           "per_activity": [],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -192,15 +203,19 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "6e73ffffeddcd57a9895ed08aa741918246f65047f3949fc969ec23c9636ed63",
+        "canonical_output_logical_checksum": "0eb3bd2a2583b2ad05d1998d5efd2adc887c9beca4a01d5c171adada573718ef",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
             "migration_readiness": "ready",
             "per_activity": [],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "empty",
           "ordering": {
@@ -303,12 +318,16 @@
       "expected": {
         "activity_rows": 0,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
           "migration_readiness": "ready",
           "per_activity": [],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -320,15 +339,19 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "8dd5fbe637161cdd2be0a1198d8d3b2990ba3bb1dbaeb6ee7bfedbaa564ea650",
+        "canonical_output_logical_checksum": "2a5965cf12b8bf33038b479f9fd4a9b324883784c59bc22b1133192b203e809f",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
             "migration_readiness": "ready",
             "per_activity": [],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "empty",
           "ordering": {
@@ -434,12 +457,16 @@
       "expected": {
         "activity_rows": 0,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
           "migration_readiness": "ready",
           "per_activity": [],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 1,
@@ -451,15 +478,19 @@
           "source_track_point_rows": 1,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "0b4e1ee3ccf1415adc537790a9de8495aa1d6fc69bafc5b9c94c18ef4574d637",
+        "canonical_output_logical_checksum": "2864aaa34de2f1a2c3792ab734b917eb3a2e95495210c178ec6cfd80579eab69",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
             "migration_readiness": "ready",
             "per_activity": [],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -575,6 +606,8 @@
       "expected": {
         "activity_rows": 1,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -584,10 +617,12 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -599,9 +634,11 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "39a4bb56cb6bf58030172f1de2ba7d41dff6c5fb010e7d460821d1804649d959",
+        "canonical_output_logical_checksum": "aabae36674f80d8be8e84020dc659235e5a8ab1373e5791fb2e3a148a5c35d05",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -611,10 +648,12 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -738,6 +777,8 @@
       "expected": {
         "activity_rows": 1,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -747,10 +788,12 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -762,9 +805,11 @@
           "source_track_point_rows": 2,
           "track_points": 2
         },
-        "canonical_output_logical_checksum": "407c7257c05ed9127ec104f19e74986f774dbaf081f33b9d2e7ab2a9dec21521",
+        "canonical_output_logical_checksum": "3670bcf3d19995cd675ac7da792fcd4bf32e9f910d0c1be2865c1296103429e6",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -774,10 +819,12 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -914,6 +961,8 @@
       "expected": {
         "activity_rows": 3,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -923,22 +972,24 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 3,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -950,9 +1001,11 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "59b126bb498c2a039d661e0b0ef18ab789d228fccbe1e5a8701a84ce8f8c85c4",
+        "canonical_output_logical_checksum": "9a2bbed518fe1127d70c2a7f40f0f3a44c81cde436128b303247fb6902d14122",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -962,22 +1015,24 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 3,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1121,6 +1176,8 @@
       "expected": {
         "activity_rows": 1,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -1130,10 +1187,12 @@
               "calendar": "gregory",
               "legacy_activity_id": 9007199254740993,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -1145,9 +1204,11 @@
           "source_track_point_rows": 3,
           "track_points": 3
         },
-        "canonical_output_logical_checksum": "3161d1084b0b6ca83c7a9dd45632657517640c90b2002c52aad7f9bf81a3d302",
+        "canonical_output_logical_checksum": "13d07de51bd4fe2f40a8032af4c32255582174ca6932f8da8152b509f33b18ee",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -1157,10 +1218,12 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 9007199254740993,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1284,6 +1347,8 @@
       "expected": {
         "activity_rows": 2,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -1293,16 +1358,18 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 9007199254740993,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -1314,9 +1381,11 @@
           "source_track_point_rows": 2,
           "track_points": 2
         },
-        "canonical_output_logical_checksum": "0efaf9a2b83f62b53f09b3d6e30eb61ac195cbad07f6c936e6fb272af8cb8a4b",
+        "canonical_output_logical_checksum": "b763c8bb9d3345e80134680bc47c7887a224a88283d72053b831a71e87b15607",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -1326,16 +1395,18 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 9007199254740993,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1521,8 +1592,10 @@
       "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
       "description": "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, historical Bengali, and historical ASCII rows, plus strict mixed-block and Unicode-format controls.",
       "expected": {
-        "activity_rows": 10,
+        "activity_rows": 11,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "ar_EG",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": true,
@@ -1532,78 +1605,88 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
               "locale_tag": "bn-BD",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 3,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 4,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 5,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 6,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 7,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 8,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 9,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 10,
               "locale_tag": "ar-EG",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 11,
+              "locale_tag": "ar-EG",
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
           "partial_sessions": 0,
-          "rejected_activity_rows": 7,
-          "rejected_track_point_rows": 6,
+          "rejected_activity_rows": 8,
+          "rejected_track_point_rows": 7,
           "sessions": 3,
-          "source_activity_rows": 10,
-          "source_track_point_rows": 12,
+          "source_activity_rows": 11,
+          "source_track_point_rows": 13,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "9c8f83633c7186926947d7715723444e4fee11cb4a076d543f5b186fb36243b3",
+        "canonical_output_logical_checksum": "1cb64ade89436d1ef6b523fd6b3e78038a9bdf3b7e0245d6183e9a20fbe9bd99",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "ar_EG",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": true,
@@ -1613,64 +1696,72 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
                 "locale_tag": "bn-BD",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 3,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 4,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 5,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 6,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 7,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 8,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 9,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 10,
                 "locale_tag": "ar-EG",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 11,
+                "locale_tag": "ar-EG",
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1711,9 +1802,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "8e1f8fd41d2aa85ae351a83d5b8e906e603fa17815b494f83601cc5b91286655",
-          "database": "72aa0456fbcef5226c28786ca38a7d5542cf76ccb367b963493494d07b603f3b",
-          "gps_points": "63c5ef822a59d72da5261e1fbfa09e8528983da7c6f6ffc2c19e0763f3f9aead"
+          "activity": "7ccf8f226b4f477f06f35db63ff6d06b5987d551a3033bce12a56bf4618dd4cf",
+          "database": "6dd0634bf6c7c64259524f46b560b4a2bf76fd8aa078835a55e78d394df7a7ef",
+          "gps_points": "d2263d157c38723e243f6ad7661423b5dc51be69cbc095339d9bf3959a0d31ab"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -1728,7 +1819,7 @@
           }
         },
         "points_per_activity": {
-          "1": 8,
+          "1": 9,
           "2": 2,
           "3": 2
         },
@@ -1777,33 +1868,33 @@
         "schema_logical_checksum": "5f38f05f8365c78e630dbf3771f627e7d77270de21edf5b69f90d9a039e7936f",
         "timestamps": {
           "activity": {
-            "invalid_count": 7,
+            "invalid_count": 8,
             "max": "20240708091213",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 7,
+            "null_count": 8,
             "valid_count": 6
           },
           "all": {
-            "invalid_count": 13,
+            "invalid_count": 15,
             "max": "20240708091213",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 7,
+            "null_count": 8,
             "valid_count": 12
           },
           "track_point": {
-            "invalid_count": 6,
+            "invalid_count": 7,
             "max": "20240708091212",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
             "null_count": 0,
             "valid_count": 6
           }
         },
-        "track_point_rows": 12
+        "track_point_rows": 13
       },
       "expected_output": "expected/localized_timestamps.json",
       "name": "localized_timestamps",
       "storage": "standard",
-      "storage_canonical_checksum": "9faee3732c619ef56960b6aee68b3d5f2bdd3ecc31ce46048ba96d7d7ec12a56"
+      "storage_canonical_checksum": "5ea349effdc979f591f573f616e9d7d7c2432c6f4de34ece321a0a417eca92a5"
     },
     {
       "android_locale": "en_US",
@@ -1816,10 +1907,12 @@
       ],
       "database": "fixtures/formatter_digit_blocks.db",
       "database_identity": "synthetic:sport-logger:legacy:formatter_digit_blocks:v1",
-      "description": "One durably evidenced activity and point for every unique Unicode Nd digit block emitted by the pinned Temurin 17 SimpleDateFormat/DecimalFormatSymbols available-locale matrix.",
+      "description": "One activity and point for every Unicode Nd digit block emitted by Android java.text.SimpleDateFormat across the API26/API36 available-locale union plus the probed Thai numbering control.",
       "expected": {
-        "activity_rows": 9,
+        "activity_rows": 10,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": true,
@@ -1828,73 +1921,83 @@
             {
               "calendar": "gregory",
               "legacy_activity_id": 1,
-              "locale_tag": "en-US",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "af",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
-              "locale_tag": "ar-EG",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "ar",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 3,
-              "locale_tag": "fa-IR",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "fa",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 4,
-              "locale_tag": "mr-IN",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "nqo",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 5,
-              "locale_tag": "bn-BD",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "mr",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
-              "calendar": "buddhist",
+              "calendar": "gregory",
               "legacy_activity_id": 6,
-              "locale_tag": "th-TH-u-nu-thai-x-lvariant-TH",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "as",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 7,
-              "locale_tag": "dz-BT",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "th-TH-u-nu-thai",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 8,
-              "locale_tag": "my-MM",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "dz",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 9,
-              "locale_tag": "sat-IN",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "my",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 10,
+              "locale_tag": "sat",
+              "source": "android_api26_api36_formatter_probe"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
-          "partial_sessions": 9,
+          "partial_sessions": 10,
           "rejected_activity_rows": 0,
           "rejected_track_point_rows": 0,
-          "sessions": 9,
-          "source_activity_rows": 9,
-          "source_track_point_rows": 9,
-          "track_points": 9
+          "sessions": 10,
+          "source_activity_rows": 10,
+          "source_track_point_rows": 10,
+          "track_points": 10
         },
-        "canonical_output_logical_checksum": "c4d128a4087b7806e18ef3384d52439c978862efb5c1220c7e52e699ee45ee78",
+        "canonical_output_logical_checksum": "cd2a46835b16c80720d07e22180cc49aeb67cbbc6d7762c03ea954579384bbed",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": true,
@@ -1903,64 +2006,72 @@
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
-                "locale_tag": "en-US",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "af",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
-                "locale_tag": "ar-EG",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "ar",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 3,
-                "locale_tag": "fa-IR",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "fa",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 4,
-                "locale_tag": "mr-IN",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "nqo",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 5,
-                "locale_tag": "bn-BD",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "mr",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
-                "calendar": "buddhist",
+                "calendar": "gregory",
                 "legacy_activity_id": 6,
-                "locale_tag": "th-TH-u-nu-thai-x-lvariant-TH",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "as",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 7,
-                "locale_tag": "dz-BT",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "th-TH-u-nu-thai",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 8,
-                "locale_tag": "my-MM",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "dz",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 9,
-                "locale_tag": "sat-IN",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "my",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 10,
+                "locale_tag": "sat",
+                "source": "android_api26_api36_formatter_probe"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
             "activity_rows_ordered_by_64_bit_id": true,
-            "duplicate_track_point_timestamp_rows": 8,
+            "duplicate_track_point_timestamp_rows": 9,
             "non_monotonic_track_point_timestamp_transitions": 0,
             "track_point_rows_ordered_by_64_bit_id": true
           },
@@ -1996,9 +2107,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "c1d02b5e467c52e6ab9b64e107d6ed2599df3a4629d5ffc89388de48869dda5f",
-          "database": "8a6ab637b3318e61395b3c4991a1ce6f3bcb859a895b5397bb008380cfb64162",
-          "gps_points": "698b913c0f8a268ff9de16cb1aa8903c74a5237618bc4892664e88fef1583238"
+          "activity": "9ec226782db8f6e88bf0b3b34085c9f9e0709e7461c7c381b224ffa9c01f484c",
+          "database": "c0c1b77aee7a1ce9b268a967e8b2bfb9403472f2823e42f120325e205b0848bd",
+          "gps_points": "fbce236f2b1dc2ed983e87688e0ec05c3c33f26e1e95d2f9d9c21d839bf77c74"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -2014,6 +2125,7 @@
         },
         "points_per_activity": {
           "1": 1,
+          "10": 1,
           "2": 1,
           "3": 1,
           "4": 1,
@@ -2051,7 +2163,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "२०२४०७०८०९१०११",
+            "expected": "߂߀߂߄߀߇߀߈߀߉߁߀߁߁",
             "legacy_id": 4,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2059,7 +2171,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "২০২৪০৭০৮০৯১০১১",
+            "expected": "२०२४०७०८०९१०११",
             "legacy_id": 5,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2067,7 +2179,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "expected": "২০২৪০৭০৮০৯১০১১",
             "legacy_id": 6,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2075,7 +2187,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "༢༠༢༤༠༧༠༨༠༩༡༠༡༡",
+            "expected": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
             "legacy_id": 7,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2083,7 +2195,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "၂၀၂၄၀၇၀၈၀၉၁၀၁၁",
+            "expected": "༢༠༢༤༠༧༠༨༠༩༡༠༡༡",
             "legacy_id": 8,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2091,8 +2203,16 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑",
+            "expected": "၂၀၂၄၀၇၀၈၀၉၁၀၁၁",
             "legacy_id": 9,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑",
+            "legacy_id": 10,
             "storage_type": "text",
             "table": "ACTIVITY"
           }
@@ -2103,30 +2223,30 @@
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
-            "null_count": 9,
-            "valid_count": 9
+            "null_count": 10,
+            "valid_count": 10
           },
           "all": {
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
-            "null_count": 9,
-            "valid_count": 18
+            "null_count": 10,
+            "valid_count": 20
           },
           "track_point": {
             "invalid_count": 0,
             "max": "20240708091011",
             "min": "20240708091011",
             "null_count": 0,
-            "valid_count": 9
+            "valid_count": 10
           }
         },
-        "track_point_rows": 9
+        "track_point_rows": 10
       },
       "expected_output": "expected/formatter_digit_blocks.json",
       "name": "formatter_digit_blocks",
       "storage": "standard",
-      "storage_canonical_checksum": "2c428f25f4c1aa86e1d2e12231d584d7944e37811a827ea6c5d245e45ba94a3d"
+      "storage_canonical_checksum": "f2bd5d34f9dea1b6c78fa3b31e7a4173a992630cd67f3d012a253dbafa858edd"
     },
     {
       "android_locale": "th_TH_#u-nu-thai",
@@ -2134,96 +2254,128 @@
         {
           "comparison": "logical_database",
           "exact_bytes_required": false,
-          "path": "fixtures/calendar_semantics.db"
+          "path": "fixtures/android_thai_gregorian.db"
         }
       ],
-      "database": "fixtures/calendar_semantics.db",
-      "database_identity": "synthetic:sport-logger:legacy:calendar_semantics:v1",
-      "description": "Checked Thai-digit timestamps with durable per-activity evidence distinguishing the default Buddhist calendar from an explicit historical Gregorian calendar, plus identical ASCII year-2567 text under Buddhist and Gregorian calendars.",
+      "database": "fixtures/android_thai_gregorian.db",
+      "database_identity": "synthetic:sport-logger:legacy:android_thai_gregorian:v1",
+      "description": "Android API26/API36 Thai controls across years 2000, 2024, 2032, and 2567 prove ordinary th-TH and explicit Thai digits retain Gregorian calendar semantics without a 543-year conversion.",
       "expected": {
-        "activity_rows": 4,
+        "activity_rows": 6,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "th_TH_#u-nu-thai",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": true,
           "migration_readiness": "ready",
           "per_activity": [
             {
-              "calendar": "buddhist",
+              "calendar": "gregory",
               "legacy_activity_id": 1,
-              "locale_tag": "th-TH-u-nu-thai",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "th-TH",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
-              "locale_tag": "th-TH-u-ca-gregory-nu-thai",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "th-TH",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
-              "calendar": "buddhist",
+              "calendar": "gregory",
               "legacy_activity_id": 3,
-              "locale_tag": "th-TH-u-nu-latn",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "th-TH",
+              "source": "android_api26_api36_formatter_probe"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 4,
-              "locale_tag": "en-US",
-              "source": "pinned_temurin_17_formatter_matrix"
+              "locale_tag": "th-TH",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 5,
+              "locale_tag": "th-TH-u-nu-thai",
+              "source": "android_api26_api36_formatter_probe"
+            },
+            {
+              "calendar": "gregory",
+              "legacy_activity_id": 6,
+              "locale_tag": "th-TH-u-nu-thai",
+              "source": "android_api26_api36_formatter_probe"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
           "partial_sessions": 0,
           "rejected_activity_rows": 0,
           "rejected_track_point_rows": 0,
-          "sessions": 4,
-          "source_activity_rows": 4,
-          "source_track_point_rows": 4,
-          "track_points": 4
+          "sessions": 6,
+          "source_activity_rows": 6,
+          "source_track_point_rows": 6,
+          "track_points": 6
         },
-        "canonical_output_logical_checksum": "7ae2e052e6a4c787adb1344554f541c13818605d77b7285f7f3c1f38d32645d2",
+        "canonical_output_logical_checksum": "03546cb62fa25d2b51062b3ba649c111c79bb46fd5b0c3e946d452b9ce8d7c19",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "th_TH_#u-nu-thai",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": true,
             "migration_readiness": "ready",
             "per_activity": [
               {
-                "calendar": "buddhist",
+                "calendar": "gregory",
                 "legacy_activity_id": 1,
-                "locale_tag": "th-TH-u-nu-thai",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "th-TH",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
-                "locale_tag": "th-TH-u-ca-gregory-nu-thai",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "th-TH",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
-                "calendar": "buddhist",
+                "calendar": "gregory",
                 "legacy_activity_id": 3,
-                "locale_tag": "th-TH-u-nu-latn",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "th-TH",
+                "source": "android_api26_api36_formatter_probe"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 4,
-                "locale_tag": "en-US",
-                "source": "pinned_temurin_17_formatter_matrix"
+                "locale_tag": "th-TH",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 5,
+                "locale_tag": "th-TH-u-nu-thai",
+                "source": "android_api26_api36_formatter_probe"
+              },
+              {
+                "calendar": "gregory",
+                "legacy_activity_id": 6,
+                "locale_tag": "th-TH-u-nu-thai",
+                "source": "android_api26_api36_formatter_probe"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
             "activity_rows_ordered_by_64_bit_id": true,
-            "duplicate_track_point_timestamp_rows": 1,
+            "duplicate_track_point_timestamp_rows": 2,
             "non_monotonic_track_point_timestamp_transitions": 1,
             "track_point_rows_ordered_by_64_bit_id": true
           },
@@ -2259,9 +2411,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "e737a70c5bccef3514e6ad78911686ad0452ec1b6d5c09d53130e8b0163213f7",
-          "database": "af3f4f9c0d6e280686467bf4d83106ddcb88b66ee63d7e9de29639b3cf3234a5",
-          "gps_points": "efb817243910f696b247723ea4dc8a2e597df94303f082ccd5f3349556063c69"
+          "activity": "4ff4b6c30f745524e8b1d677b09971e21d92165ffc78328a67654051347bfbbd",
+          "database": "dc762d3d702717d530add67ec383ed006cbaff5b1e9620c02ef4b9f5713d3c82",
+          "gps_points": "cd13384fee0db0608d46706ad63d5cabd3ed06e9c8b7a2a71e686856b706820c"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -2279,13 +2431,15 @@
           "1": 1,
           "2": 1,
           "3": 1,
-          "4": 1
+          "4": 1,
+          "5": 1,
+          "6": 1
         },
         "representative_values": [
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "expected": "20000229123456",
             "legacy_id": 1,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2293,7 +2447,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "๒๐๒๔๐๗๐๘๐๙๑๑๑๑",
+            "expected": "20240708091011",
             "legacy_id": 2,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2301,7 +2455,7 @@
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "25670708091011",
+            "expected": "20320229235957",
             "legacy_id": 3,
             "storage_type": "text",
             "table": "ACTIVITY"
@@ -2313,6 +2467,22 @@
             "legacy_id": 4,
             "storage_type": "text",
             "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+            "legacy_id": 5,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "legacy_id": 6,
+            "storage_type": "text",
+            "table": "ACTIVITY"
           }
         ],
         "schema_logical_checksum": "5f38f05f8365c78e630dbf3771f627e7d77270de21edf5b69f90d9a039e7936f",
@@ -2320,316 +2490,31 @@
           "activity": {
             "invalid_count": 0,
             "max": "25670708091013",
-            "min": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "min": "20000229123456",
             "null_count": 0,
-            "valid_count": 8
+            "valid_count": 12
           },
           "all": {
             "invalid_count": 0,
             "max": "25670708091013",
-            "min": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "min": "20000229123456",
             "null_count": 0,
-            "valid_count": 12
+            "valid_count": 18
           },
           "track_point": {
             "invalid_count": 0,
             "max": "25670708091011",
-            "min": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            "min": "20000229123456",
             "null_count": 0,
-            "valid_count": 4
+            "valid_count": 6
           }
         },
-        "track_point_rows": 4
+        "track_point_rows": 6
       },
-      "expected_output": "expected/calendar_semantics.json",
-      "name": "calendar_semantics",
+      "expected_output": "expected/android_thai_gregorian.json",
+      "name": "android_thai_gregorian",
       "storage": "standard",
-      "storage_canonical_checksum": "0f7d77c2e3f6b0bfdcc153381b9f1ca100cb3bdcadbdcdba13e5fed5587b1025"
-    },
-    {
-      "android_locale": "th_TH_#u-nu-thai",
-      "artifacts": [
-        {
-          "comparison": "logical_database",
-          "exact_bytes_required": false,
-          "path": "fixtures/calendar_ambiguous.db"
-        }
-      ],
-      "database": "fixtures/calendar_ambiguous.db",
-      "database_identity": "synthetic:sport-logger:legacy:calendar_ambiguous:v1",
-      "description": "Current Thai locale metadata with Thai-digit and ASCII Buddhist-year rows but no durable row-level calendar evidence; the whole migration unit is quarantined without target writes or a receipt.",
-      "expected": {
-        "activity_rows": 2,
-        "canonical_output_logical_checksum": "461370d611216aa41f60d7c3158198f99cbcd351b2361bc8a3fd3471d34a6c9b",
-        "diagnostics": {
-          "calendar": {
-            "ambiguous_activity_ids": [
-              1,
-              2
-            ],
-            "current_android_locale": "th_TH_#u-nu-thai",
-            "current_locale_used_as_row_evidence": false,
-            "database_migration_unit_policy": "any_ambiguous_activity_quarantines_entire_source_database",
-            "evidenced_activity_ids": [],
-            "historical_locale_changes_possible": true,
-            "migration_readiness": "blocked",
-            "per_activity": [
-              {
-                "evidence": null,
-                "legacy_activity_id": 1,
-                "state": "calendar_ambiguous"
-              },
-              {
-                "evidence": null,
-                "legacy_activity_id": 2,
-                "state": "calendar_ambiguous"
-              }
-            ],
-            "reason": "at_least_one_activity_lacks_durable_calendar_evidence",
-            "state": "calendar_ambiguous"
-          },
-          "data_state": "calendar_ambiguous",
-          "schema": {
-            "android_metadata": {
-              "row_count": 1,
-              "schema_errors": [],
-              "state": "valid",
-              "storage_types": [
-                "text"
-              ],
-              "table_present": true,
-              "valid_locale_rows": 1
-            },
-            "business_tables_present": [
-              "ACTIVITY",
-              "GPS_POINTS"
-            ],
-            "migration_readiness": "ready",
-            "missing_business_tables": [],
-            "platform_tables_present": [
-              "android_metadata"
-            ],
-            "schema_errors": [],
-            "sqlite_internal_schema_objects": [
-              "table:sqlite_sequence"
-            ],
-            "state": "complete",
-            "unexpected_schema_objects": [],
-            "unexpected_sqlite_internal_schema_objects": [],
-            "unexpected_tables": []
-          }
-        },
-        "logical_checksums": {
-          "activity": "49d23d19198d1c73c9e23674a11f9240674db147c54e10d2996f0f01f4328322",
-          "database": "0322f0c5a79222c9c5af0ff9076ca101fb1de1a2cc4cbf1345fc24c27d12b1bb",
-          "gps_points": "18c632920f2974733d203b384b84eb09f29425c2e94cce0c2f68c8516db31ae8"
-        },
-        "migration_expectations": {
-          "reason": "calendar_ambiguous",
-          "receipt_write_attempted": false,
-          "receipt_written": false,
-          "recovery_path": "user_supplied_durable_per_activity_calendar_evidence",
-          "source_database_retained": true,
-          "source_rows_read": 4,
-          "source_text_retained": true,
-          "status": "blocked",
-          "target_rows_written": 0,
-          "target_write_attempted": false
-        },
-        "physical_orphan_track_points": 0,
-        "platform_metadata": {
-          "android_metadata": {
-            "business_data": false,
-            "rows": [
-              {
-                "locale": "th_TH_#u-nu-thai",
-                "storage_type": "text"
-              }
-            ]
-          }
-        },
-        "points_per_activity": {
-          "1": 1,
-          "2": 1
-        },
-        "quarantine": {
-          "ambiguous_activities": 2,
-          "evidenced_activities": 0,
-          "quarantined_activities": 2,
-          "quarantined_track_points": 2,
-          "source_activity_rows": 2,
-          "source_track_point_rows": 2
-        },
-        "representative_values": [
-          {
-            "column": "GMTSTART",
-            "comparison": "exact",
-            "expected": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
-            "legacy_id": 1,
-            "storage_type": "text",
-            "table": "ACTIVITY"
-          },
-          {
-            "column": "GMTSTART",
-            "comparison": "exact",
-            "expected": "25670708091011",
-            "legacy_id": 2,
-            "storage_type": "text",
-            "table": "ACTIVITY"
-          }
-        ],
-        "schema_logical_checksum": "5f38f05f8365c78e630dbf3771f627e7d77270de21edf5b69f90d9a039e7936f",
-        "track_point_rows": 2
-      },
-      "expected_output": "expected/calendar_ambiguous.json",
-      "name": "calendar_ambiguous",
-      "storage": "standard",
-      "storage_canonical_checksum": "d416e794d63ffa092645eec41d1edd04a013d6c758b4be5d6ca41cc76d6edd25"
-    },
-    {
-      "android_locale": "th_TH_#u-nu-thai",
-      "artifacts": [
-        {
-          "comparison": "logical_database",
-          "exact_bytes_required": false,
-          "path": "fixtures/calendar_mixed_evidence.db"
-        }
-      ],
-      "database": "fixtures/calendar_mixed_evidence.db",
-      "database_identity": "synthetic:sport-logger:legacy:calendar_mixed_evidence:v1",
-      "description": "One durably evidenced Gregorian activity and one calendar-ambiguous activity in the same source database; database-wide policy quarantines both with zero target writes and no receipt.",
-      "expected": {
-        "activity_rows": 2,
-        "canonical_output_logical_checksum": "ad90fa7b23139a57181b149eb46223666cc64f53076a38084dbcb291c1d8fb07",
-        "diagnostics": {
-          "calendar": {
-            "ambiguous_activity_ids": [
-              2
-            ],
-            "current_android_locale": "th_TH_#u-nu-thai",
-            "current_locale_used_as_row_evidence": false,
-            "database_migration_unit_policy": "any_ambiguous_activity_quarantines_entire_source_database",
-            "evidenced_activity_ids": [
-              1
-            ],
-            "historical_locale_changes_possible": true,
-            "migration_readiness": "blocked",
-            "per_activity": [
-              {
-                "evidence": {
-                  "calendar": "gregory",
-                  "locale_tag": "en-US",
-                  "source": "pinned_temurin_17_formatter_matrix"
-                },
-                "legacy_activity_id": 1,
-                "state": "durably_evidenced"
-              },
-              {
-                "evidence": null,
-                "legacy_activity_id": 2,
-                "state": "calendar_ambiguous"
-              }
-            ],
-            "reason": "at_least_one_activity_lacks_durable_calendar_evidence",
-            "state": "calendar_ambiguous"
-          },
-          "data_state": "calendar_ambiguous",
-          "schema": {
-            "android_metadata": {
-              "row_count": 1,
-              "schema_errors": [],
-              "state": "valid",
-              "storage_types": [
-                "text"
-              ],
-              "table_present": true,
-              "valid_locale_rows": 1
-            },
-            "business_tables_present": [
-              "ACTIVITY",
-              "GPS_POINTS"
-            ],
-            "migration_readiness": "ready",
-            "missing_business_tables": [],
-            "platform_tables_present": [
-              "android_metadata"
-            ],
-            "schema_errors": [],
-            "sqlite_internal_schema_objects": [
-              "table:sqlite_sequence"
-            ],
-            "state": "complete",
-            "unexpected_schema_objects": [],
-            "unexpected_sqlite_internal_schema_objects": [],
-            "unexpected_tables": []
-          }
-        },
-        "logical_checksums": {
-          "activity": "84fed2530b23a59a57a3eef625e275d8830212478b3a3450fc3976f66ec42ac9",
-          "database": "62870a23d19852a7941f1755fb9a016cc58102555fab2f4695642fe9a146e08c",
-          "gps_points": "9ed2498d7537a8c44c5f1f831b05ec0e8f82e6e4b6b976806ff2c0bfeea7c5ae"
-        },
-        "migration_expectations": {
-          "reason": "calendar_ambiguous",
-          "receipt_write_attempted": false,
-          "receipt_written": false,
-          "recovery_path": "user_supplied_durable_per_activity_calendar_evidence",
-          "source_database_retained": true,
-          "source_rows_read": 4,
-          "source_text_retained": true,
-          "status": "blocked",
-          "target_rows_written": 0,
-          "target_write_attempted": false
-        },
-        "physical_orphan_track_points": 0,
-        "platform_metadata": {
-          "android_metadata": {
-            "business_data": false,
-            "rows": [
-              {
-                "locale": "th_TH_#u-nu-thai",
-                "storage_type": "text"
-              }
-            ]
-          }
-        },
-        "points_per_activity": {
-          "1": 1,
-          "2": 1
-        },
-        "quarantine": {
-          "ambiguous_activities": 1,
-          "evidenced_activities": 1,
-          "quarantined_activities": 2,
-          "quarantined_track_points": 2,
-          "source_activity_rows": 2,
-          "source_track_point_rows": 2
-        },
-        "representative_values": [
-          {
-            "column": "GMTSTART",
-            "comparison": "exact",
-            "expected": "20240708091011",
-            "legacy_id": 1,
-            "storage_type": "text",
-            "table": "ACTIVITY"
-          },
-          {
-            "column": "GMTSTART",
-            "comparison": "exact",
-            "expected": "25670708091011",
-            "legacy_id": 2,
-            "storage_type": "text",
-            "table": "ACTIVITY"
-          }
-        ],
-        "schema_logical_checksum": "5f38f05f8365c78e630dbf3771f627e7d77270de21edf5b69f90d9a039e7936f",
-        "track_point_rows": 2
-      },
-      "expected_output": "expected/calendar_mixed_evidence.json",
-      "name": "calendar_mixed_evidence",
-      "storage": "standard",
-      "storage_canonical_checksum": "d4658afc23c590b58019370d2ce9e487a9e24d151a623c5485420fca465c2cc1"
+      "storage_canonical_checksum": "f5b50de391146cfa1982e6fe8cc7c69db7d14ea0e63a2a5f818e6e5b4fc720e3"
     },
     {
       "android_locale": "en_US",
@@ -2646,6 +2531,8 @@
       "expected": {
         "activity_rows": 1,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -2655,10 +2542,12 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 1,
@@ -2670,9 +2559,11 @@
           "source_track_point_rows": 2,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "9d9e46adf162bf745cd008e2a4e116ad9be2186c5f5f2a43f7330f7af1b78f5f",
+        "canonical_output_logical_checksum": "5a1ec0882c8e5746e65663aad8157b4bf05a0c331c9ff23b3895477366ad7084",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -2682,10 +2573,12 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -2802,6 +2695,8 @@
       "expected": {
         "activity_rows": 2,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -2811,16 +2706,18 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -2832,9 +2729,11 @@
           "source_track_point_rows": 3,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "90a6771abccc5f369f7dde8fa195dff4ac06fc2e268dbbadb614dbf7f1acfd6f",
+        "canonical_output_logical_checksum": "c07d8b1807d682b4ca4416f5291a841f32f2f71897e5c99124dd83ad92ed7193",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -2844,16 +2743,18 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -3192,6 +3093,8 @@
       "expected": {
         "activity_rows": 3,
         "calendar_evidence": {
+          "calendar": "gregory",
+          "calendar_class": "java.util.GregorianCalendar",
           "current_android_locale": "en_US",
           "current_locale_used_as_row_evidence": false,
           "historical_locale_change": false,
@@ -3201,22 +3104,24 @@
               "calendar": "gregory",
               "legacy_activity_id": 1,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 2,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             },
             {
               "calendar": "gregory",
               "legacy_activity_id": 3,
               "locale_tag": "en-US",
-              "source": "synthetic_fixture_generation_record"
+              "source": "android_java_text_gregorian_invariant"
             }
           ],
-          "state": "durably_evidenced"
+          "platform_invariant": true,
+          "source_platform": "Android java.text.SimpleDateFormat",
+          "state": "android_gregorian"
         },
         "canonical": {
           "orphan_track_points": 0,
@@ -3228,9 +3133,11 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "e3c47141a1276d07a9fa0a831fa20ac35d64bceae5bdea2d53f1c1103e8366db",
+        "canonical_output_logical_checksum": "256c75db00d8e4a953618df205cb59afda2f638c23a198f49c22b1a29f80b160",
         "diagnostics": {
           "calendar": {
+            "calendar": "gregory",
+            "calendar_class": "java.util.GregorianCalendar",
             "current_android_locale": "en_US",
             "current_locale_used_as_row_evidence": false,
             "historical_locale_change": false,
@@ -3240,22 +3147,24 @@
                 "calendar": "gregory",
                 "legacy_activity_id": 1,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 2,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               },
               {
                 "calendar": "gregory",
                 "legacy_activity_id": 3,
                 "locale_tag": "en-US",
-                "source": "synthetic_fixture_generation_record"
+                "source": "android_java_text_gregorian_invariant"
               }
             ],
-            "state": "durably_evidenced"
+            "platform_invariant": true,
+            "source_platform": "Android java.text.SimpleDateFormat",
+            "state": "android_gregorian"
           },
           "data_state": "contains_business_rows",
           "ordering": {
@@ -3297,7 +3206,7 @@
         "idempotency": {
           "canonical_insert_rows": 9,
           "expected_sessions": 3,
-          "expected_state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
+          "expected_state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d",
           "expected_track_points": 6,
           "scenarios": {
             "interrupt_after_partial_point_prefix": {
@@ -3345,7 +3254,7 @@
               "replay_attempts_cover_canonical_set": true,
               "rerun_record_count": 9,
               "rerun_records_exactly_canonical": true,
-              "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+              "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
             },
             "interrupt_after_session_row": {
               "canonical_record_count": 9,
@@ -3392,7 +3301,7 @@
               "replay_attempts_cover_canonical_set": true,
               "rerun_record_count": 9,
               "rerun_records_exactly_canonical": true,
-              "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+              "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
             },
             "receipt_gap_replay": {
               "committed_rows": {
@@ -3434,7 +3343,7 @@
                 "sessions": 3,
                 "track_points": 6
               },
-              "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
+              "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d"
             },
             "same_run_duplicates": {
               "attempted_rows": 18,
@@ -3453,7 +3362,7 @@
               "receipt_completed": true,
               "receipt_present": true,
               "sessions": 3,
-              "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
+              "state_logical_checksum": "4e60e9d8fb3c3fa971afe4aca587793b06b62fc57924eb5a4b35990f45cc831d",
               "track_points": 6
             }
           }
@@ -3532,24 +3441,45 @@
   ],
   "format_version": 1,
   "formatter_oracle": {
-    "available_locale_count": 1017,
+    "calendar_class": "java.util.GregorianCalendar",
+    "calendar_type": "gregory",
     "candidate_fixture": "formatter_digit_blocks",
-    "java_runtime_version": "17.0.20+8",
-    "java_vendor": "Eclipse Adoptium",
-    "locale_rows_sha256": "5f270f635e4600e0fedd1f7501ad2803589bbefd94e83cf26310604608baac28",
-    "matrix": "LocaleTimestampProbe.expected.tsv",
-    "matrix_sha256": "9078af06e4a3683ae26a266e8d8c7d95b9861fddb49f3edfe785b6d7b4737f99",
+    "evidence": [
+      {
+        "api_level": 26,
+        "available_locale_count": 710,
+        "file": "AndroidLocaleTimestampProbe.api26.tsv",
+        "locale_rows_sha256": "12ff0cc92e4de3e03534b7c42b502b99e8d7ac588c752b263824dc4e6c8467c6",
+        "release": "8.0.0",
+        "sha256": "c0132a43f9a23a2a2856e848e7ee5d10f5185932043f202bbd3016fa95f7a23d"
+      },
+      {
+        "api_level": 36,
+        "available_locale_count": 881,
+        "file": "AndroidLocaleTimestampProbe.api36.tsv",
+        "locale_rows_sha256": "b53a8fb0f2686af24f282eafaaf82b43dd6f7ee4b4b311c1820d130cb7f4fd62",
+        "release": "16",
+        "sha256": "eb060dc423c9eb7a29221205faa0b576c550eab1d5c5b2eef38825cabad24810"
+      }
+    ],
+    "legacy_pattern": "yyyyMMddHHmmss",
+    "platform": "Android",
+    "platform_union_policy": "union_of_api26_api36_available_locale_outputs_plus_probed_thai_numbering_control",
+    "probe_source": "AndroidLocaleTimestampProbeTest.java",
+    "probe_source_sha256": "dc9cec0cdf72e975fe19ed97779ba1fe75563fc94574cc2c02b446920f4c0998",
     "source_emittable_digit_zero_code_points": [
       "U+0030",
       "U+0660",
       "U+06F0",
+      "U+07C0",
       "U+0966",
       "U+09E6",
       "U+0E50",
       "U+0F20",
       "U+1040",
       "U+1C50"
-    ]
+    ],
+    "writer": "java.text.SimpleDateFormat"
   },
   "logical_checksum_algorithm": "SHA-256 over ordered table rows; each SQLite value is type-tagged, REAL values use exact IEEE-754 float.hex(), and table hashes are combined in ACTIVITY/GPS_POINTS order",
   "source_schema": {

@@ -1,0 +1,333 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:android_thai_gregorian:v1",
+  "diagnostics": {
+    "calendar": {
+      "calendar": "gregory",
+      "calendar_class": "java.util.GregorianCalendar",
+      "current_android_locale": "th_TH_#u-nu-thai",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": true,
+      "migration_readiness": "ready",
+      "per_activity": [
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 1,
+          "locale_tag": "th-TH",
+          "source": "android_api26_api36_formatter_probe"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 2,
+          "locale_tag": "th-TH",
+          "source": "android_api26_api36_formatter_probe"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 3,
+          "locale_tag": "th-TH",
+          "source": "android_api26_api36_formatter_probe"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 4,
+          "locale_tag": "th-TH",
+          "source": "android_api26_api36_formatter_probe"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 5,
+          "locale_tag": "th-TH-u-nu-thai",
+          "source": "android_api26_api36_formatter_probe"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 6,
+          "locale_tag": "th-TH-u-nu-thai",
+          "source": "android_api26_api36_formatter_probe"
+        }
+      ],
+      "platform_invariant": true,
+      "source_platform": "Android java.text.SimpleDateFormat",
+      "state": "android_gregorian"
+    },
+    "data_state": "contains_business_rows",
+    "ordering": {
+      "activity_rows_ordered_by_64_bit_id": true,
+      "duplicate_track_point_timestamp_rows": 2,
+      "non_monotonic_track_point_timestamp_transitions": 1,
+      "track_point_rows_ordered_by_64_bit_id": true
+    },
+    "schema": {
+      "android_metadata": {
+        "row_count": 1,
+        "schema_errors": [],
+        "state": "valid",
+        "storage_types": [
+          "text"
+        ],
+        "table_present": true,
+        "valid_locale_rows": 1
+      },
+      "business_tables_present": [
+        "ACTIVITY",
+        "GPS_POINTS"
+      ],
+      "migration_readiness": "ready",
+      "missing_business_tables": [],
+      "platform_tables_present": [
+        "android_metadata"
+      ],
+      "schema_errors": [],
+      "sqlite_internal_schema_objects": [
+        "table:sqlite_sequence"
+      ],
+      "state": "complete",
+      "unexpected_schema_objects": [],
+      "unexpected_sqlite_internal_schema_objects": [],
+      "unexpected_tables": []
+    }
+  },
+  "fixture": "android_thai_gregorian",
+  "format_version": 1,
+  "idempotency": null,
+  "migration_expectations": null,
+  "orphan_track_points": [],
+  "output_kind": "canonical",
+  "rejected_rows": [],
+  "sessions": [
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH emits and parses Gregorian leap day 2000.",
+      "deterministic_id": "632825f1-665e-56d3-95de-da3ea2addffc",
+      "distance": 120.0,
+      "gmt_end": "20000229123458",
+      "gmt_end_utc": "2000-02-29T12:34:58Z",
+      "gmt_start": "20000229123456",
+      "gmt_start_utc": "2000-02-29T12:34:56Z",
+      "legacy_id": 1,
+      "name": "Synthetic Ordinary Thai Year 2000",
+      "pace": 16.666666666666668,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:1",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH emits Gregorian year 2024 with ASCII digits.",
+      "deterministic_id": "d1d0df44-a0d8-554b-aac3-16c32afa51c2",
+      "distance": 121.0,
+      "gmt_end": "20240708091013",
+      "gmt_end_utc": "2024-07-08T09:10:13Z",
+      "gmt_start": "20240708091011",
+      "gmt_start_utc": "2024-07-08T09:10:11Z",
+      "legacy_id": 2,
+      "name": "Synthetic Ordinary Thai Year 2024",
+      "pace": 16.52892561983471,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:2",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH emits and parses Gregorian leap day 2032.",
+      "deterministic_id": "b75340f0-2781-534e-b1c2-845660a48e10",
+      "distance": 122.0,
+      "gmt_end": "20320229235959",
+      "gmt_end_utc": "2032-02-29T23:59:59Z",
+      "gmt_start": "20320229235957",
+      "gmt_start_utc": "2032-02-29T23:59:57Z",
+      "legacy_id": 3,
+      "name": "Synthetic Ordinary Thai Year 2032",
+      "pace": 16.39344262295082,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:3",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH preserves valid Gregorian year 2567 rather than subtracting 543.",
+      "deterministic_id": "9bbfef70-e145-5d0b-a4b0-4d876dba1773",
+      "distance": 123.0,
+      "gmt_end": "25670708091013",
+      "gmt_end_utc": "2567-07-08T09:10:13Z",
+      "gmt_start": "25670708091011",
+      "gmt_start_utc": "2567-07-08T09:10:11Z",
+      "legacy_id": 4,
+      "name": "Synthetic Ordinary Thai Year 2567",
+      "pace": 16.260162601626018,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:4",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH-u-nu-thai changes digits but retains Gregorian year 2024.",
+      "deterministic_id": "daca1d07-7801-5671-ac15-17c1247717b2",
+      "distance": 124.0,
+      "gmt_end": "๒๐๒๔๐๗๐๘๐๙๑๐๑๓",
+      "gmt_end_utc": "2024-07-08T09:10:13Z",
+      "gmt_start": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+      "gmt_start_utc": "2024-07-08T09:10:11Z",
+      "legacy_id": 5,
+      "name": "Synthetic Thai Digits Year 2024",
+      "pace": 16.129032258064516,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:5",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH-u-nu-thai"
+    },
+    {
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "description": "Android th-TH-u-nu-thai preserves Gregorian year 2567 without a Buddhist-calendar conversion.",
+      "deterministic_id": "29a27d13-3592-58d8-b74a-3a3654926d17",
+      "distance": 125.0,
+      "gmt_end": "๒๕๖๗๐๗๐๘๐๙๑๐๑๓",
+      "gmt_end_utc": "2567-07-08T09:10:13Z",
+      "gmt_start": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+      "gmt_start_utc": "2567-07-08T09:10:11Z",
+      "legacy_id": 6,
+      "name": "Synthetic Thai Digits Year 2567",
+      "pace": 16.0,
+      "partial": false,
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:ACTIVITY:6",
+      "time": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH-u-nu-thai"
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 6,
+    "source_activity_rows": 6,
+    "source_track_point_rows": 6,
+    "track_points": 6
+  },
+  "track_points": [
+    {
+      "accuracy": 3.0,
+      "activity_legacy_id": 1,
+      "altitude": 5.0,
+      "bearing": 90.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "b5431d34-f8a8-5dc9-b671-7c4b96474475",
+      "gmt_timestamp": "20000229123456",
+      "gmt_timestamp_utc": "2000-02-29T12:34:56Z",
+      "heart_rate": 120.0,
+      "latitude": 13.7563,
+      "legacy_id": 1,
+      "longitude": 100.5018,
+      "session_id": "632825f1-665e-56d3-95de-da3ea2addffc",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:1",
+      "speed": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "accuracy": 3.125,
+      "activity_legacy_id": 2,
+      "altitude": 5.125,
+      "bearing": 91.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "057bd124-99eb-59c3-8eb2-9b1f887ca73d",
+      "gmt_timestamp": "20240708091011",
+      "gmt_timestamp_utc": "2024-07-08T09:10:11Z",
+      "heart_rate": 121.0,
+      "latitude": 13.7564,
+      "legacy_id": 2,
+      "longitude": 100.5019,
+      "session_id": "d1d0df44-a0d8-554b-aac3-16c32afa51c2",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:2",
+      "speed": 2.125,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "accuracy": 3.25,
+      "activity_legacy_id": 3,
+      "altitude": 5.25,
+      "bearing": 92.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "ac5a6e1c-d471-5beb-9cb6-f7593a07b2d3",
+      "gmt_timestamp": "20320229235957",
+      "gmt_timestamp_utc": "2032-02-29T23:59:57Z",
+      "heart_rate": 122.0,
+      "latitude": 13.7565,
+      "legacy_id": 3,
+      "longitude": 100.502,
+      "session_id": "b75340f0-2781-534e-b1c2-845660a48e10",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:3",
+      "speed": 2.25,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "accuracy": 3.375,
+      "activity_legacy_id": 4,
+      "altitude": 5.375,
+      "bearing": 93.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "36d04ade-bcc2-5214-a400-3977037ca4ff",
+      "gmt_timestamp": "25670708091011",
+      "gmt_timestamp_utc": "2567-07-08T09:10:11Z",
+      "heart_rate": 123.0,
+      "latitude": 13.7566,
+      "legacy_id": 4,
+      "longitude": 100.5021,
+      "session_id": "9bbfef70-e145-5d0b-a4b0-4d876dba1773",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:4",
+      "speed": 2.375,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH"
+    },
+    {
+      "accuracy": 3.5,
+      "activity_legacy_id": 5,
+      "altitude": 5.5,
+      "bearing": 94.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "54047bc3-f423-58a9-82ce-b0dd76291c44",
+      "gmt_timestamp": "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+      "gmt_timestamp_utc": "2024-07-08T09:10:11Z",
+      "heart_rate": 124.0,
+      "latitude": 13.7567,
+      "legacy_id": 5,
+      "longitude": 100.5022,
+      "session_id": "daca1d07-7801-5671-ac15-17c1247717b2",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:5",
+      "speed": 2.5,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH-u-nu-thai"
+    },
+    {
+      "accuracy": 3.625,
+      "activity_legacy_id": 6,
+      "altitude": 5.625,
+      "bearing": 95.0,
+      "calendar_evidence_source": "android_api26_api36_formatter_probe",
+      "deterministic_id": "c9149b31-43ec-5918-8f24-d97ee9bfd6f4",
+      "gmt_timestamp": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+      "gmt_timestamp_utc": "2567-07-08T09:10:11Z",
+      "heart_rate": 125.0,
+      "latitude": 13.7568,
+      "legacy_id": 6,
+      "longitude": 100.5023,
+      "session_id": "29a27d13-3592-58d8-b74a-3a3654926d17",
+      "source_key": "synthetic:sport-logger:legacy:android_thai_gregorian:v1:GPS_POINTS:6",
+      "speed": 2.625,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "th-TH-u-nu-thai"
+    }
+  ]
+}
