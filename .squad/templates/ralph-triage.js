@@ -58,7 +58,7 @@ function normalizeEol(content) {
 function slugify(text) { return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
 function parseRoutingRules(routingMd) {
-  const table = parseTableSection(routingMd, /^##\s*work\s*type\s*(?:→|->)\s*agent\b/i);
+  const table = parseTableSection(routingMd, /^##\s*routing\s*table\b/i);
   if (!table) return [];
 
   const workTypeIndex = findColumnIndex(table.headers, ['work type', 'type']);
@@ -71,12 +71,12 @@ function parseRoutingRules(routingMd) {
   for (const row of table.rows) {
     const workType = cleanCell(row[workTypeIndex] || '');
     const agentName = cleanCell(row[agentIndex] || '');
-    const keywords = splitKeywords(examplesIndex >= 0 ? row[examplesIndex] : '');
     if (!workType || !agentName) continue;
-    rules.push({ workType, agentName, keywords });
+    const lexicon = buildRoutingLexicon(workType, examplesIndex >= 0 ? row[examplesIndex] : '');
+    rules.push({ workType, agentName, ...lexicon });
   }
 
-  return rules;
+  return suppressCrossRuleExampleTokenCollisions(rules);
 }
 
 function parseModuleOwnership(routingMd) {
@@ -114,7 +114,7 @@ function parseRoster(teamMd) {
   const roleIndex = findColumnIndex(table.headers, ['role']);
   if (nameIndex < 0 || roleIndex < 0) return [];
 
-  const excluded = new Set(['scribe', 'ralph']);
+  const excluded = new Set(['scribe']);
   const members = [];
 
   for (const row of table.rows) {
@@ -131,6 +131,24 @@ function parseRoster(teamMd) {
   }
 
   return members;
+}
+
+function parseOwnerLabels(teamMd) {
+  const ownerLabels = new Set(parseRoster(teamMd).map((member) => member.label.toLowerCase()));
+  const codingAgentTable = parseTableSection(teamMd, /^##\s*coding\s*agent\b/i);
+  if (!codingAgentTable) return ownerLabels;
+
+  const nameIndex = findColumnIndex(codingAgentTable.headers, ['name']);
+  if (nameIndex < 0) return ownerLabels;
+
+  for (const row of codingAgentTable.rows) {
+    const name = normalizeName(row[nameIndex] || '').replace(/^@/, '');
+    if (name === 'copilot') {
+      ownerLabels.add('squad:copilot');
+    }
+  }
+
+  return ownerLabels;
 }
 
 function triageIssue(issue, rules, modules, roster) {
@@ -166,11 +184,14 @@ function triageIssue(issue, rules, modules, roster) {
   if (bestRule) {
     const agent = findMember(bestRule.rule.agentName, roster);
     if (agent) {
+      const decisiveSignals = bestRule.matchedSignals.filter((signal) => signal.rank === bestRule.topRank);
       return {
         agent,
-        reason: `Matched routing keyword(s): ${bestRule.matchedKeywords.join(', ')}`,
+        reason: `Matched routing ${decisiveSignals.length === 1 ? 'signal' : 'signals'}: ${decisiveSignals
+          .map((signal) => signal.description)
+          .join('; ')}`,
         source: 'routing-rule',
-        confidence: bestRule.matchedKeywords.length >= 2 ? 'high' : 'medium',
+        confidence: bestRule.topRank >= 2 || bestRule.matchedSignals.length >= 2 ? 'high' : 'medium',
       };
     }
   }
@@ -261,8 +282,112 @@ function splitKeywords(examplesCell) {
   if (!examplesCell) return [];
   return examplesCell
     .split(',')
-    .map((keyword) => cleanCell(keyword))
+    .map((keyword) => cleanCell(keyword).replace(/^(?:and|or)\s+/i, ''))
     .filter((keyword) => keyword.length > 0);
+}
+
+const ROUTING_STOP_WORDS = new Set(['a', 'an', 'and', 'for', 'of', 'or', 'the', 'to', 'with', 'work']);
+const ROUTING_LEXICAL_VARIANTS = new Map([
+  ['architectural', 'architecture'],
+  ['integrations', 'integration'],
+]);
+const NON_ROUTING_CONTEXT_TOKENS = new Set([
+  'activity',
+  'android',
+  'app',
+  'application',
+  'device',
+  'gradle',
+  'health',
+  'kotlin',
+  'maintenance',
+  'mobile',
+  'os',
+  'phone',
+  'platform',
+  'repository',
+  'watch',
+  'wear',
+]);
+
+function uniqueLexicalValues(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function routingTokens(text) {
+  const normalized = normalizeLexicalText(text);
+  if (!normalized) return [];
+  return normalized
+    .split(' ')
+    .filter((token) =>
+      token.length > 1 &&
+      !ROUTING_STOP_WORDS.has(token) &&
+      !NON_ROUTING_CONTEXT_TOKENS.has(token));
+}
+
+function buildRoutingLexicon(workType, examplesCell) {
+  const workTypePhrase = normalizeLexicalText(cleanCell(workType));
+  const examplePhrases = uniqueLexicalValues(
+    splitKeywords(examplesCell).map((example) => normalizeLexicalText(example)),
+  );
+  const workTypeTokens = uniqueLexicalValues(routingTokens(workTypePhrase));
+  const exampleTokens = uniqueLexicalValues(examplePhrases.flatMap((phrase) => routingTokens(phrase)))
+    .filter((token) => !workTypeTokens.includes(token));
+
+  return {
+    workTypePhrase,
+    examplePhrases,
+    workTypeTokens,
+    exampleTokens,
+    keywords: uniqueLexicalValues([
+      workTypePhrase,
+      ...workTypeTokens,
+      ...examplePhrases,
+      ...exampleTokens,
+    ]),
+  };
+}
+
+function suppressCrossRuleExampleTokenCollisions(rules) {
+  const primaryWorkTypeTokens = new Set(rules.flatMap((rule) => rule.workTypeTokens));
+
+  return rules.map((rule) => {
+    const exampleTokens = rule.exampleTokens.filter((token) => !primaryWorkTypeTokens.has(token));
+    return {
+      ...rule,
+      exampleTokens,
+      keywords: uniqueLexicalValues([
+        rule.workTypePhrase,
+        ...rule.workTypeTokens,
+        ...rule.examplePhrases,
+        ...exampleTokens,
+      ]),
+    };
+  });
+}
+
+function normalizeLexicalText(text) {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9@]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return '';
+  return normalized
+    .split(' ')
+    .map((token) => ROUTING_LEXICAL_VARIANTS.get(token) || token)
+    .join(' ');
+}
+
+function lexicalTokenSet(text) {
+  const normalized = normalizeLexicalText(text);
+  return new Set(normalized ? normalized.split(' ') : []);
+}
+
+function matchesRoutingPhrase(normalizedIssueText, phrase) {
+  const normalizedPhrase = normalizeLexicalText(phrase);
+  return normalizedPhrase.length > 0 &&
+    ` ${normalizedIssueText} `.includes(` ${normalizedPhrase} `);
 }
 
 function normalizeOptionalOwner(owner) {
@@ -336,20 +461,65 @@ function findBestModuleMatch(issueText, modules) {
 
 function findBestRuleMatch(issueText, rules) {
   let best = null;
-  let bestScore = 0;
+  const normalizedIssueText = normalizeLexicalText(issueText);
+  const issueTokens = lexicalTokenSet(normalizedIssueText);
 
   for (const rule of rules) {
-    const matchedKeywords = rule.keywords
-      .map((keyword) => keyword.toLowerCase())
-      .filter((keyword) => keyword.length > 0 && issueText.includes(keyword));
+    const matchedSignals = [];
+    const addSignal = (rank, weight, description, value) => {
+      matchedSignals.push({ rank, weight, description, value });
+    };
 
-    if (matchedKeywords.length === 0) continue;
+    if (normalizedIssueText === rule.workTypePhrase) {
+      addSignal(4, 4000 + rule.workTypePhrase.length, `exact work type "${rule.workType}"`, rule.workTypePhrase);
+    } else if (matchesRoutingPhrase(normalizedIssueText, rule.workTypePhrase)) {
+      addSignal(3, 3000 + rule.workTypePhrase.length, `work-type phrase "${rule.workTypePhrase}"`, rule.workTypePhrase);
+    }
 
-    const score =
-      matchedKeywords.length * 100 + matchedKeywords.reduce((sum, keyword) => sum + keyword.length, 0);
-    if (score > bestScore) {
-      best = { rule, matchedKeywords };
-      bestScore = score;
+    for (const phrase of rule.examplePhrases) {
+      if (matchesRoutingPhrase(normalizedIssueText, phrase)) {
+        addSignal(2, 2000 + phrase.length, `example phrase "${phrase}"`, phrase);
+      }
+    }
+
+    const matchedPhraseTokens = new Set(
+      matchedSignals
+        .filter((signal) => signal.rank >= 2)
+        .flatMap((signal) => normalizeLexicalText(signal.value).split(' ')),
+    );
+    for (const token of rule.workTypeTokens) {
+      if (issueTokens.has(token) && !matchedPhraseTokens.has(token)) {
+        addSignal(1, 100 + token.length, `work-type token "${token}"`, token);
+      }
+    }
+    for (const token of rule.exampleTokens) {
+      if (issueTokens.has(token) && !matchedPhraseTokens.has(token)) {
+        addSignal(1, 50 + token.length, `example token "${token}"`, token);
+      }
+    }
+
+    if (matchedSignals.length === 0) continue;
+
+    const candidate = {
+      rule,
+      matchedSignals,
+      topRank: Math.max(...matchedSignals.map((signal) => signal.rank)),
+      score: matchedSignals.reduce((sum, signal) => sum + signal.weight, 0),
+      specificity: matchedSignals.reduce((sum, signal) => sum + signal.value.length, 0),
+    };
+    if (
+      !best ||
+      candidate.topRank > best.topRank ||
+      (candidate.topRank === best.topRank && candidate.score > best.score) ||
+      (candidate.topRank === best.topRank &&
+        candidate.score === best.score &&
+        candidate.matchedSignals.length > best.matchedSignals.length) ||
+      (candidate.topRank === best.topRank &&
+        candidate.score === best.score &&
+        candidate.matchedSignals.length === best.matchedSignals.length &&
+        candidate.specificity > best.specificity)
+    ) {
+      best = candidate;
     }
   }
 
@@ -357,26 +527,28 @@ function findBestRuleMatch(issueText, rules) {
 }
 
 function findRoleKeywordMatch(issueText, roster) {
+  const issueTokens = lexicalTokenSet(issueText);
+
   for (const member of roster) {
-    const role = member.role.toLowerCase();
+    const roleTokens = lexicalTokenSet(member.role);
 
     if (
-      (role.includes('frontend') || role.includes('ui')) &&
-      (issueText.includes('ui') || issueText.includes('frontend') || issueText.includes('css'))
+      (roleTokens.has('frontend') || roleTokens.has('ui')) &&
+      (issueTokens.has('ui') || issueTokens.has('frontend') || issueTokens.has('css'))
     ) {
       return { agent: member, reason: 'Matched frontend/UI role keywords' };
     }
 
     if (
-      (role.includes('backend') || role.includes('api') || role.includes('server')) &&
-      (issueText.includes('api') || issueText.includes('backend') || issueText.includes('database'))
+      (roleTokens.has('backend') || roleTokens.has('api') || roleTokens.has('server')) &&
+      (issueTokens.has('api') || issueTokens.has('backend') || issueTokens.has('database'))
     ) {
       return { agent: member, reason: 'Matched backend/API role keywords' };
     }
 
     if (
-      (role.includes('test') || role.includes('qa')) &&
-      (issueText.includes('test') || issueText.includes('bug') || issueText.includes('fix'))
+      (roleTokens.has('test') || roleTokens.has('qa')) &&
+      (issueTokens.has('test') || issueTokens.has('bug') || issueTokens.has('fix'))
     ) {
       return { agent: member, reason: 'Matched testing/QA role keywords' };
     }
@@ -388,8 +560,8 @@ function findRoleKeywordMatch(issueText, roster) {
 function findLeadFallback(roster) {
   return (
     roster.find((member) => {
-      const role = member.role.toLowerCase();
-      return role.includes('lead') || role.includes('architect');
+      const roleTokens = lexicalTokenSet(member.role);
+      return roleTokens.has('lead') || roleTokens.has('architect');
     }) || null
   );
 }
@@ -483,10 +655,28 @@ function issueHasLabel(issue, labelName) {
   });
 }
 
-function isUntriagedIssue(issue, memberLabels) {
+function issueHasMemberOwner(issue, ownerLabels) {
+  if (!ownerLabels || typeof ownerLabels[Symbol.iterator] !== 'function') {
+    throw new TypeError('ownerLabels must be an iterable of current roster owner labels');
+  }
+
+  const normalizedOwnerLabels = new Set(
+    [...ownerLabels]
+      .filter((label) => typeof label === 'string')
+      .map((label) => label.toLowerCase()),
+  );
+
+  return (issue.labels || []).some((label) => {
+    if (!label) return false;
+    const name = typeof label === 'string' ? label : label.name;
+    return typeof name === 'string' && normalizedOwnerLabels.has(name.toLowerCase());
+  });
+}
+
+function isUntriagedIssue(issue, ownerLabels) {
   if (issue.pull_request) return false;
   if (!issueHasLabel(issue, 'squad')) return false;
-  return !memberLabels.some((label) => issueHasLabel(issue, label));
+  return !issueHasMemberOwner(issue, ownerLabels);
 }
 
 async function main() {
@@ -501,14 +691,14 @@ async function main() {
   const routingMd = fs.readFileSync(path.join(squadDir, 'routing.md'), 'utf8');
 
   const roster = parseRoster(teamMd);
+  const ownerLabels = parseOwnerLabels(teamMd);
   const rules = parseRoutingRules(routingMd);
   const modules = parseModuleOwnership(routingMd);
 
   const { owner, repo } = getOwnerRepoFromGit();
   const openSquadIssues = await fetchSquadIssues(owner, repo, token);
 
-  const memberLabels = roster.map((member) => member.label);
-  const untriaged = openSquadIssues.filter((issue) => isUntriagedIssue(issue, memberLabels));
+  const untriaged = openSquadIssues.filter((issue) => isUntriagedIssue(issue, ownerLabels));
 
   const results = [];
   for (const issue of untriaged) {
@@ -539,7 +729,18 @@ async function main() {
   fs.writeFileSync(outputPath, `${JSON.stringify(results, null, 2)}\n`, 'utf8');
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  isUntriagedIssue,
+  issueHasMemberOwner,
+  parseOwnerLabels,
+  parseRoster,
+  parseRoutingRules,
+  triageIssue,
+};

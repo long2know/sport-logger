@@ -156,7 +156,7 @@ For each squad member with assigned issues, note them in the session context. Wh
 
 **Proactive issue pickup:** If a user starts a session and there are open `squad:{member}` issues, mention them: *"Hey {user}, {AgentName} has an open issue — #42: Fix auth endpoint timeout. Want them to pick it up?"*
 
-**Issue triage routing:** When a new issue gets the `squad` label (via the sync-squad-labels workflow), the Lead triages it — reading the issue, analyzing it, assigning the correct `squad:{member}` label(s), and commenting with triage notes. The Lead can also reassign by swapping labels.
+**Issue triage routing:** When a new issue gets the `squad` label, Ralph's heartbeat reads `.squad/routing.md`, assigns exactly one `squad:{member}` label, and comments with triage notes. The Lead can manually reassign by swapping labels.
 
 **⚡ Read `.squad/team.md` (roster), `.squad/routing.md` (routing), and `.squad/casting/registry.json` (persistent names) as parallel tool calls in a single turn. Do NOT read these sequentially.**
 
@@ -351,36 +351,38 @@ After routing determines WHO handles work, select a **response MODE** (Direct / 
 
 Resolve a model before every spawn. Honor persistent config first, then session directives, charter preferences, and task-aware auto-selection; keep the cost-first rule unless code or prompt architecture is being written.
 
-Use silent fallback chains when a chosen model is unavailable, and omit the `model` parameter for platform default or nuclear fallback.
+Use silent fallback chains when a chosen model is unavailable. Re-evaluate reasoning-effort capability for every fallback model; the nuclear fallback omits both `model` and `reasoning_effort`.
+
+`gpt-5.6-sol` is a valid model ID. Never replace a configured model with a hardcoded alternative; use fallback only after an actual availability failure.
 
 **On-demand reference:** Read `.squad/templates/model-selection-reference.md` for the full layer hierarchy, role mapping, fallback chains, spawn formatting, and valid models catalog.
 
 ### Per-Agent Reasoning Effort
 
-Reasoning effort controls how much internal thinking a model does before responding. Higher effort = deeper analysis but more tokens/cost. This is SEPARATE from model selection — you can run the same model at different effort levels.
+Reasoning effort controls how much internal thinking a compatible model does before responding. Higher effort = deeper analysis but more tokens/cost. The preference is resolved separately from model selection, but not every model accepts the parameter.
 
-Valid levels: `low`, `medium`, `high`, `xhigh`. The value `auto` means "let the model decide" (platform default).
+Valid levels: `low`, `medium`, `high`, `xhigh`, `max`. The value `auto` means "let the model decide" (platform default).
 
 **Resolution — check these layers in order (first match wins):**
 
 1. **Persistent Config:** `.squad/config.json` → `agentReasoningEffortOverrides.{agentName}`, then `defaultReasoningEffort`
-2. **User directive:** User says "use xhigh thinking" or "think harder" → apply to this spawn
-3. **Charter preference:** Agent's `## Model` section → `**Reasoning Effort:** xhigh`
+2. **User directive:** User says "use max reasoning" or "think harder" → apply to this spawn
+3. **Charter preference:** Agent's `## Model` section → `**Reasoning Effort:** max`
 4. **Default:** Do not set reasoning effort (platform decides)
 
-**When user requests different thinking levels:** Use the SAME model with different reasoning effort — do NOT switch to a different model variant. Reasoning effort is a session parameter, not a model choice.
+**When user requests different thinking levels:** For a compatible model, use the SAME model with different reasoning effort — do NOT switch to a different model variant. Reasoning effort is a session parameter, not a model choice.
 
-- **When user says "always use xhigh thinking" / "think harder by default":** Write `defaultReasoningEffort` to `.squad/config.json`. Acknowledge: `✅ Reasoning effort saved: xhigh — all future sessions will use this until changed.`
-- **When user says "use xhigh thinking for {agent}":** Write to `agentReasoningEffortOverrides.{agent}` in `.squad/config.json`. Acknowledge: `✅ {Agent} will always use xhigh reasoning — saved to config.`
+- **When user says "always use max reasoning" / "think harder by default":** Write `defaultReasoningEffort` to `.squad/config.json`. Acknowledge: `✅ Reasoning effort saved: max — all future sessions will use this until changed.`
+- **When user says "use max reasoning for {agent}":** Write to `agentReasoningEffortOverrides.{agent}` in `.squad/config.json`. Acknowledge: `✅ {Agent} will always use max reasoning — saved to config.`
 - **When user says "clear thinking preference":** Remove reasoning effort fields from `.squad/config.json`. Acknowledge: `✅ Reasoning effort preference cleared — returning to automatic.`
 
 **Passing reasoning effort to spawns:**
 
-When the resolved reasoning effort is not `auto` or default, include it in the agent's charter-compiled spawn prompt or session config. The SDK threads it through to `SquadSessionConfig.reasoningEffort` automatically via the charter's `## Model` section.
+Resolve and retain the user's effort preference independently from model selection. When the selected model advertises reasoning-effort support and the resolved value is not `auto` or unset, pass that value unchanged as `reasoning_effort` on the `task` call (or the equivalent session config). If a fallback model does not support reasoning effort, omit `reasoning_effort` for that attempt only—do not downgrade, clear, or overwrite the stored preference. The SDK threads compatible charter values through to `SquadSessionConfig.reasoningEffort`.
 
 **Spawn output format — show the model choice and effort:**
 
-Follow `.squad/templates/model-selection-reference.md` for the base model-selection rules. When an agent uses a non-default reasoning effort, append it in the acknowledgment (for example, `🧠 DeepThink (claude-opus-4.7-1m-internal · xhigh) — deep architecture analysis`).
+Follow `.squad/templates/model-selection-reference.md` for the base model-selection rules. When an agent uses a non-default reasoning effort, append it in the acknowledgment (for example, `🔄 Neo (gpt-5.6-sol · max) — integration revision`).
 
 ### Client Compatibility
 
@@ -1023,12 +1025,12 @@ Humans can join the Squad roster alongside AI agents. They appear in routing, ca
 
 The GitHub Copilot coding agent (`@copilot`) can join the Squad as an autonomous team member. It picks up assigned issues, creates `copilot/*` branches, and opens draft PRs.
 
-**On-demand reference:** Read `.squad/templates/copilot-agent.md` for adding @copilot, comparison table, roster format, capability profile, auto-assign behavior, lead triage, and routing details.
+**On-demand reference:** Read `.squad/templates/copilot-agent.md` for adding @copilot, comparison table, roster format, capability profile, auto-assign behavior, manual Lead override, and routing details.
 
 **Core rules (always loaded):**
 - Badge: 🤖 Coding Agent. Always "@copilot" (no casting). No charter — uses `copilot-instructions.md`.
 - NOT spawnable — works via issue assignment, asynchronous.
-- Capability profile (🟢/🟡/🔴) lives in team.md. Lead evaluates issues against it during triage.
+- Capability profile (🟢/🟡/🔴) lives in team.md. Ralph remains the automatic triage path; the Lead may evaluate this profile during a manual override.
 - Auto-assign controlled by `<!-- copilot-auto-assign: true/false -->` in team.md.
 - Non-dependent work continues immediately — @copilot routing does not serialize the team.
 
