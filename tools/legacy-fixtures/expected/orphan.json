@@ -1,6 +1,21 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "en_US",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": false,
+      "migration_readiness": "ready",
+      "per_activity": [
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 1,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        }
+      ],
+      "state": "durably_evidenced"
+    },
     "data_state": "contains_business_rows",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +45,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },
@@ -43,8 +59,10 @@
       "activity_legacy_id": 999,
       "altitude": 15.5,
       "bearing": 46.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "70632fa2-55a5-5b7d-9cbf-9585f6d7a481",
       "gmt_timestamp": "20240401090001",
+      "gmt_timestamp_utc": "2024-04-01T09:00:01Z",
       "heart_rate": 111.0,
       "latitude": 51.5008,
       "legacy_id": 2,
@@ -52,24 +70,31 @@
       "reason": "missing_activity",
       "session_id": null,
       "source_key": "synthetic:sport-logger:legacy:orphan:v1:GPS_POINTS:2",
-      "speed": 2.625
+      "speed": 2.625,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "output_kind": "canonical",
   "rejected_rows": [],
   "sessions": [
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Parent row for the non-orphan control point.",
       "deterministic_id": "8d863b09-7094-5ef4-a490-ab5278c45788",
       "distance": 750.0,
       "gmt_end": "20240401090500",
+      "gmt_end_utc": "2024-04-01T09:05:00Z",
       "gmt_start": "20240401090000",
+      "gmt_start_utc": "2024-04-01T09:00:00Z",
       "legacy_id": 1,
       "name": "Synthetic Orphan Control",
       "pace": 400.0,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:orphan:v1:ACTIVITY:1",
-      "time": 300.0
+      "time": 300.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "summary": {
@@ -88,15 +113,19 @@
       "activity_legacy_id": 1,
       "altitude": 15.25,
       "bearing": 45.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "a2372c7d-b56c-571f-adf4-36cea93877f5",
       "gmt_timestamp": "20240401090000",
+      "gmt_timestamp_utc": "2024-04-01T09:00:00Z",
       "heart_rate": 110.0,
       "latitude": 51.5007,
       "legacy_id": 1,
       "longitude": -0.1246,
       "session_id": "8d863b09-7094-5ef4-a490-ab5278c45788",
       "source_key": "synthetic:sport-logger:legacy:orphan:v1:GPS_POINTS:1",
-      "speed": 2.5
+      "speed": 2.5,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ]
 }

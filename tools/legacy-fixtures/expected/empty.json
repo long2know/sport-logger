@@ -1,6 +1,14 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:empty:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "en_US",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": false,
+      "migration_readiness": "ready",
+      "per_activity": [],
+      "state": "durably_evidenced"
+    },
     "data_state": "empty",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +38,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },

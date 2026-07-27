@@ -1,6 +1,33 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "en_US",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": false,
+      "migration_readiness": "ready",
+      "per_activity": [
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 1,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 2,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 3,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        }
+      ],
+      "state": "durably_evidenced"
+    },
     "data_state": "contains_business_rows",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +57,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },
@@ -38,7 +66,7 @@
   "idempotency": {
     "canonical_insert_rows": 9,
     "expected_sessions": 3,
-    "expected_state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de",
+    "expected_state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
     "expected_track_points": 6,
     "scenarios": {
       "interrupt_after_partial_point_prefix": {
@@ -86,7 +114,7 @@
         "replay_attempts_cover_canonical_set": true,
         "rerun_record_count": 9,
         "rerun_records_exactly_canonical": true,
-        "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
+        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
       },
       "interrupt_after_session_row": {
         "canonical_record_count": 9,
@@ -133,7 +161,7 @@
         "replay_attempts_cover_canonical_set": true,
         "rerun_record_count": 9,
         "rerun_records_exactly_canonical": true,
-        "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
+        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
       },
       "receipt_gap_replay": {
         "committed_rows": {
@@ -175,7 +203,7 @@
           "sessions": 3,
           "track_points": 6
         },
-        "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
+        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807"
       },
       "same_run_duplicates": {
         "attempted_rows": 18,
@@ -194,7 +222,7 @@
         "receipt_completed": true,
         "receipt_present": true,
         "sessions": 3,
-        "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de",
+        "state_logical_checksum": "43e9fc78a96251f9aa4227f0c7ee721ebf27c0cf69f38aee13608517e4edd807",
         "track_points": 6
       }
     }
@@ -205,43 +233,58 @@
   "rejected_rows": [],
   "sessions": [
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "First committed group before interruption.",
       "deterministic_id": "dc02c118-ae81-5331-8d78-7def82325160",
       "distance": 100.125,
       "gmt_end": "20240601080030",
+      "gmt_end_utc": "2024-06-01T08:00:30Z",
       "gmt_start": "20240601080000",
+      "gmt_start_utc": "2024-06-01T08:00:00Z",
       "legacy_id": 1,
       "name": "Synthetic Interrupted A",
       "pace": 299.625468,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:1",
-      "time": 30.0
+      "time": 30.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "First group processed after restart.",
       "deterministic_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
       "distance": 101.25,
       "gmt_end": "20240602080030",
+      "gmt_end_utc": "2024-06-02T08:00:30Z",
       "gmt_start": "20240602080000",
+      "gmt_start_utc": "2024-06-02T08:00:00Z",
       "legacy_id": 2,
       "name": "Synthetic Interrupted B",
       "pace": 296.296296,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:2",
-      "time": 30.0
+      "time": 30.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Final group processed after restart.",
       "deterministic_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
       "distance": 102.5,
       "gmt_end": "20240603080030",
+      "gmt_end_utc": "2024-06-03T08:00:30Z",
       "gmt_start": "20240603080000",
+      "gmt_start_utc": "2024-06-03T08:00:00Z",
       "legacy_id": 3,
       "name": "Synthetic Interrupted C",
       "pace": 292.682927,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:ACTIVITY:3",
-      "time": 30.0
+      "time": 30.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "summary": {
@@ -260,90 +303,114 @@
       "activity_legacy_id": 1,
       "altitude": 5.1,
       "bearing": 4.1,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "320e04b2-6402-54df-9c2b-43d781978285",
       "gmt_timestamp": "20240601080000",
+      "gmt_timestamp_utc": "2024-06-01T08:00:00Z",
       "heart_rate": 101.1,
       "latitude": 10.0001,
       "legacy_id": 1,
       "longitude": 20.0001,
       "session_id": "dc02c118-ae81-5331-8d78-7def82325160",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:1",
-      "speed": 3.1
+      "speed": 3.1,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 2.2,
       "activity_legacy_id": 1,
       "altitude": 5.2,
       "bearing": 4.2,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "c0484780-4c39-570e-bff8-1861670e4481",
       "gmt_timestamp": "20240601080001",
+      "gmt_timestamp_utc": "2024-06-01T08:00:01Z",
       "heart_rate": 101.2,
       "latitude": 10.0002,
       "legacy_id": 2,
       "longitude": 20.0002,
       "session_id": "dc02c118-ae81-5331-8d78-7def82325160",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:2",
-      "speed": 3.2
+      "speed": 3.2,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 2.1,
       "activity_legacy_id": 2,
       "altitude": 6.1,
       "bearing": 5.1,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "77a8d40c-5f43-5715-9306-b4797b779fd4",
       "gmt_timestamp": "20240602080000",
+      "gmt_timestamp_utc": "2024-06-02T08:00:00Z",
       "heart_rate": 102.1,
       "latitude": 11.0001,
       "legacy_id": 3,
       "longitude": 21.0001,
       "session_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:3",
-      "speed": 3.1
+      "speed": 3.1,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 2.2,
       "activity_legacy_id": 2,
       "altitude": 6.2,
       "bearing": 5.2,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "62c9794b-411e-55a5-87ec-7e96f49917d0",
       "gmt_timestamp": "20240602080001",
+      "gmt_timestamp_utc": "2024-06-02T08:00:01Z",
       "heart_rate": 102.2,
       "latitude": 11.0002,
       "legacy_id": 4,
       "longitude": 21.0002,
       "session_id": "5d5386ab-cfc9-568d-b511-69f783b8e5dd",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:4",
-      "speed": 3.2
+      "speed": 3.2,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 2.1,
       "activity_legacy_id": 3,
       "altitude": 7.1,
       "bearing": 6.1,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "a475883b-3ba0-53a3-9887-3681e198d9c6",
       "gmt_timestamp": "20240603080000",
+      "gmt_timestamp_utc": "2024-06-03T08:00:00Z",
       "heart_rate": 103.1,
       "latitude": 12.0001,
       "legacy_id": 5,
       "longitude": 22.0001,
       "session_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:5",
-      "speed": 3.1
+      "speed": 3.1,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 2.2,
       "activity_legacy_id": 3,
       "altitude": 7.2,
       "bearing": 6.2,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "2cc43175-70ef-50cd-ab10-37769203280f",
       "gmt_timestamp": "20240603080001",
+      "gmt_timestamp_utc": "2024-06-03T08:00:01Z",
       "heart_rate": 103.2,
       "latitude": 12.0002,
       "legacy_id": 6,
       "longitude": 22.0002,
       "session_id": "142a1099-3d0b-5e52-a069-5d343a03b658",
       "source_key": "synthetic:sport-logger:legacy:interrupted_idempotency:v1:GPS_POINTS:6",
-      "speed": 3.2
+      "speed": 3.2,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ]
 }

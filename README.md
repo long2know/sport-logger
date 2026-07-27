@@ -18,4 +18,16 @@ This process was cumbersome.  So, I decided to write my own WearOS app that woul
 
 Tagged v0.11
 
+## Legacy migration oracle
+
+`tools/legacy-fixtures/` contains the synthetic, executable contract for the
+watch SQLite database. Its 18 fixtures cover calendar-safe timestamps,
+calendar-ambiguity quarantine, WAL snapshots, exact schema/header validation,
+corruption, precision, ordering, and idempotent replay. The oracle requires
+durable per-activity calendar evidence; otherwise it retains the source and
+performs no target write or receipt.
+
+See [the legacy database contract](docs/legacy-database-contract.md) and
+[`tools/legacy-fixtures/README.md`](tools/legacy-fixtures/README.md) for all
+generation, verification, detector, determinism, unit, and 100,000-point gates.
 

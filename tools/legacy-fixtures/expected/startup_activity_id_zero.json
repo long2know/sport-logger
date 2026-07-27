@@ -1,6 +1,14 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:startup_activity_id_zero:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "en_US",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": false,
+      "migration_readiness": "ready",
+      "per_activity": [],
+      "state": "durably_evidenced"
+    },
     "data_state": "contains_business_rows",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +38,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },
@@ -43,8 +52,10 @@
       "activity_legacy_id": 0,
       "altitude": null,
       "bearing": null,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "0f765772-27c6-5061-8234-908b7be2bb63",
       "gmt_timestamp": "20240101000000",
+      "gmt_timestamp_utc": "2024-01-01T00:00:00Z",
       "heart_rate": 0.0,
       "latitude": 0.0,
       "legacy_id": 1,
@@ -52,7 +63,9 @@
       "reason": "missing_activity",
       "session_id": null,
       "source_key": "synthetic:sport-logger:legacy:startup_activity_id_zero:v1:GPS_POINTS:1",
-      "speed": null
+      "speed": null,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "output_kind": "canonical",

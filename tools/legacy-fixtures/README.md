@@ -12,7 +12,7 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 38 defect detectors.
+# all 49 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
 # Regenerate twice. SQLite artifacts use their declared logical/canonical
@@ -27,25 +27,25 @@ The tool uses only Python's standard-library `sqlite3`, `json`, `hashlib`,
 `uuid`, and test modules. Android, Gradle, Room, and third-party packages are
 not required. The optional locale-evidence probe uses JDK source-file mode.
 
-Current counted reality is 16 fixtures and 35 regeneration artifacts: 17
-exact-byte UTF-8/LF JSON artifacts, 12 logical standard databases, and 6
-canonical non-standard SQLite artifacts. The verifier runs 38 defect detectors,
-and the standard-library suite contains 19 tests.
+Current counted reality is 18 fixtures and 39 regeneration artifacts: 19
+exact-byte UTF-8/LF JSON artifacts, 14 logical standard databases, and 6
+canonical non-standard SQLite artifacts. The verifier runs 49 defect detectors,
+and the standard-library suite contains 22 tests.
 
 ## Layout
 
-- `fixtures/*.db` — 16 SQLite inputs using Android's platform metadata table
+- `fixtures/*.db` — 18 SQLite inputs using Android's platform metadata table
   plus the source-reachable application schema state.
 - `fixtures/active_wal_snapshot.db-{wal,shm}` — the required sidecars for the
   active-WAL case. Its committed rows exist only in the WAL snapshot.
 - `expected/*.json` — canonical test outputs. These classify every source row
-  as a session, attached point, orphan, or rejected row, and distinguish valid
-  empty data from blocked missing/partial schema.
+  as a session, attached point, orphan, rejected row, or retained calendar
+  quarantine row, and distinguish valid empty data from blocked migration.
 - `manifest.json` — expected counts, timestamp ranges, representative values,
   idempotency results, storage-comparison modes, and logical checksums.
 - `test_legacy_fixtures.py` — regression and fault-injection tests.
-- `LocaleTimestampProbe.java` — optional source-mode JDK probe for the exact
-  locale digits committed in `localized_timestamps`.
+- `LocaleTimestampProbe.java` — checked source-mode JDK probe for the exact
+  locale digit and calendar semantics committed in the timestamp fixtures.
 
 The JSON output is a test interchange format, not a production Room schema.
 Integer comparison is exact above `2^53`. Canonical JSON floating-point values
@@ -71,18 +71,20 @@ non-TEXT, invalid-value, and multi-row metadata states are explicit
 `malformed_schema` diagnostics and block migration before source reads or
 target/receipt writes.
 
+Schema validation uses `PRAGMA table_xinfo`, not only `table_info`, and compares
+canonicalized `sqlite_schema` table SQL. It rejects hidden/generated columns,
+virtual or shadow-table substitutions, extra indexes/views/triggers, changed
+constraints/defaults/order/types, foreign keys, and non-table b-tree records.
+Keyword case, identifier quoting, comments, and whitespace are treated as
+formatting only.
+
 ## Locale-sensitive timestamps
 
 Legacy `Config.TimestampFormat` constructs `SimpleDateFormat("yyyyMMddHHmmss")`
-without a locale, so Android uses the device's default format locale. The
-`localized_timestamps` database currently records `android_metadata = ar_EG`,
-but contains valid per-row Arabic-Indic, historical Bengali, and historical
-ASCII timestamps. Android updates platform locale metadata when the database is
-opened after a locale change; that one current value is not a row-level digit
-declaration.
-
-The committed Arabic-Indic `٢٠٢٤٠٧٠٨٠٩١٠١١` and Bengali
-`২০২৪০৭০৮০৯১০১১` strings were reproduced by:
+without a locale, so Android uses the device's default format locale for both
+decimal digits **and calendar**. The checked probe reproduces Arabic-Indic,
+Bengali, ASCII, Thai Buddhist, explicit Thai-digit Gregorian, and Thai Buddhist
+with Latin digits:
 
 ```bash
 java tools/legacy-fixtures/LocaleTimestampProbe.java
@@ -91,9 +93,12 @@ java tools/legacy-fixtures/LocaleTimestampProbe.java
 OpenJDK `21.0.11+10-1-24.04.2-Ubuntu` reported:
 
 ```text
-ar-EG zero=U+0660 formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
-bn-BD zero=U+09E6 formatted=২০২৪০৭০৮০৯১০১১
-en-US zero=U+0030 formatted=20240708091011
+ar-EG zero=U+0660 calendar=gregory formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
+bn-BD zero=U+09E6 calendar=gregory formatted=২০২৪০৭০৮০৯১০১১
+en-US zero=U+0030 calendar=gregory formatted=20240708091011
+th-TH-u-nu-thai zero=U+0E50 calendar=buddhist formatted=๒๕๖๗๐๗๐๘๐๙๑๐๑๑
+th-TH-u-ca-gregory-nu-thai zero=U+0E50 calendar=gregory formatted=๒๐๒๔๐๗๐๘๐๙๑๐๑๑
+th-TH-u-nu-latn zero=U+0030 calendar=buddhist formatted=25670708091011
 ```
 
 Android documents the same locale-sensitive constructor/default-symbol
@@ -102,41 +107,61 @@ Python host locale. See the Android
 [`SimpleDateFormat(String)`](https://developer.android.com/reference/java/text/SimpleDateFormat#SimpleDateFormat(java.lang.String))
 and
 [`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
-contracts. This source text is preserved exactly in canonical rows,
-rejected-row diagnostics, representative values, and checksums.
+contracts. Source text is preserved exactly in canonical rows, quarantine
+records, rejected-row diagnostics, representative values, and checksums.
 
-Validation converts each Unicode `Nd` decimal digit to its ASCII value only in a
-temporary parse buffer. It requires exactly 14 digits from one numbering-system
-block, then applies strict Gregorian date/time parsing. ASCII is a valid block
-by itself and can coexist with non-ASCII rows in one database, but ASCII cannot
-mix with another block inside one timestamp: one `SimpleDateFormat` instance
-uses one `DecimalFormatSymbols` zero digit for all numeric fields. The oracle
-also rejects mixed non-ASCII blocks, separators, embedded bidi/direction/format
-controls, superscript and other non-`Nd` lookalikes, impossible dates, and
-invalid times.
+The migration oracle never infers a calendar from digit shape or the current
+`android_metadata` locale. Current metadata can change when Android reopens the
+database and is not durable row-level evidence. The synthetic ready fixtures
+carry explicit per-activity generation evidence. `calendar_semantics` proves
+that Buddhist `๒๕๖๗...` and Gregorian `๒๐๒๔...` Thai-digit values both map to
+2024 only because their calendars are explicitly known. `localized_timestamps`
+models current `ar_EG` metadata plus durably recorded historical `bn-BD` and
+`en-US` evidence.
 
-Detectors prove that ASCII-only, ASCII-plus-Arabic-only, current-metadata-
-coupled, mixed-block-permissive, and Unicode-format-stripping parsers all fail
-the committed candidate corpus.
+`calendar_ambiguous` has current Thai metadata but no durable per-activity
+calendar evidence. Its two activities—one Thai-digit and one ASCII-digit
+Buddhist-year value—are quarantined as one migration unit. The oracle reads only
+to classify and preserve raw rows, performs zero target writes, writes no
+receipt, and requires the original database/text to remain recoverable. A future
+user-assisted flow may persist verified per-activity calendar evidence and
+rerun migration; it must never guess a 543-year adjustment.
+
+After a calendar is evidenced, validation maps Unicode `Nd` digits to ASCII only
+in a temporary parse buffer, requires exactly 14 digits from one numbering
+system, and applies strict fields in that calendar. Mixed blocks, separators,
+bidi/format controls, non-`Nd` lookalikes, impossible dates, and invalid times
+remain rejected.
+
+Detectors prove that Gregorian-only parsing, automatic Buddhist conversion from
+Thai digit shape, migration of ambiguous rows, ASCII-only/limited-block parsing,
+current-metadata coupling, mixed-block acceptance, and format-control stripping
+all fail.
 
 ## Deterministic regeneration
 
-All 18 SQLite artifacts are marked `exact_bytes_required: false`; none is a
-host-generated byte-for-byte contract. The 12 standard databases compare
+All 20 SQLite artifacts are marked `exact_bytes_required: false`; none is a
+host-generated byte-for-byte contract. The 14 standard databases compare
 integrity, schema, platform metadata, and type-tagged business rows logically.
 The active-WAL trio compares main-only/full logical state, WAL frame shape, and
 required sidecar semantics. The malformed schema compares its exact schema
 defect plus seed rows. Truncated/corrupt files compare documented corruption
 shape plus a canonical byte digest that zeroes only SQLite header byte ranges
-`[18,20)`, `[24,28)`, and `[92,100)` before hashing. These fields cover
-read/write version and informational change/version metadata; structure,
-schema, page payload, and damage bytes remain contractual.
+`[18,20)`, `[24,28)`, and `[92,100)` before hashing. Before any normalization,
+the oracle requires read/write versions `(1,1)` for rollback files or `(2,2)`
+for WAL, and requires the change counter to equal version-valid-for. WAL
+transactions need not increment the main-file counter, but the two stored
+header values must still agree. Invalid `0`/`255` versions, mixed modes, and
+counter mismatches are corruption. The SQLite writer-version field alone is
+informational and may vary; structure, schema, page payload, and damage bytes
+remain contractual.
 
-The 16 expected JSON files and `manifest.json` are the 17 true exact-byte
+The 18 expected JSON files and `manifest.json` are the 19 true exact-byte
 artifacts. `write_json()` emits UTF-8 bytes with LF and one terminal newline on
 every host, while `.gitattributes` enforces LF for fixture text. Determinism
-tests prove CRLF drift fails and harmless SQLite header variation passes while
-page, schema, payload, WAL, and corruption changes fail.
+tests prove CRLF drift fails and harmless writer-version-only variation passes
+while illegal header semantics, page, schema, payload, WAL, and corruption
+changes fail.
 
 ## Active WAL snapshot
 
@@ -168,6 +193,9 @@ preflight layers:
 - illegal page-size header: every encoding other than `1` (65536 bytes) or a
   power of two from 512 through 32768 is classified as corrupt before modulus,
   integrity, schema, source-read, target-write, or receipt logic.
+- illegal read/write versions or mismatched change-counter/version-valid-for
+  values are classified as corrupt before canonicalization, integrity, schema,
+  source-read, target-write, or receipt logic.
 
 Each expected output requires a blocked migration, zero source rows read, no
 target write attempt, zero target rows, and no receipt attempt or receipt.

@@ -1,6 +1,75 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "ar_EG",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": true,
+      "migration_readiness": "ready",
+      "per_activity": [
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 1,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 2,
+          "locale_tag": "bn-BD",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 3,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 4,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 5,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 6,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 7,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 8,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 9,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 10,
+          "locale_tag": "ar-EG",
+          "source": "synthetic_fixture_generation_record"
+        }
+      ],
+      "state": "durably_evidenced"
+    },
     "data_state": "contains_business_rows",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +99,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },
@@ -289,43 +359,58 @@
   ],
   "sessions": [
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Valid localized legacy timestamps retain their exact source text.",
       "deterministic_id": "53e29512-d75f-5049-b60d-3dae7e680331",
       "distance": 120.0,
       "gmt_end": "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+      "gmt_end_utc": "2024-07-08T09:10:13Z",
       "gmt_start": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+      "gmt_start_utc": "2024-07-08T09:10:11Z",
       "legacy_id": 1,
       "name": "Synthetic Arabic-Indic Session",
       "pace": 2.5,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:ACTIVITY:1",
-      "time": 300.0
+      "time": 300.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "ar-EG"
     },
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Bengali digits predate the database's current ar_EG metadata.",
       "deterministic_id": "15b78afb-ac3e-594a-ae1d-9b9c48786d63",
       "distance": 121.0,
       "gmt_end": "২০২৪০৭০৮০৯১১১৩",
+      "gmt_end_utc": "2024-07-08T09:11:13Z",
       "gmt_start": "২০২৪০৭০৮০৯১১১১",
+      "gmt_start_utc": "2024-07-08T09:11:11Z",
       "legacy_id": 2,
       "name": "Synthetic Historical Bengali Session",
       "pace": 2.6,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:ACTIVITY:2",
-      "time": 301.0
+      "time": 301.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "bn-BD"
     },
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "ASCII digits predate the database's current ar_EG metadata.",
       "deterministic_id": "df5bf594-1bb4-5fb4-8a30-2cd24198df6d",
       "distance": 122.0,
       "gmt_end": "20240708091213",
+      "gmt_end_utc": "2024-07-08T09:12:13Z",
       "gmt_start": "20240708091211",
+      "gmt_start_utc": "2024-07-08T09:12:11Z",
       "legacy_id": 3,
       "name": "Synthetic Historical ASCII Session",
       "pace": 2.7,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:ACTIVITY:3",
-      "time": 302.0
+      "time": 302.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "summary": {
@@ -344,90 +429,114 @@
       "activity_legacy_id": 1,
       "altitude": 23.5,
       "bearing": 90.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "995892f9-77ee-5079-a1b0-2d8589a7d4d1",
       "gmt_timestamp": "٢٠٢٤٠٧٠٨٠٩١٠١١",
+      "gmt_timestamp_utc": "2024-07-08T09:10:11Z",
       "heart_rate": 120.0,
       "latitude": 30.0444,
       "legacy_id": 1,
       "longitude": 31.2357,
       "session_id": "53e29512-d75f-5049-b60d-3dae7e680331",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:1",
-      "speed": 2.0
+      "speed": 2.0,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "ar-EG"
     },
     {
       "accuracy": 3.125,
       "activity_legacy_id": 1,
       "altitude": 23.625,
       "bearing": 91.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "ca805ddc-c31e-5616-815a-002912114913",
       "gmt_timestamp": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+      "gmt_timestamp_utc": "2024-07-08T09:10:12Z",
       "heart_rate": 121.0,
       "latitude": 30.0445,
       "legacy_id": 2,
       "longitude": 31.2358,
       "session_id": "53e29512-d75f-5049-b60d-3dae7e680331",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:2",
-      "speed": 2.125
+      "speed": 2.125,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "ar-EG"
     },
     {
       "accuracy": 3.25,
       "activity_legacy_id": 2,
       "altitude": 7.5,
       "bearing": 92.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "d3079c75-1546-5d3d-a509-26d13f925efb",
       "gmt_timestamp": "২০২৪০৭০৮০৯১১১১",
+      "gmt_timestamp_utc": "2024-07-08T09:11:11Z",
       "heart_rate": 122.0,
       "latitude": 23.8103,
       "legacy_id": 3,
       "longitude": 90.4125,
       "session_id": "15b78afb-ac3e-594a-ae1d-9b9c48786d63",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:3",
-      "speed": 2.25
+      "speed": 2.25,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "bn-BD"
     },
     {
       "accuracy": 3.375,
       "activity_legacy_id": 2,
       "altitude": 7.625,
       "bearing": 93.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "8e259647-3544-51a5-826d-4d9338ad5110",
       "gmt_timestamp": "২০২৪০৭০৮০৯১১১২",
+      "gmt_timestamp_utc": "2024-07-08T09:11:12Z",
       "heart_rate": 123.0,
       "latitude": 23.8104,
       "legacy_id": 4,
       "longitude": 90.4126,
       "session_id": "15b78afb-ac3e-594a-ae1d-9b9c48786d63",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:4",
-      "speed": 2.375
+      "speed": 2.375,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "bn-BD"
     },
     {
       "accuracy": 3.5,
       "activity_legacy_id": 3,
       "altitude": 12.5,
       "bearing": 94.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "4e2d81f1-9705-50cd-92cd-dc7fbc2e0ffc",
       "gmt_timestamp": "20240708091211",
+      "gmt_timestamp_utc": "2024-07-08T09:12:11Z",
       "heart_rate": 124.0,
       "latitude": 47.6062,
       "legacy_id": 5,
       "longitude": -122.3321,
       "session_id": "df5bf594-1bb4-5fb4-8a30-2cd24198df6d",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:5",
-      "speed": 2.5
+      "speed": 2.5,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 3.625,
       "activity_legacy_id": 3,
       "altitude": 12.625,
       "bearing": 95.0,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "e265c106-caad-58b2-ac32-6ccb2b1fe891",
       "gmt_timestamp": "20240708091212",
+      "gmt_timestamp_utc": "2024-07-08T09:12:12Z",
       "heart_rate": 125.0,
       "latitude": 47.6063,
       "legacy_id": 6,
       "longitude": -122.332,
       "session_id": "df5bf594-1bb4-5fb4-8a30-2cd24198df6d",
       "source_key": "synthetic:sport-logger:legacy:localized_timestamps:v1:GPS_POINTS:6",
-      "speed": 2.625
+      "speed": 2.625,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ]
 }

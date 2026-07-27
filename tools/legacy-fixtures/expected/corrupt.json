@@ -8,6 +8,15 @@
         "declared_bytes": 20480,
         "declared_pages": 5,
         "encoded_page_size": 4096,
+        "header": {
+          "change_counter": 3,
+          "change_counter_matches_version_valid_for": true,
+          "journal_mode": "rollback",
+          "read_version": 1,
+          "status": "valid",
+          "version_valid_for": 3,
+          "write_version": 1
+        },
         "page_size": 4096,
         "status": "complete"
       },

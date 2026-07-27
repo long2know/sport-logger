@@ -1,6 +1,27 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:precision:v1",
   "diagnostics": {
+    "calendar": {
+      "current_android_locale": "en_US",
+      "current_locale_used_as_row_evidence": false,
+      "historical_locale_change": false,
+      "migration_readiness": "ready",
+      "per_activity": [
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 1,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        },
+        {
+          "calendar": "gregory",
+          "legacy_activity_id": 9007199254740993,
+          "locale_tag": "en-US",
+          "source": "synthetic_fixture_generation_record"
+        }
+      ],
+      "state": "durably_evidenced"
+    },
     "data_state": "contains_business_rows",
     "ordering": {
       "activity_rows_ordered_by_64_bit_id": true,
@@ -30,6 +51,7 @@
       ],
       "schema_errors": [],
       "state": "complete",
+      "unexpected_schema_objects": [],
       "unexpected_tables": []
     }
   },
@@ -42,30 +64,40 @@
   "rejected_rows": [],
   "sessions": [
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Values are chosen to expose integer and float narrowing.",
       "deterministic_id": "cb1ea97c-264f-575d-b949-45b72c2d152d",
       "distance": 12345.678901234567,
       "gmt_end": "20240229012345",
+      "gmt_end_utc": "2024-02-29T01:23:45Z",
       "gmt_start": "20240229010203",
+      "gmt_start_utc": "2024-02-29T01:02:03Z",
       "legacy_id": 1,
       "name": "Synthetic Precision Session",
       "pace": 4.3210987654321,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:1",
-      "time": 987.654321098765
+      "time": 987.654321098765,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "description": "Exercises SQLite INTEGER values above Java int and JSON safe ranges.",
       "deterministic_id": "b7c51a49-7c69-520f-b562-fd2d4e5bbd86",
       "distance": 1.23456789e-07,
       "gmt_end": "20240301000001",
+      "gmt_end_utc": "2024-03-01T00:00:01Z",
       "gmt_start": "20240301000000",
+      "gmt_start_utc": "2024-03-01T00:00:00Z",
       "legacy_id": 9007199254740993,
       "name": "Synthetic 64-bit ID Session",
       "pace": 1.234567889e-07,
       "partial": false,
       "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:9007199254740993",
-      "time": 1.000000000000001
+      "time": 1.000000000000001,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ],
   "summary": {
@@ -84,30 +116,38 @@
       "activity_legacy_id": 1,
       "altitude": -12.3456789012345,
       "bearing": 359.9876543210987,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "96221f48-ddce-5579-ba63-9667ce2d052f",
       "gmt_timestamp": "20240229010203",
+      "gmt_timestamp_utc": "2024-02-29T01:02:03Z",
       "heart_rate": 147.625,
       "latitude": 89.99999912345677,
       "legacy_id": 1,
       "longitude": -179.9999998765432,
       "session_id": "cb1ea97c-264f-575d-b949-45b72c2d152d",
       "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:1",
-      "speed": 5.6789012345678
+      "speed": 5.6789012345678,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     },
     {
       "accuracy": 1.00000011920929,
       "activity_legacy_id": 9007199254740993,
       "altitude": 8848.860123456,
       "bearing": 0.0001220703125,
+      "calendar_evidence_source": "synthetic_fixture_generation_record",
       "deterministic_id": "23a0b0f7-bfb7-5464-9b58-f5c13d3e8d75",
       "gmt_timestamp": "20240301000000",
+      "gmt_timestamp_utc": "2024-03-01T00:00:00Z",
       "heart_rate": 63.875,
       "latitude": -45.1234567890123,
       "legacy_id": 9007199254740993,
       "longitude": 170.9876543210987,
       "session_id": "b7c51a49-7c69-520f-b562-fd2d4e5bbd86",
       "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:9007199254740993",
-      "speed": 0.0009765625
+      "speed": 0.0009765625,
+      "timestamp_calendar": "gregory",
+      "timestamp_locale": "en-US"
     }
   ]
 }

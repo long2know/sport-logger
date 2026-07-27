@@ -20,6 +20,8 @@ import legacy_fixtures  # noqa: E402
 
 EXPECTED_FIXTURES = {
     "active_wal_snapshot",
+    "calendar_ambiguous",
+    "calendar_semantics",
     "corrupt",
     "empty",
     "interrupted_idempotency",
@@ -45,8 +47,12 @@ EXPECTED_DEFECT_DETECTORS = {
     "android_metadata_wrong_type",
     "corrupt_sqlite_preflight",
     "corrupt_sqlite_receipt_write",
+    "calendar_ambiguous_rows_migrated",
+    "calendar_gregorian_only_parser",
+    "calendar_thai_digits_auto_buddhist_conversion",
     "duplicate_timestamp_collapsed",
     "float_precision_round_trip",
+    "generated_column_hidden_from_table_info",
     "integer_truncation",
     "integer_precision_above_2_53",
     "json_crlf_drift",
@@ -72,7 +78,14 @@ EXPECTED_DEFECT_DETECTORS = {
     "truncated_sqlite_preflight",
     "truncated_sqlite_target_write",
     "unicode_format_controls_stripped",
+    "virtual_table_shadow_substitution",
     "standard_database_logical_drift",
+    "sqlite_change_counter_mismatch",
+    "sqlite_read_version_0",
+    "sqlite_read_version_255",
+    "sqlite_schema_constraint_substitution",
+    "sqlite_write_version_0",
+    "sqlite_write_version_255",
     "wal_inconsistent_snapshot",
     "wal_shm_omitted",
     "wal_sidecars_ignored",
@@ -156,15 +169,27 @@ class LegacyFixtureTests(unittest.TestCase):
             {
                 legacy_fixtures.COMPARISON_ACTIVE_WAL: 3,
                 legacy_fixtures.COMPARISON_CORRUPT: 1,
-                legacy_fixtures.COMPARISON_LOGICAL_DATABASE: 12,
+                legacy_fixtures.COMPARISON_LOGICAL_DATABASE: 14,
                 legacy_fixtures.COMPARISON_MALFORMED_SCHEMA: 1,
                 legacy_fixtures.COMPARISON_TRUNCATED: 1,
             },
             comparison_counts,
         )
         self.assertEqual(
-            ["ar_EG", "en_US"],
+            ["ar_EG", "en_US", "th_TH_#u-nu-thai"],
             manifest["source_schema"]["fixture_android_locales"],
+        )
+        self.assertEqual(
+            {
+                "current_android_metadata_is_row_evidence": False,
+                "durable_per_activity_evidence_required": True,
+                "supported_calendars": ["buddhist", "gregory"],
+                "buddhist_era_gregorian_year_delta": 543,
+                "ambiguous_unit_policy": (
+                    "quarantine_source_database_with_zero_target_writes_and_no_receipt"
+                ),
+            },
+            manifest["calendar_oracle"],
         )
         self.assertEqual(
             {
@@ -286,6 +311,177 @@ class LegacyFixtureTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_table_xinfo_and_sql_semantics_reject_schema_substitutions(self):
+        def connection_with_activity(activity_sql, metadata_sql=None, gps_sql=None):
+            connection = sqlite3.connect(":memory:")
+            connection.execute(
+                metadata_sql
+                or "CREATE TABLE android_metadata (locale TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO android_metadata (locale) VALUES ('en_US')"
+            )
+            connection.execute(activity_sql)
+            connection.execute(gps_sql or legacy_fixtures.CREATE_GPS_POINTS_SQL)
+            connection.execute("PRAGMA user_version = 0")
+            return connection
+
+        formatting = connection_with_activity(
+            (
+                'create /* formatting only */ table "ACTIVITY" ('
+                '"ID" integer primary key autoincrement not null, '
+                '"GMTSTART" varchar, "GMTEND" varchar, "NAME" varchar, '
+                '"DESCRIPTION" varchar, "DISTANCE" real, "TIME" real, '
+                '"PACE" real)'
+            ),
+            metadata_sql='create table "android_metadata" ("locale" text)',
+            gps_sql=(
+                'create table "GPS_POINTS" ('
+                '"ID" integer primary key autoincrement not null, '
+                '"ACTIVITYID" integer, "GMTTIMESTAMP" varchar, '
+                '"LATITUDE" real, "LONGITUDE" real, "ALTITUDE" real, '
+                '"ACCURACY" real, "SPEED" real, "BEARING" real, '
+                '"HEARTRATE" real)'
+            ),
+        )
+        try:
+            legacy_fixtures.validate_schema(
+                formatting,
+                "formatting-only schema",
+            )
+        finally:
+            formatting.close()
+
+        generated = connection_with_activity(
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
+            )
+        )
+        try:
+            self.assertEqual(
+                tuple(
+                    row[:6]
+                    for row in legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"]
+                ),
+                legacy_fixtures.table_info(generated, "ACTIVITY"),
+            )
+            self.assertNotEqual(
+                legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
+                legacy_fixtures.table_xinfo(generated, "ACTIVITY"),
+            )
+            diagnostics = legacy_fixtures.schema_diagnostics(generated)
+            self.assertIn(
+                "ACTIVITY:table_xinfo",
+                diagnostics["schema_errors"],
+            )
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.validate_schema(
+                    generated,
+                    "generated column",
+                )
+        finally:
+            generated.close()
+
+        constraint = connection_with_activity(
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                "CHECK (DISTANCE IS NULL OR DISTANCE >= 0))"
+            )
+        )
+        try:
+            self.assertEqual(
+                legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
+                legacy_fixtures.table_xinfo(constraint, "ACTIVITY"),
+            )
+            diagnostics = legacy_fixtures.schema_diagnostics(constraint)
+            self.assertIn(
+                "ACTIVITY:sqlite_schema_sql",
+                diagnostics["schema_errors"],
+            )
+        finally:
+            constraint.close()
+
+        schema_substitutions = (
+            (
+                "wrong default",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR DEFAULT '', "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                "ACTIVITY:table_xinfo",
+            ),
+            (
+                "wrong order",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, DESCRIPTION VARCHAR, "
+                    "NAME VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                "ACTIVITY:table_xinfo",
+            ),
+            (
+                "wrong declared type",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME TEXT, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                "ACTIVITY:table_xinfo",
+            ),
+            (
+                "wrong collation",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, "
+                    "NAME VARCHAR COLLATE NOCASE, DESCRIPTION VARCHAR, "
+                    "DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                "ACTIVITY:sqlite_schema_sql",
+            ),
+        )
+        for label, activity_sql, expected_error in schema_substitutions:
+            with self.subTest(schema=label):
+                connection = connection_with_activity(activity_sql)
+                try:
+                    diagnostics = legacy_fixtures.schema_diagnostics(connection)
+                    self.assertIn(expected_error, diagnostics["schema_errors"])
+                    with self.assertRaises(
+                        legacy_fixtures.FixtureValidationError
+                    ):
+                        legacy_fixtures.validate_schema(connection, label)
+                finally:
+                    connection.close()
+
+        virtual = connection_with_activity(
+            (
+                "CREATE VIRTUAL TABLE ACTIVITY USING fts5("
+                "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, PACE)"
+            )
+        )
+        try:
+            diagnostics = legacy_fixtures.schema_diagnostics(virtual)
+            self.assertEqual("malformed_schema", diagnostics["state"])
+            self.assertIn(
+                "ACTIVITY:sqlite_schema_table_kind",
+                diagnostics["schema_errors"],
+            )
+            self.assertTrue(diagnostics["unexpected_tables"])
+            self.assertTrue(diagnostics["unexpected_schema_objects"])
+        finally:
+            virtual.close()
+
     def test_unicode_decimal_timestamp_normalization_is_strict(self):
         ascii_timestamp = "20240708091011"
         arabic_indic_timestamp = "٢٠٢٤٠٧٠٨٠٩١٠١١"
@@ -293,6 +489,7 @@ class LegacyFixtureTests(unittest.TestCase):
         persian_timestamp = "۲۰۲۴۰۷۰۸۰۹۱۰۱۱"
         fullwidth_timestamp = "２０２４０７０８０９１０１１"
         expected = datetime(2024, 7, 8, 9, 10, 11)
+        evidence = legacy_fixtures.DEFAULT_GREGORIAN_CALENDAR_EVIDENCE
         unicode_nd_digits = [
             character
             for code_point in range(0x110000)
@@ -307,26 +504,37 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         self.assertEqual(
             expected,
-            legacy_fixtures.parse_strict_legacy_timestamp(ascii_timestamp),
-        )
-        self.assertEqual(
-            expected,
-            legacy_fixtures.parse_strict_legacy_timestamp(
-                arabic_indic_timestamp
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                ascii_timestamp,
+                evidence,
             ),
         )
         self.assertEqual(
             expected,
-            legacy_fixtures.parse_strict_legacy_timestamp(bengali_timestamp),
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                arabic_indic_timestamp,
+                evidence,
+            ),
         )
         self.assertEqual(
             expected,
-            legacy_fixtures.parse_strict_legacy_timestamp(persian_timestamp),
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                bengali_timestamp,
+                evidence,
+            ),
         )
         self.assertEqual(
             expected,
-            legacy_fixtures.parse_strict_legacy_timestamp(
-                fullwidth_timestamp
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                persian_timestamp,
+                evidence,
+            ),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                fullwidth_timestamp,
+                evidence,
             ),
         )
         self.assertEqual(
@@ -387,9 +595,14 @@ class LegacyFixtureTests(unittest.TestCase):
                 else:
                     self.assertIsNone(normalized)
                 self.assertIsNone(
-                    legacy_fixtures.parse_strict_legacy_timestamp(value)
+                    legacy_fixtures.parse_evidenced_legacy_timestamp(
+                        value,
+                        evidence,
+                    )
                 )
-                self.assertFalse(legacy_fixtures.strict_legacy_timestamp(value))
+                self.assertFalse(
+                    legacy_fixtures.strict_legacy_timestamp(value, evidence)
+                )
 
     def test_localized_fixture_preserves_source_text_and_locale(self):
         case = next(
@@ -483,6 +696,87 @@ class LegacyFixtureTests(unittest.TestCase):
         self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", timestamps["all"]["min"])
         self.assertEqual("20240708091213", timestamps["all"]["max"])
 
+    def test_calendar_evidence_converts_buddhist_and_quarantines_ambiguity(self):
+        buddhist = legacy_fixtures.CalendarEvidence(
+            calendar=legacy_fixtures.CALENDAR_BUDDHIST,
+            locale_tag="th-TH-u-nu-thai",
+        )
+        gregorian_thai = legacy_fixtures.CalendarEvidence(
+            calendar=legacy_fixtures.CALENDAR_GREGORIAN,
+            locale_tag="th-TH-u-ca-gregory-nu-thai",
+        )
+        self.assertEqual(
+            datetime(2024, 7, 8, 9, 10, 11),
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+                buddhist,
+            ),
+        )
+        self.assertEqual(
+            datetime(2024, 7, 8, 9, 10, 11),
+            legacy_fixtures.parse_evidenced_legacy_timestamp(
+                "๒๐๒๔๐๗๐๘๐๙๑๐๑๑",
+                gregorian_thai,
+            ),
+        )
+        self.assertEqual(
+            datetime(2567, 7, 8, 9, 10, 11),
+            legacy_fixtures.parse_strict_gregorian_legacy_timestamp(
+                "๒๕๖๗๐๗๐๘๐๙๑๐๑๑"
+            ),
+        )
+
+        outputs = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")
+        calendar_output = outputs["calendar_semantics"]
+        self.assertEqual(
+            ["buddhist", "gregory"],
+            [
+                session["timestamp_calendar"]
+                for session in calendar_output["sessions"]
+            ],
+        )
+        self.assertEqual(
+            [
+                "2024-07-08T09:10:11Z",
+                "2024-07-08T09:11:11Z",
+            ],
+            [session["gmt_start_utc"] for session in calendar_output["sessions"]],
+        )
+        self.assertTrue(
+            calendar_output["diagnostics"]["calendar"][
+                "historical_locale_change"
+            ]
+        )
+        self.assertFalse(
+            calendar_output["diagnostics"]["calendar"][
+                "current_locale_used_as_row_evidence"
+            ]
+        )
+
+        quarantine = outputs["calendar_ambiguous"]
+        self.assertEqual("calendar_quarantine", quarantine["output_kind"])
+        self.assertEqual(
+            [1, 2],
+            quarantine["diagnostics"]["calendar"]["ambiguous_activity_ids"],
+        )
+        self.assertEqual(
+            "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+            quarantine["quarantined_activities"][0]["raw_activity"]["GMTSTART"],
+        )
+        self.assertEqual(
+            "25670708091011",
+            quarantine["quarantined_activities"][1]["raw_activity"]["GMTSTART"],
+        )
+        expectations = quarantine["migration_expectations"]
+        self.assertEqual("calendar_ambiguous", expectations["reason"])
+        self.assertEqual(4, expectations["source_rows_read"])
+        self.assertFalse(expectations["target_write_attempted"])
+        self.assertEqual(0, expectations["target_rows_written"])
+        self.assertFalse(expectations["receipt_write_attempted"])
+        self.assertFalse(expectations["receipt_written"])
+        self.assertTrue(expectations["source_database_retained"])
+        self.assertTrue(expectations["source_text_retained"])
+
     def test_sqlite_page_size_validation_blocks_all_illegal_encodings(self):
         legal_encodings = {
             1: 65536,
@@ -550,6 +844,96 @@ class LegacyFixtureTests(unittest.TestCase):
                 self.assertEqual(0, expectations["target_rows_written"])
                 self.assertFalse(expectations["receipt_write_attempted"])
                 self.assertFalse(expectations["receipt_written"])
+        finally:
+            shutil.rmtree(work_dir)
+
+    def test_sqlite_header_semantics_block_before_canonicalization(self):
+        source = TOOL_ROOT / "fixtures" / "representative.db"
+        corrupt_case = next(
+            case
+            for case in legacy_fixtures.fixture_cases()
+            if case.key == "corrupt"
+        )
+        work_dir = TOOL_ROOT / "generated" / ".header-semantics-unit"
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True)
+        try:
+            for field_name, offset in (("write", 18), ("read", 19)):
+                for invalid_version in (0, 255):
+                    with self.subTest(
+                        field=field_name,
+                        version=invalid_version,
+                    ):
+                        database = work_dir / "{}-{}.db".format(
+                            field_name,
+                            invalid_version,
+                        )
+                        shutil.copyfile(source, database)
+                        database_bytes = bytearray(database.read_bytes())
+                        database_bytes[offset] = invalid_version
+                        database.write_bytes(database_bytes)
+                        structure = (
+                            legacy_fixtures.sqlite_file_structure_diagnostics(
+                                database
+                            )
+                        )
+                        self.assertEqual(
+                            "invalid_format_version",
+                            structure["status"],
+                        )
+                        output = legacy_fixtures.build_blocked_preflight_output(
+                            corrupt_case,
+                            database,
+                        )
+                        self.assertEqual(
+                            legacy_fixtures.blocked_migration_expectations(
+                                "corrupt_sqlite"
+                            ),
+                            output["migration_expectations"],
+                        )
+                        with self.assertRaises(
+                            legacy_fixtures.FixtureValidationError
+                        ):
+                            legacy_fixtures.canonical_sqlite_artifact_bytes(
+                                database
+                            )
+
+            mismatch = work_dir / "counter-mismatch.db"
+            shutil.copyfile(source, mismatch)
+            database_bytes = bytearray(mismatch.read_bytes())
+            counter = int.from_bytes(database_bytes[24:28], "big")
+            database_bytes[92:96] = (counter + 1).to_bytes(4, "big")
+            mismatch.write_bytes(database_bytes)
+            structure = legacy_fixtures.sqlite_file_structure_diagnostics(
+                mismatch
+            )
+            self.assertEqual("inconsistent_change_counter", structure["status"])
+            self.assertFalse(
+                structure["header"][
+                    "change_counter_matches_version_valid_for"
+                ]
+            )
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.canonical_sqlite_artifact_bytes(mismatch)
+
+            active = legacy_fixtures.sqlite_file_structure_diagnostics(
+                TOOL_ROOT / "fixtures" / "active_wal_snapshot.db"
+            )
+            self.assertEqual("complete", active["status"])
+            self.assertEqual("wal", active["header"]["journal_mode"])
+            self.assertEqual(
+                (2, 2),
+                (
+                    active["header"]["write_version"],
+                    active["header"]["read_version"],
+                ),
+            )
+            self.assertTrue(
+                active["header"][
+                    "change_counter_matches_version_valid_for"
+                ]
+            )
         finally:
             shutil.rmtree(work_dir)
 
@@ -875,8 +1259,7 @@ class LegacyFixtureTests(unittest.TestCase):
             header_variant = work_dir / "writer-header-variant.db"
             shutil.copyfile(source, header_variant)
             database_bytes = bytearray(header_variant.read_bytes())
-            database_bytes[18] = 2 if database_bytes[18] == 1 else 1
-            database_bytes[19] = 2 if database_bytes[19] == 1 else 1
+            database_bytes[96:100] = (3049000).to_bytes(4, "big")
             header_variant.write_bytes(database_bytes)
             self.assertNotEqual(source.read_bytes(), header_variant.read_bytes())
             legacy_fixtures.compare_standard_database_artifacts(
@@ -988,19 +1371,8 @@ class LegacyFixtureTests(unittest.TestCase):
                 shutil.copyfile(source, destination)
             return source_database, destination_database
 
-        def vary_host_header(
-            database,
-            vary_read_write=True,
-            vary_counters=True,
-        ):
+        def vary_writer_version(database):
             database_bytes = bytearray(database.read_bytes())
-            if vary_read_write:
-                database_bytes[18] = 2 if database_bytes[18] == 1 else 1
-                database_bytes[19] = 2 if database_bytes[19] == 1 else 1
-            if vary_counters:
-                counter = (17).to_bytes(4, "big")
-                database_bytes[24:28] = counter
-                database_bytes[92:96] = counter
             database_bytes[96:100] = (3049000).to_bytes(4, "big")
             database.write_bytes(database_bytes)
 
@@ -1013,7 +1385,7 @@ class LegacyFixtureTests(unittest.TestCase):
             ):
                 case = cases[fixture_name]
                 source, variant = copy_case(case, "{}-header".format(fixture_name))
-                vary_host_header(variant)
+                vary_writer_version(variant)
                 legacy_fixtures.compare_fixture_storage_artifacts(
                     "{} host header".format(fixture_name),
                     source,
@@ -1023,11 +1395,7 @@ class LegacyFixtureTests(unittest.TestCase):
 
             active_case = cases["active_wal_snapshot"]
             source, variant = copy_case(active_case, "active-header")
-            vary_host_header(
-                variant,
-                vary_read_write=False,
-                vary_counters=False,
-            )
+            vary_writer_version(variant)
             legacy_fixtures.compare_fixture_storage_artifacts(
                 "active WAL host header",
                 source,
@@ -1128,9 +1496,9 @@ class LegacyFixtureTests(unittest.TestCase):
     def test_corpus_regenerates_deterministically(self):
         result = legacy_fixtures.verify_deterministic_regeneration(TOOL_ROOT)
         self.assertEqual(len(EXPECTED_FIXTURES), result["fixture_count"])
-        self.assertEqual(35, result["artifact_count"])
-        self.assertEqual(17, result["exact_byte_artifact_count"])
-        self.assertEqual(12, result["logical_database_artifact_count"])
+        self.assertEqual(39, result["artifact_count"])
+        self.assertEqual(19, result["exact_byte_artifact_count"])
+        self.assertEqual(14, result["logical_database_artifact_count"])
         self.assertEqual(6, result["canonical_storage_artifact_count"])
 
 
