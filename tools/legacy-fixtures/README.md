@@ -12,11 +12,11 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 34 defect detectors.
+# all 38 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
-# Regenerate twice. Standard databases are compared logically; artifacts whose
-# bytes are contractual are compared byte-for-byte.
+# Regenerate twice. SQLite artifacts use their declared logical/canonical
+# comparison; generated JSON is compared byte-for-byte.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 
 # Run the standard-library unit tests.
@@ -25,7 +25,12 @@ python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 
 The tool uses only Python's standard-library `sqlite3`, `json`, `hashlib`,
 `uuid`, and test modules. Android, Gradle, Room, and third-party packages are
-not required.
+not required. The optional locale-evidence probe uses JDK source-file mode.
+
+Current counted reality is 16 fixtures and 35 regeneration artifacts: 17
+exact-byte UTF-8/LF JSON artifacts, 12 logical standard databases, and 6
+canonical non-standard SQLite artifacts. The verifier runs 38 defect detectors,
+and the standard-library suite contains 19 tests.
 
 ## Layout
 
@@ -37,8 +42,10 @@ not required.
   as a session, attached point, orphan, or rejected row, and distinguish valid
   empty data from blocked missing/partial schema.
 - `manifest.json` — expected counts, timestamp ranges, representative values,
-  idempotency results, and logical checksums.
+  idempotency results, storage-comparison modes, and logical checksums.
 - `test_legacy_fixtures.py` — regression and fault-injection tests.
+- `LocaleTimestampProbe.java` — optional source-mode JDK probe for the exact
+  locale digits committed in `localized_timestamps`.
 
 The JSON output is a test interchange format, not a production Room schema.
 Integer comparison is exact above `2^53`. Canonical JSON floating-point values
@@ -68,13 +75,30 @@ target/receipt writes.
 
 Legacy `Config.TimestampFormat` constructs `SimpleDateFormat("yyyyMMddHHmmss")`
 without a locale, so Android uses the device's default format locale. The
-`localized_timestamps` fixture records `android_metadata = ar_EG` and uses the
-Arabic-Indic text `٢٠٢٤٠٧٠٨٠٩١٠١١`, reproduced with Java 21
-`SimpleDateFormat("yyyyMMddHHmmss", Locale.forLanguageTag("ar-EG"))` for the
-same fields as ASCII `20240708091011`. Android documents the same
-locale-sensitive constructor/default-symbol contract, including a zero digit
-that differs for Arabic; the checked fixture text is deterministic and does not
-depend on the Python host locale. See the Android
+`localized_timestamps` database currently records `android_metadata = ar_EG`,
+but contains valid per-row Arabic-Indic, historical Bengali, and historical
+ASCII timestamps. Android updates platform locale metadata when the database is
+opened after a locale change; that one current value is not a row-level digit
+declaration.
+
+The committed Arabic-Indic `٢٠٢٤٠٧٠٨٠٩١٠١١` and Bengali
+`২০২৪০৭০৮০৯১০১১` strings were reproduced by:
+
+```bash
+java tools/legacy-fixtures/LocaleTimestampProbe.java
+```
+
+OpenJDK `21.0.11+10-1-24.04.2-Ubuntu` reported:
+
+```text
+ar-EG zero=U+0660 formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
+bn-BD zero=U+09E6 formatted=২০২৪০৭০৮০৯১০১১
+en-US zero=U+0030 formatted=20240708091011
+```
+
+Android documents the same locale-sensitive constructor/default-symbol
+contract. The checked strings are deterministic and do not depend on the
+Python host locale. See the Android
 [`SimpleDateFormat(String)`](https://developer.android.com/reference/java/text/SimpleDateFormat#SimpleDateFormat(java.lang.String))
 and
 [`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
@@ -83,22 +107,36 @@ rejected-row diagnostics, representative values, and checksums.
 
 Validation converts each Unicode `Nd` decimal digit to its ASCII value only in a
 temporary parse buffer. It requires exactly 14 digits from one numbering-system
-block, then applies strict Gregorian date/time parsing. It still rejects mixed
-ASCII/Arabic-Indic or mixed Arabic digit sets, separators, direction marks,
-superscript and other non-`Nd` lookalikes, impossible dates, and invalid times.
-Defect detectors prove both that an ASCII-only ETL drops the valid localized
-rows and that a permissive per-character digit conversion wrongly accepts mixed
-numbering systems.
+block, then applies strict Gregorian date/time parsing. ASCII is a valid block
+by itself and can coexist with non-ASCII rows in one database, but ASCII cannot
+mix with another block inside one timestamp: one `SimpleDateFormat` instance
+uses one `DecimalFormatSymbols` zero digit for all numeric fields. The oracle
+also rejects mixed non-ASCII blocks, separators, embedded bidi/direction/format
+controls, superscript and other non-`Nd` lookalikes, impossible dates, and
+invalid times.
+
+Detectors prove that ASCII-only, ASCII-plus-Arabic-only, current-metadata-
+coupled, mixed-block-permissive, and Unicode-format-stripping parsers all fail
+the committed candidate corpus.
 
 ## Deterministic regeneration
 
-Every standard SQLite artifact is marked `exact_bytes_required: false`.
-Regeneration compares its integrity, schema, platform metadata, and type-tagged
-business rows logically. Harmless SQLite read/write-version header differences
-therefore pass, while any schema, metadata, type, or row-value change fails.
-Artifacts marked `exact_bytes_required: true` remain byte-for-byte contracts,
-and canonical JSON outputs remain byte-stable. Manifest comparison ignores only
-non-contractual byte lengths for standard database artifacts.
+All 18 SQLite artifacts are marked `exact_bytes_required: false`; none is a
+host-generated byte-for-byte contract. The 12 standard databases compare
+integrity, schema, platform metadata, and type-tagged business rows logically.
+The active-WAL trio compares main-only/full logical state, WAL frame shape, and
+required sidecar semantics. The malformed schema compares its exact schema
+defect plus seed rows. Truncated/corrupt files compare documented corruption
+shape plus a canonical byte digest that zeroes only SQLite header byte ranges
+`[18,20)`, `[24,28)`, and `[92,100)` before hashing. These fields cover
+read/write version and informational change/version metadata; structure,
+schema, page payload, and damage bytes remain contractual.
+
+The 16 expected JSON files and `manifest.json` are the 17 true exact-byte
+artifacts. `write_json()` emits UTF-8 bytes with LF and one terminal newline on
+every host, while `.gitattributes` enforces LF for fixture text. Determinism
+tests prove CRLF drift fails and harmless SQLite header variation passes while
+page, schema, payload, WAL, and corruption changes fail.
 
 ## Active WAL snapshot
 

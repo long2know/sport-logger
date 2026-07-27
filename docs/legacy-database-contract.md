@@ -116,9 +116,13 @@ CREATE TABLE IF NOT EXISTS android_metadata (locale TEXT);
 ```
 
 Most committed fixtures use deterministic locale `en_US`; the
-`localized_timestamps` fixture uses `ar_EG` to reproduce the locale-sensitive
-legacy writer. Production locale text is device-dependent and must not become a
-source-database identity or migrated business row.
+`localized_timestamps` database currently records `ar_EG`. That database also
+contains valid historical Bengali and ASCII timestamp rows because Android's
+platform locale row can change when a database is reopened after the device
+format locale changes. Production locale text is device-dependent, describes
+the current database configuration rather than each historical row, and must
+not become a source-database identity, row-level digit selector, or migrated
+business row.
 
 The generator then executes these source statements verbatim:
 
@@ -216,14 +220,26 @@ timestamp or collapses equal timestamps fails the oracle.
 `SimpleDateFormat("yyyyMMddHHmmss")` using the device's default format locale,
 default time zone, and default lenient parsing (`Config.java:15-18`). The
 one-argument constructor is locale-sensitive, so numeric fields may be emitted
-with the locale's decimal digits rather than ASCII. For example, Java/Android
-formatting under `ar_EG` emits Arabic-Indic
-`٢٠٢٤٠٧٠٨٠٩١٠١١` for the fields represented by ASCII
-`20240708091011`. The checked expected string was reproduced with Java 21
-`SimpleDateFormat("yyyyMMddHHmmss", Locale.forLanguageTag("ar-EG"))`; Android
-documents that the one-argument constructor uses the default `FORMAT` locale,
-and its `DecimalFormatSymbols.getZeroDigit()` contract explicitly varies for
-Arabic. See Android's
+with the locale's decimal digits rather than ASCII. The committed source-mode
+probe (`tools/legacy-fixtures/LocaleTimestampProbe.java`) formats
+`2024-07-08T09:10:11Z` with a UTC formatter. OpenJDK
+`21.0.11+10-1-24.04.2-Ubuntu` produced:
+
+```text
+ar-EG zero=U+0660 formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
+bn-BD zero=U+09E6 formatted=২০২৪০৭০৮০৯১০১১
+en-US zero=U+0030 formatted=20240708091011
+```
+
+Reproduce it with:
+
+```bash
+java tools/legacy-fixtures/LocaleTimestampProbe.java
+```
+
+Android documents that the one-argument constructor uses the default `FORMAT`
+locale, and `DecimalFormatSymbols.getZeroDigit()` varies with that locale. See
+Android's
 [`SimpleDateFormat(String)`](https://developer.android.com/reference/java/text/SimpleDateFormat#SimpleDateFormat(java.lang.String))
 and
 [`DecimalFormatSymbols.getZeroDigit()`](https://developer.android.com/reference/java/text/DecimalFormatSymbols#getZeroDigit())
@@ -244,8 +260,14 @@ parsing only, ETL must map Unicode decimal digits to their ASCII decimal values,
 require all 14 characters to come from one numbering-system block, and then
 apply strict Gregorian field validation. The original legacy text must remain
 unchanged in canonical source fields, diagnostics, representative values, and
-checksums. Separators, formatting controls, non-`Nd` lookalikes, mixed
-numbering systems, impossible dates, and invalid times remain rejected. Valid
+checksums. ASCII is one valid block and historical ASCII rows may coexist with
+Arabic-Indic or Bengali rows in one database, but ASCII may not mix with a
+non-ASCII block inside one timestamp. A `SimpleDateFormat` instance uses one
+`DecimalFormatSymbols` zero digit for all numeric fields; mixed ASCII/non-ASCII
+or mixed non-ASCII output is not source-realistic formatter behavior.
+Separators, embedded bidi/direction/format controls, non-`Nd` lookalikes,
+mixed numbering systems, impossible dates, and invalid times remain rejected
+rather than being stripped or normalized in the stored source text. Valid
 values parse as UTC without applying the device's current offset again.
 
 ## Source-backed defects that migration must not reproduce
@@ -278,12 +300,32 @@ checksums. Logical checksums do **not** hash SQLite file bytes. They hash tables
 `ACTIVITY`, `GPS_POINTS` order, rows by `ID`, and type-tagged column values;
 `REAL` values use exact IEEE-754 `float.hex()` representations. Platform
 metadata is verified separately and excluded from those business-data
-checksums. Standard database artifacts are marked `exact_bytes_required: false`;
-deterministic regeneration compares their integrity, schema, platform metadata,
-and type-tagged rows logically, so harmless SQLite read/write-version header
-variation does not fail CI while logical drift does. Exact artifact hashes are
-recorded only where bytes are part of the test contract: the active WAL trio and
-the malformed, truncated, and corrupt negative files.
+checksums.
+
+All 18 SQLite files are marked `exact_bytes_required: false`; host-generated
+SQLite and wal-index bytes are not exact-byte contracts:
+
+- 12 standard databases compare integrity, schema, platform metadata, and
+  type-tagged business rows logically;
+- the active-WAL trio compares main-only and consistent logical state, WAL frame
+  page/commit shape, canonical salts, and required sidecar usability without
+  hashing volatile `-shm` bytes;
+- the malformed-schema database compares its precise `ACTIVITY.TIME INTEGER`
+  defect, metadata, and seed rows semantically; and
+- truncated/corrupt databases compare their page/corruption shape and a
+  canonical digest of retained bytes after zeroing only SQLite header ranges
+  `[18,20)`, `[24,28)`, and `[92,100)`.
+
+Those ranges contain read/write format versions and host-writer
+change/version metadata. Page size/count, schema, payload, WAL frames, and the
+intentional damage location remain checked. Tests prove harmless header
+variation passes while real page, schema, payload, WAL, and corruption drift
+fails.
+
+The 16 `expected/*.json` files and `manifest.json` are the 17 true exact-byte
+artifacts. Generation writes explicit UTF-8 bytes with LF and one terminal
+newline; `.gitattributes` enforces LF for fixture JSON/source/docs. A CRLF
+mutation is an explicit defect detector.
 
 The committed cases are:
 
@@ -298,7 +340,7 @@ The committed cases are:
 | `representative.db` | Multi-activity data, multiple points, optional nulls, zero/default coordinates, and a normal partial live row. |
 | `timestamp_ordering.db` | Duplicate and non-monotonic timestamps in required ascending 64-bit point-ID order. |
 | `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
-| `localized_timestamps.db` | `ar_EG` source metadata, valid Arabic-Indic timestamps preserved losslessly, and strict invalid-date/time, separator, non-`Nd`, and mixed-numbering controls. |
+| `localized_timestamps.db` | Current `ar_EG` metadata with valid Arabic-Indic, historical Bengali, and historical ASCII rows preserved losslessly; mixed ASCII/non-ASCII, mixed Arabic-Indic/Bengali, bidi/format controls, invalid date/time, separator, and non-`Nd` rows remain rejected. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
 | `malformed_schema.db` | Integrity-valid file whose `ACTIVITY.TIME` declaration is incompatible; exact schema preflight blocks before row reads. |
@@ -342,18 +384,31 @@ Run from the repository root:
 ```bash
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
+python3 tools/legacy-fixtures/legacy_fixtures.py verify \
+  --candidate-dir tools/legacy-fixtures/expected
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
+python3 tools/legacy-fixtures/legacy_fixtures.py large \
+  --activities 100 \
+  --points-per-activity 1000
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-large
+java tools/legacy-fixtures/LocaleTimestampProbe.java
 ```
 
-The verifier runs 34 detectors covering integer and double narrowing,
+The counted corpus is 16 fixtures and 35 regeneration artifacts: 17 exact-byte
+UTF-8/LF JSON files, 12 logical standard databases, and 6 canonical
+non-standard SQLite artifacts. The standard-library suite contains 19 tests.
+
+The verifier runs 38 detectors covering integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
 deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
 sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
 committed-prefix omission), receipt-gap completion, Android metadata readiness,
 illegal page-size encodings, logical database drift, ASCII-only localized
-timestamp loss, destructive timestamp text normalization, mixed-numbering
-acceptance, and malformed/truncated/corrupt preflight side-effect prevention.
+timestamp loss, ASCII-plus-Arabic-only loss, current-metadata coupling,
+destructive timestamp text normalization, mixed-numbering acceptance, Unicode
+format-control stripping, CRLF JSON drift, and malformed/truncated/corrupt
+preflight side-effect prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

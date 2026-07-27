@@ -27,6 +27,7 @@ FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
 ANDROID_METADATA_LOCALE = "en_US"
 AR_EG_ANDROID_METADATA_LOCALE = "ar_EG"
+FIXED_SQLITE_PAGE_SIZE = 4096
 FIXTURE_NAMESPACE = uuid.uuid5(
     uuid.NAMESPACE_URL,
     "https://github.com/long2know/sport-logger/legacy-fixtures/v1",
@@ -36,12 +37,23 @@ SQLITE_HEADER = b"SQLite format 3\x00"
 SQLITE_PAGE_SIZE_ENCODINGS = frozenset(
     (1, 512, 1024, 2048, 4096, 8192, 16384, 32768)
 )
+SQLITE_HOST_HEADER_RANGES = (
+    (18, 20),
+    (24, 28),
+    (92, 100),
+)
 
 STORAGE_STANDARD = "standard"
 STORAGE_ACTIVE_WAL = "active_wal"
 STORAGE_MALFORMED_SCHEMA = "malformed_schema"
 STORAGE_TRUNCATED = "truncated"
 STORAGE_CORRUPT = "corrupt"
+
+COMPARISON_LOGICAL_DATABASE = "logical_database"
+COMPARISON_ACTIVE_WAL = "active_wal_semantics"
+COMPARISON_MALFORMED_SCHEMA = "malformed_schema_semantics"
+COMPARISON_TRUNCATED = "truncated_canonical_bytes"
+COMPARISON_CORRUPT = "corrupt_canonical_bytes"
 
 WAL_SALT_1 = 0x13579BDF
 WAL_SALT_2 = 0x2468ACE0
@@ -670,8 +682,9 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
         FixtureCase(
             key="localized_timestamps",
             description=(
-                "Arabic-Egypt locale rows using the Arabic-Indic digits emitted by "
-                "locale-sensitive SimpleDateFormat, plus strict malformed controls."
+                "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, "
+                "historical Bengali, and historical ASCII rows, plus strict "
+                "mixed-block and Unicode-format controls."
             ),
             activities=(
                 activity(
@@ -686,6 +699,26 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 ),
                 activity(
                     2,
+                    "২০২৪০৭০৮০৯১১১১",
+                    "২০২৪০৭০৮০৯১১১৩",
+                    "Synthetic Historical Bengali Session",
+                    "Bengali digits predate the database's current ar_EG metadata.",
+                    121.0,
+                    301.0,
+                    2.6,
+                ),
+                activity(
+                    3,
+                    "20240708091211",
+                    "20240708091213",
+                    "Synthetic Historical ASCII Session",
+                    "ASCII digits predate the database's current ar_EG metadata.",
+                    122.0,
+                    302.0,
+                    2.7,
+                ),
+                activity(
+                    4,
                     "٢٠٢٤٠٢٣٠٠١٠١٠١",
                     None,
                     "Synthetic Invalid Localized Date",
@@ -695,17 +728,37 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                 ),
                 activity(
-                    3,
+                    5,
                     "٢٠٢٤٠٧٠٨09١٠١١",
                     None,
-                    "Synthetic Mixed Numbering Systems",
+                    "Synthetic Mixed ASCII Arabic Digits",
                     None,
                     None,
                     None,
                     None,
                 ),
                 activity(
-                    4,
+                    6,
+                    "٢٠٢٤٠٧٠٨০৯١٠١١",
+                    None,
+                    "Synthetic Mixed Non-ASCII Digit Blocks",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    7,
+                    "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
+                    None,
+                    "Synthetic Embedded Right-To-Left Mark",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    8,
                     "٢٠٢٤٠٧٠٨٠٩١٠١¹",
                     None,
                     "Synthetic Non-Decimal Lookalike",
@@ -715,7 +768,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                 ),
                 activity(
-                    5,
+                    9,
                     "٢٠٢٤٠٧٠٨/٩١٠١١",
                     None,
                     "Synthetic Localized Separator",
@@ -725,7 +778,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                 ),
                 activity(
-                    6,
+                    10,
                     "٢٠٢٤٠٧٠٨٢٤٠٠٠٠",
                     None,
                     "Synthetic Invalid Localized Time",
@@ -762,6 +815,54 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 ),
                 point(
                     3,
+                    2,
+                    "২০২৪০৭০৮০৯১১১১",
+                    23.8103,
+                    90.4125,
+                    7.5,
+                    3.25,
+                    2.25,
+                    92.0,
+                    122.0,
+                ),
+                point(
+                    4,
+                    2,
+                    "২০২৪০৭০৮০৯১১১২",
+                    23.8104,
+                    90.4126,
+                    7.625,
+                    3.375,
+                    2.375,
+                    93.0,
+                    123.0,
+                ),
+                point(
+                    5,
+                    3,
+                    "20240708091211",
+                    47.6062,
+                    -122.3321,
+                    12.5,
+                    3.5,
+                    2.5,
+                    94.0,
+                    124.0,
+                ),
+                point(
+                    6,
+                    3,
+                    "20240708091212",
+                    47.6063,
+                    -122.3320,
+                    12.625,
+                    3.625,
+                    2.625,
+                    95.0,
+                    125.0,
+                ),
+                point(
+                    7,
                     1,
                     "٢٠٢٤١٣٠٨٠٩١٠١٤",
                     30.0446,
@@ -773,7 +874,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     122.0,
                 ),
                 point(
-                    4,
+                    8,
                     1,
                     "٢٠٢٤٠٧٠٨09١٠١٥",
                     30.0447,
@@ -785,9 +886,9 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     123.0,
                 ),
                 point(
-                    5,
+                    9,
                     1,
-                    "٢٠٢٤٠٧٠٨٠٩١٠١⁶",
+                    "٢٠٢٤٠٧٠٨০৯١٠١٦",
                     30.0448,
                     31.2361,
                     None,
@@ -797,9 +898,9 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     124.0,
                 ),
                 point(
-                    6,
+                    10,
                     1,
-                    "٢٠٢٤٠٧٠٨/٩١٠١٧",
+                    "٢٠٢٤٠٧٠٨\u2066٠٩١٠١٧",
                     30.0449,
                     31.2362,
                     None,
@@ -807,6 +908,30 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     None,
                     None,
                     125.0,
+                ),
+                point(
+                    11,
+                    1,
+                    "٢٠٢٤٠٧٠٨٠٩١٠١⁶",
+                    30.0450,
+                    31.2363,
+                    None,
+                    None,
+                    None,
+                    None,
+                    126.0,
+                ),
+                point(
+                    12,
+                    1,
+                    "٢٠٢٤٠٧٠٨/٩١٠١٧",
+                    30.0451,
+                    31.2364,
+                    None,
+                    None,
+                    None,
+                    None,
+                    127.0,
                 ),
             ),
             representative_values=(
@@ -819,16 +944,30 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 },
                 {
                     "table": "GPS_POINTS",
-                    "legacy_id": 2,
+                    "legacy_id": 4,
                     "column": "GMTTIMESTAMP",
-                    "expected": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+                    "expected": "২০২৪০৭০৮০৯১১১২",
                     "comparison": exact,
                 },
                 {
                     "table": "ACTIVITY",
                     "legacy_id": 3,
                     "column": "GMTSTART",
-                    "expected": "٢٠٢٤٠٧٠٨09١٠١١",
+                    "expected": "20240708091211",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 6,
+                    "column": "GMTSTART",
+                    "expected": "٢٠٢٤٠٧٠٨০৯١٠١١",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 7,
+                    "column": "GMTSTART",
+                    "expected": "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
                     "comparison": exact,
                 },
             ),
@@ -1151,13 +1290,22 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def pretty_json_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n",
-        encoding="utf-8",
-    )
+    path.write_bytes(pretty_json_bytes(value))
 
 
 def load_json(path: Path) -> Any:
@@ -1253,6 +1401,7 @@ def create_database(
     remove_database_artifacts(database)
     connection = sqlite3.connect(str(database))
     try:
+        connection.execute("PRAGMA page_size = {}".format(FIXED_SQLITE_PAGE_SIZE))
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -1428,6 +1577,7 @@ def create_malformed_schema_database(
     remove_database_artifacts(database)
     connection = sqlite3.connect(str(database))
     try:
+        connection.execute("PRAGMA page_size = {}".format(FIXED_SQLITE_PAGE_SIZE))
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -3057,15 +3207,20 @@ def fixture_artifact_paths(database: Path, case: FixtureCase) -> Tuple[Path, ...
     return (database,)
 
 
-def file_sha256(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            hasher.update(chunk)
-    return hasher.hexdigest()
+def fixture_artifact_comparison(case: FixtureCase) -> str:
+    comparisons = {
+        STORAGE_STANDARD: COMPARISON_LOGICAL_DATABASE,
+        STORAGE_ACTIVE_WAL: COMPARISON_ACTIVE_WAL,
+        STORAGE_MALFORMED_SCHEMA: COMPARISON_MALFORMED_SCHEMA,
+        STORAGE_TRUNCATED: COMPARISON_TRUNCATED,
+        STORAGE_CORRUPT: COMPARISON_CORRUPT,
+    }
+    try:
+        return comparisons[case.storage]
+    except KeyError as error:
+        raise FixtureValidationError(
+            "{} has unknown storage mode {!r}".format(case.key, case.storage)
+        ) from error
 
 
 def artifact_manifest(
@@ -3073,7 +3228,7 @@ def artifact_manifest(
     database: Path,
     case: FixtureCase,
 ) -> List[Mapping[str, Any]]:
-    exact_bytes_required = case.storage != STORAGE_STANDARD
+    comparison = fixture_artifact_comparison(case)
     artifacts: List[Mapping[str, Any]] = []
     for path in fixture_artifact_paths(database, case):
         if not path.is_file():
@@ -3082,11 +3237,9 @@ def artifact_manifest(
             )
         artifact: Dict[str, Any] = {
             "path": path.relative_to(root).as_posix(),
-            "bytes": path.stat().st_size,
-            "exact_bytes_required": exact_bytes_required,
+            "comparison": comparison,
+            "exact_bytes_required": False,
         }
-        if exact_bytes_required:
-            artifact["sha256"] = file_sha256(path)
         artifacts.append(artifact)
     return artifacts
 
@@ -3109,6 +3262,9 @@ def manifest_entry(
         "expected_output": expected_output_path.relative_to(root).as_posix(),
         "database_identity": case.database_identity,
         "artifacts": artifact_manifest(root, database, case),
+        "storage_canonical_checksum": hash_value(
+            fixture_storage_snapshot(database, case)
+        ),
         "expected": {
             "activity_rows": len(rows_by_table["ACTIVITY"]),
             "track_point_rows": len(rows_by_table["GPS_POINTS"]),
@@ -3145,6 +3301,9 @@ def blocked_manifest_entry(
         "expected_output": expected_output_path.relative_to(root).as_posix(),
         "database_identity": case.database_identity,
         "artifacts": artifact_manifest(root, database, case),
+        "storage_canonical_checksum": hash_value(
+            fixture_storage_snapshot(database, case)
+        ),
         "expected": {
             "generation_seed_counts": {
                 "activity_rows": len(case.activities),
@@ -3212,6 +3371,13 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
         "synthetic_data_only": True,
         "database_name": DATABASE_NAME,
         "fixture_namespace_uuid": str(FIXTURE_NAMESPACE),
+        "determinism": {
+            "json_encoding": "UTF-8",
+            "json_newline": "LF",
+            "sqlite_host_header_ignored_byte_ranges": [
+                list(byte_range) for byte_range in SQLITE_HOST_HEADER_RANGES
+            ],
+        },
         "logical_checksum_algorithm": (
             "SHA-256 over ordered table rows; each SQLite value is type-tagged, "
             "REAL values use exact IEEE-754 float.hex(), and table hashes are "
@@ -4053,9 +4219,65 @@ def run_storage_detection_tests(
             except ValueError:
                 return None
 
+        def parse_limited_digit_blocks(
+            value: Any,
+            allowed_zero_code_points: Sequence[int],
+        ) -> Optional[datetime]:
+            normalized = normalized_legacy_timestamp_digits(
+                value,
+                require_single_numbering_system=True,
+            )
+            if normalized is None:
+                return None
+            first_decimal = unicodedata.decimal(value[0])
+            zero_code_point = ord(value[0]) - first_decimal
+            if zero_code_point not in allowed_zero_code_points:
+                return None
+            try:
+                return datetime.strptime(normalized, "%Y%m%d%H%M%S")
+            except ValueError:
+                return None
+
+        def parse_ascii_arabic_only(value: Any) -> Optional[datetime]:
+            return parse_limited_digit_blocks(
+                value,
+                (ord("0"), ord("٠")),
+            )
+
+        def parse_current_metadata_block(value: Any) -> Optional[datetime]:
+            if localized_case.android_locale != AR_EG_ANDROID_METADATA_LOCALE:
+                raise FixtureValidationError(
+                    "Metadata-coupled detector requires the ar_EG control"
+                )
+            return parse_limited_digit_blocks(value, (ord("٠"),))
+
+        def parse_after_stripping_format_controls(
+            value: Any,
+        ) -> Optional[datetime]:
+            if not isinstance(value, str):
+                return None
+            stripped = "".join(
+                character
+                for character in value
+                if unicodedata.category(character) != "Cf"
+            )
+            return parse_strict_legacy_timestamp(stripped)
+
         for detector_name, timestamp_parser in (
             ("localized_timestamp_ascii_only_parser", parse_ascii_only),
+            (
+                "localized_timestamp_ascii_arabic_only_parser",
+                parse_ascii_arabic_only,
+            ),
+            (
+                "localized_timestamp_metadata_coupled_parser",
+                parse_current_metadata_block,
+            ),
             ("mixed_numbering_system_accepted", parse_mixed_decimal_digits),
+            (
+                "unicode_format_controls_stripped",
+                parse_after_stripping_format_controls,
+            ),
         ):
             candidate = copy.deepcopy(expected_outputs)
             candidate["localized_timestamps"] = build_canonical_output(
@@ -4073,6 +4295,24 @@ def run_storage_detection_tests(
                 raise FixtureValidationError(
                     "Validator self-test did not detect {}".format(detector_name)
                 )
+
+        crlf_json = work_dir / "localized-timestamps-crlf.json"
+        committed_json = root / "expected" / "localized_timestamps.json"
+        crlf_json.write_bytes(
+            committed_json.read_bytes().replace(b"\n", b"\r\n")
+        )
+        try:
+            compare_exact_artifact_bytes(
+                "json_crlf_drift",
+                committed_json,
+                crlf_json,
+            )
+        except FixtureValidationError:
+            passed.append("json_crlf_drift")
+        else:
+            raise FixtureValidationError(
+                "Validator self-test did not detect json_crlf_drift"
+            )
 
         missing_shm = work_dir / "missing-shm.db"
         shutil.copyfile(active_database, missing_shm)
@@ -4311,6 +4551,14 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
         raise FixtureValidationError("Manifest database name mismatch")
     if manifest.get("fixture_namespace_uuid") != str(FIXTURE_NAMESPACE):
         raise FixtureValidationError("Manifest fixture namespace mismatch")
+    if manifest.get("determinism") != {
+        "json_encoding": "UTF-8",
+        "json_newline": "LF",
+        "sqlite_host_header_ignored_byte_ranges": [
+            list(byte_range) for byte_range in SQLITE_HOST_HEADER_RANGES
+        ],
+    }:
+        raise FixtureValidationError("Manifest determinism contract mismatch")
     source_schema = manifest.get("source_schema", {})
     expected_schema = {
         "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
@@ -4460,6 +4708,37 @@ def corpus_artifact_paths(root: Path) -> Mapping[str, Path]:
     }
 
 
+def database_content_snapshot(
+    connection: sqlite3.Connection,
+    rows_by_table: Optional[Mapping[str, Sequence[Sequence[Any]]]] = None,
+) -> Mapping[str, Any]:
+    rows = rows_by_table if rows_by_table is not None else read_all_rows(connection)
+    return {
+        "schema": schema_payload(connection),
+        "schema_diagnostics": schema_diagnostics(connection),
+        "platform_metadata": platform_metadata_payload(connection),
+        "business_rows": {
+            table: [
+                [typed_value(value) for value in row]
+                for row in rows[table]
+            ]
+            for table in BUSINESS_TABLES
+        },
+    }
+
+
+def canonical_sqlite_artifact_bytes(database: Path) -> bytes:
+    database_bytes = bytearray(database.read_bytes())
+    sqlite_page_size(database_bytes)
+    for start, end in SQLITE_HOST_HEADER_RANGES:
+        database_bytes[start:end] = b"\x00" * (end - start)
+    return bytes(database_bytes)
+
+
+def canonical_sqlite_artifact_sha256(database: Path) -> str:
+    return hashlib.sha256(canonical_sqlite_artifact_bytes(database)).hexdigest()
+
+
 def standard_database_logical_snapshot(
     database: Path,
     case: FixtureCase,
@@ -4485,18 +4764,262 @@ def standard_database_logical_snapshot(
         validate_schema(connection, str(database), case.business_tables)
         rows_by_table = read_all_rows(connection)
         compare_rows_to_case(case, rows_by_table)
+        return database_content_snapshot(connection, rows_by_table)
+
+
+def active_wal_frame_shape(wal_path: Path) -> Mapping[str, Any]:
+    wal = wal_path.read_bytes()
+    if len(wal) < 32:
+        raise FixtureValidationError("{} has a truncated WAL header".format(wal_path))
+    magic, format_version, encoded_page_size = struct.unpack(">III", wal[:12])
+    if magic not in (0x377F0682, 0x377F0683):
+        raise FixtureValidationError("{} has an invalid WAL magic".format(wal_path))
+    page_size = 65536 if encoded_page_size == 0 else encoded_page_size
+    frame_size = 24 + page_size
+    if (len(wal) - 32) % frame_size != 0:
+        raise FixtureValidationError("{} has a truncated WAL frame".format(wal_path))
+    salt_1, salt_2 = struct.unpack(">II", wal[16:24])
+    if (salt_1, salt_2) != (WAL_SALT_1, WAL_SALT_2):
+        raise FixtureValidationError("{} has non-canonical WAL salts".format(wal_path))
+    page_numbers: List[int] = []
+    commit_page_counts: List[int] = []
+    for offset in range(32, len(wal), frame_size):
+        page_number, commit_pages = struct.unpack(">II", wal[offset : offset + 8])
+        page_numbers.append(page_number)
+        commit_page_counts.append(commit_pages)
+    if not page_numbers or commit_page_counts[-1] == 0:
+        raise FixtureValidationError("{} lacks a committed WAL frame".format(wal_path))
+    return {
+        "format_version": format_version,
+        "page_size": page_size,
+        "frame_count": len(page_numbers),
+        "page_numbers": page_numbers,
+        "commit_page_counts": commit_page_counts,
+        "canonical_salts": True,
+    }
+
+
+def active_wal_storage_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage != STORAGE_ACTIVE_WAL:
+        raise FixtureValidationError("{} is not an active-WAL fixture".format(case.key))
+    diagnostics = dict(active_wal_snapshot_diagnostics(database, case))
+    diagnostics.pop("shm_bytes", None)
+    diagnostics["shm_sidecar_present"] = True
+
+    structure = sqlite_file_structure_diagnostics(database)
+    if structure["status"] != "complete":
+        raise FixtureValidationError(
+            "{} active-WAL main file is not structurally complete".format(case.key)
+        )
+
+    immutable_uri = "file:{}?mode=ro&immutable=1".format(
+        database.resolve().as_posix()
+    )
+    main_only = sqlite3.connect(immutable_uri, uri=True)
+    try:
+        validate_schema(main_only, "{} main-only".format(case.key))
+        main_rows = read_all_rows(main_only)
+        if any(main_rows[table] for table in BUSINESS_TABLES):
+            raise FixtureValidationError(
+                "{} active-WAL rows leaked into the main file".format(case.key)
+            )
+        main_snapshot = database_content_snapshot(main_only, main_rows)
+    finally:
+        main_only.close()
+
+    with open_readonly(database) as connection:
+        validate_schema(connection, "{} consistent".format(case.key))
+        rows_by_table = read_all_rows(connection)
+        compare_rows_to_case(case, rows_by_table)
+        consistent_snapshot = database_content_snapshot(connection, rows_by_table)
+
+    shm_path = Path(str(database) + "-shm")
+    if not shm_path.is_file() or shm_path.stat().st_size < 32768:
+        raise FixtureValidationError(
+            "{} has an invalid active-WAL shared-memory sidecar".format(case.key)
+        )
+    return {
+        "storage": STORAGE_ACTIVE_WAL,
+        "main_page_size": structure["page_size"],
+        "diagnostics": diagnostics,
+        "wal_shape": active_wal_frame_shape(Path(str(database) + "-wal")),
+        "main_only": main_snapshot,
+        "consistent_snapshot": consistent_snapshot,
+    }
+
+
+def malformed_schema_storage_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage != STORAGE_MALFORMED_SCHEMA:
+        raise FixtureValidationError(
+            "{} is not a malformed-schema fixture".format(case.key)
+        )
+    structure = sqlite_file_structure_diagnostics(database)
+    integrity = sqlite_integrity_diagnostics(database)
+    if structure["status"] != "complete" or integrity["status"] != "passed":
+        raise FixtureValidationError(
+            "{} no longer has an intact malformed-schema shape".format(case.key)
+        )
+    with open_readonly(database) as connection:
+        diagnostics = schema_diagnostics(connection)
+        if (
+            diagnostics["state"] != "malformed_schema"
+            or diagnostics["schema_errors"] != ["ACTIVITY:table_info"]
+        ):
+            raise FixtureValidationError(
+                "{} no longer has the expected schema defect".format(case.key)
+            )
+        rows_by_table = read_all_rows(connection)
+        compare_rows_to_case(case, rows_by_table)
         return {
-            "schema": schema_payload(connection),
-            "schema_diagnostics": schema_diagnostics(connection),
-            "platform_metadata": platform_metadata_payload(connection),
-            "business_rows": {
-                table: [
-                    [typed_value(value) for value in row]
-                    for row in rows_by_table[table]
-                ]
-                for table in BUSINESS_TABLES
-            },
+            "storage": STORAGE_MALFORMED_SCHEMA,
+            "file_structure_status": structure["status"],
+            "integrity_status": integrity["status"],
+            "content": database_content_snapshot(connection, rows_by_table),
         }
+
+
+def truncated_storage_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage != STORAGE_TRUNCATED:
+        raise FixtureValidationError("{} is not a truncated fixture".format(case.key))
+    structure = sqlite_file_structure_diagnostics(database)
+    if structure["status"] != "truncated" or structure["page_size"] is None:
+        raise FixtureValidationError(
+            "{} no longer has the expected truncated shape".format(case.key)
+        )
+    actual_pages, partial_bytes = divmod(
+        structure["actual_bytes"],
+        structure["page_size"],
+    )
+    missing_pages = structure["declared_pages"] - actual_pages
+    if missing_pages != 1 or partial_bytes != 0:
+        raise FixtureValidationError(
+            "{} must be exactly one complete page short".format(case.key)
+        )
+    return {
+        "storage": STORAGE_TRUNCATED,
+        "encoded_page_size": structure["encoded_page_size"],
+        "page_size": structure["page_size"],
+        "declared_pages": structure["declared_pages"],
+        "actual_pages": actual_pages,
+        "missing_pages": missing_pages,
+        "canonical_bytes_sha256": canonical_sqlite_artifact_sha256(database),
+    }
+
+
+def corrupt_storage_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage != STORAGE_CORRUPT:
+        raise FixtureValidationError("{} is not a corrupt fixture".format(case.key))
+    structure = sqlite_file_structure_diagnostics(database)
+    integrity = sqlite_integrity_diagnostics(database)
+    if structure["status"] != "complete" or integrity["status"] != "failed":
+        raise FixtureValidationError(
+            "{} no longer has the expected corruption shape".format(case.key)
+        )
+    with open_readonly(database) as connection:
+        root_row = connection.execute(
+            "SELECT rootpage, sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'GPS_POINTS'"
+        ).fetchone()
+        if root_row is None:
+            raise FixtureValidationError(
+                "{} is missing the GPS_POINTS schema record".format(case.key)
+            )
+        root_page = int(root_row[0])
+        activity_rows = read_table_rows(connection, "ACTIVITY")
+        actual_activity_rows = [
+            [typed_value(value) for value in row] for row in activity_rows
+        ]
+        expected_activity_rows = [
+            [typed_value(value) for value in row] for row in case.activities
+        ]
+        if actual_activity_rows != expected_activity_rows:
+            raise FixtureValidationError(
+                "{} readable ACTIVITY payload changed".format(case.key)
+            )
+        metadata = platform_metadata_payload(connection)
+        schema_records = [
+            {
+                "name": row[0],
+                "root_page": row[1],
+                "sql": row[2],
+            }
+            for row in connection.execute(
+                "SELECT name, rootpage, sql FROM sqlite_master "
+                "WHERE type = 'table' ORDER BY name"
+            )
+        ]
+        try:
+            read_table_rows(connection, "GPS_POINTS")
+        except sqlite3.DatabaseError:
+            pass
+        else:
+            raise FixtureValidationError(
+                "{} GPS_POINTS corruption is no longer observable".format(case.key)
+            )
+
+    database_bytes = database.read_bytes()
+    page_offset = (root_page - 1) * structure["page_size"]
+    if page_offset >= len(database_bytes) or database_bytes[page_offset] != 0:
+        raise FixtureValidationError(
+            "{} GPS_POINTS root-page damage marker changed".format(case.key)
+        )
+    return {
+        "storage": STORAGE_CORRUPT,
+        "encoded_page_size": structure["encoded_page_size"],
+        "page_size": structure["page_size"],
+        "declared_pages": structure["declared_pages"],
+        "gps_points_root_page": root_page,
+        "gps_points_root_page_type": database_bytes[page_offset],
+        "integrity_status": integrity["status"],
+        "schema_records": schema_records,
+        "platform_metadata": metadata,
+        "activity_rows": actual_activity_rows,
+        "canonical_bytes_sha256": canonical_sqlite_artifact_sha256(database),
+    }
+
+
+def fixture_storage_snapshot(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    if case.storage == STORAGE_STANDARD:
+        return standard_database_logical_snapshot(database, case)
+    if case.storage == STORAGE_ACTIVE_WAL:
+        return active_wal_storage_snapshot(database, case)
+    if case.storage == STORAGE_MALFORMED_SCHEMA:
+        return malformed_schema_storage_snapshot(database, case)
+    if case.storage == STORAGE_TRUNCATED:
+        return truncated_storage_snapshot(database, case)
+    if case.storage == STORAGE_CORRUPT:
+        return corrupt_storage_snapshot(database, case)
+    raise FixtureValidationError(
+        "{} has unknown storage mode {!r}".format(case.key, case.storage)
+    )
+
+
+def compare_fixture_storage_artifacts(
+    label: str,
+    expected_database: Path,
+    actual_database: Path,
+    case: FixtureCase,
+) -> None:
+    compare_json(
+        fixture_storage_snapshot(expected_database, case),
+        fixture_storage_snapshot(actual_database, case),
+        "$.storage_artifacts.{}".format(label),
+    )
 
 
 def compare_standard_database_artifacts(
@@ -4505,56 +5028,61 @@ def compare_standard_database_artifacts(
     actual_database: Path,
     case: FixtureCase,
 ) -> None:
-    expected_snapshot = standard_database_logical_snapshot(
+    if case.storage != STORAGE_STANDARD:
+        raise FixtureValidationError(
+            "{} is not a standard logical-database fixture".format(case.key)
+        )
+    compare_fixture_storage_artifacts(
+        label,
         expected_database,
-        case,
-    )
-    actual_snapshot = standard_database_logical_snapshot(
         actual_database,
         case,
-    )
-    compare_json(
-        expected_snapshot,
-        actual_snapshot,
-        "$.logical_database.{}".format(label),
     )
 
 
 def manifest_artifact_requirements(
     manifest: Mapping[str, Any],
-) -> Tuple[Mapping[str, bool], Mapping[str, str]]:
-    exact_bytes: Dict[str, bool] = {}
+) -> Tuple[Mapping[str, str], Mapping[str, str]]:
+    comparisons: Dict[str, str] = {}
     fixture_by_path: Dict[str, str] = {}
     for entry in manifest.get("fixtures", []):
         fixture_name = entry["name"]
         for artifact in entry.get("artifacts", []):
             path = artifact["path"]
             exact = artifact.get("exact_bytes_required")
-            if not isinstance(exact, bool):
+            comparison = artifact.get("comparison")
+            if exact is not False or not isinstance(comparison, str):
                 raise FixtureValidationError(
-                    "{} artifact {} lacks exact_bytes_required".format(
+                    "{} SQLite artifact {} must use a non-byte comparison".format(
                         fixture_name,
                         path,
                     )
                 )
-            if path in exact_bytes:
+            if "bytes" in artifact or "sha256" in artifact:
+                raise FixtureValidationError(
+                    "{} SQLite artifact {} contains host-dependent byte metadata".format(
+                        fixture_name,
+                        path,
+                    )
+                )
+            if path in comparisons:
                 raise FixtureValidationError(
                     "Duplicate manifest artifact path {}".format(path)
                 )
-            exact_bytes[path] = exact
+            comparisons[path] = comparison
             fixture_by_path[path] = fixture_name
-    return exact_bytes, fixture_by_path
+    return comparisons, fixture_by_path
 
 
-def deterministic_manifest_payload(
-    manifest: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    payload = copy.deepcopy(manifest)
-    for entry in payload.get("fixtures", []):
-        for artifact in entry.get("artifacts", []):
-            if artifact.get("exact_bytes_required") is False:
-                artifact.pop("bytes", None)
-    return payload
+def compare_exact_artifact_bytes(
+    label: str,
+    expected_path: Path,
+    actual_path: Path,
+) -> None:
+    if expected_path.read_bytes() != actual_path.read_bytes():
+        raise FixtureValidationError(
+            "Exact-byte deterministic regeneration failed for {}".format(label)
+        )
 
 
 def verify_deterministic_regeneration(
@@ -4584,16 +5112,6 @@ def verify_deterministic_regeneration(
         committed_manifest = load_json(root / "manifest.json")
         first_manifest = load_json(first / "manifest.json")
         second_manifest = load_json(second / "manifest.json")
-        compare_json(
-            deterministic_manifest_payload(committed_manifest),
-            deterministic_manifest_payload(first_manifest),
-            "$.determinism.first_manifest",
-        )
-        compare_json(
-            deterministic_manifest_payload(committed_manifest),
-            deterministic_manifest_payload(second_manifest),
-            "$.determinism.second_manifest",
-        )
         committed_requirements, fixture_by_path = manifest_artifact_requirements(
             committed_manifest
         )
@@ -4611,55 +5129,84 @@ def verify_deterministic_regeneration(
         )
 
         cases = {case.key: case for case in fixture_cases()}
-        mismatches: List[str] = []
-        exact_byte_artifact_count = 0
-        logical_database_artifact_count = 0
-        for path in sorted(first_artifacts):
-            if path == "manifest.json":
-                continue
-            exact_bytes_required = committed_requirements.get(path)
-            if exact_bytes_required is False:
-                fixture_name = fixture_by_path[path]
-                case = cases[fixture_name]
-                if case.storage != STORAGE_STANDARD or not path.endswith(".db"):
-                    raise FixtureValidationError(
-                        "{} is marked for logical comparison but is not a "
-                        "standard database artifact".format(path)
-                    )
-                compare_standard_database_artifacts(
-                    "{} first/second".format(fixture_name),
-                    first_artifacts[path],
-                    second_artifacts[path],
-                    case,
-                )
-                compare_standard_database_artifacts(
-                    "{} regenerated/committed".format(fixture_name),
-                    first_artifacts[path],
-                    committed_artifacts[path],
-                    case,
-                )
-                logical_database_artifact_count += 1
-                continue
-
-            exact_byte_artifact_count += 1
-            first_bytes = first_artifacts[path].read_bytes()
-            if (
-                first_bytes != second_artifacts[path].read_bytes()
-                or first_bytes != committed_artifacts[path].read_bytes()
-            ):
-                mismatches.append(path)
-        if mismatches:
+        fixture_artifact_paths_set = set(committed_requirements)
+        exact_artifact_paths = set(first_artifacts) - fixture_artifact_paths_set
+        expected_exact_artifact_paths = {"manifest.json"} | {
+            "expected/{}.json".format(case.key) for case in fixture_cases()
+        }
+        if exact_artifact_paths != expected_exact_artifact_paths:
             raise FixtureValidationError(
-                "Exact-byte deterministic regeneration failed for {}".format(
-                    mismatches
+                "Exact-byte text artifact set mismatch; expected {}, found {}".format(
+                    sorted(expected_exact_artifact_paths),
+                    sorted(exact_artifact_paths),
+                )
+            )
+        for path in sorted(exact_artifact_paths):
+            compare_exact_artifact_bytes(
+                "{} first/second".format(path),
+                first_artifacts[path],
+                second_artifacts[path],
+            )
+            compare_exact_artifact_bytes(
+                "{} regenerated/committed".format(path),
+                first_artifacts[path],
+                committed_artifacts[path],
+            )
+
+        visited_fixture_paths = set()
+        logical_database_artifact_count = 0
+        canonical_storage_artifact_count = 0
+        for fixture_name in sorted(cases):
+            case = cases[fixture_name]
+            first_database = first / "fixtures" / "{}.db".format(fixture_name)
+            second_database = second / "fixtures" / "{}.db".format(fixture_name)
+            committed_database = root / "fixtures" / "{}.db".format(fixture_name)
+            comparison = fixture_artifact_comparison(case)
+            paths = {
+                path.relative_to(first).as_posix()
+                for path in fixture_artifact_paths(first_database, case)
+            }
+            for path in paths:
+                if (
+                    fixture_by_path.get(path) != fixture_name
+                    or committed_requirements.get(path) != comparison
+                ):
+                    raise FixtureValidationError(
+                        "{} artifact comparison metadata is inconsistent".format(path)
+                    )
+            visited_fixture_paths.update(paths)
+            compare_fixture_storage_artifacts(
+                "{} first/second".format(fixture_name),
+                first_database,
+                second_database,
+                case,
+            )
+            compare_fixture_storage_artifacts(
+                "{} regenerated/committed".format(fixture_name),
+                first_database,
+                committed_database,
+                case,
+            )
+            if comparison == COMPARISON_LOGICAL_DATABASE:
+                logical_database_artifact_count += len(paths)
+            else:
+                canonical_storage_artifact_count += len(paths)
+        if visited_fixture_paths != fixture_artifact_paths_set:
+            raise FixtureValidationError(
+                "Fixture artifact comparison coverage mismatch; missing {}, extra {}".format(
+                    sorted(fixture_artifact_paths_set - visited_fixture_paths),
+                    sorted(visited_fixture_paths - fixture_artifact_paths_set),
                 )
             )
         return {
             "artifact_count": len(first_artifacts),
             "fixture_count": len(fixture_cases()),
-            "exact_byte_artifact_count": exact_byte_artifact_count,
+            "exact_byte_artifact_count": len(exact_artifact_paths),
             "logical_database_artifact_count": (
                 logical_database_artifact_count
+            ),
+            "canonical_storage_artifact_count": (
+                canonical_storage_artifact_count
             ),
         }
     finally:
@@ -4693,6 +5240,7 @@ def generate_large_fixture(
     base = datetime(2030, 1, 1, 0, 0, 0)
     point_id = 1
     try:
+        connection.execute("PRAGMA page_size = {}".format(FIXED_SQLITE_PAGE_SIZE))
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -4892,8 +5440,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     subparsers.add_parser(
         "verify-determinism",
         help=(
-            "Regenerate the full corpus twice, compare standard databases "
-            "logically, and compare exact-byte artifacts byte-for-byte."
+            "Regenerate the full corpus twice, compare SQLite artifacts through "
+            "their declared canonical mode, and compare UTF-8/LF JSON byte-for-byte."
         ),
     ).add_argument("--root", type=Path, default=TOOL_ROOT)
 
@@ -4956,12 +5504,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             result = verify_deterministic_regeneration(args.root)
             print(
                 "Verified deterministic regeneration of {} artifacts across {} "
-                "fixtures ({} exact-byte artifacts, {} logical database "
-                "artifacts)".format(
+                "fixtures ({} exact-byte text artifacts, {} logical database "
+                "artifacts, {} canonical storage artifacts)".format(
                     result["artifact_count"],
                     result["fixture_count"],
                     result["exact_byte_artifact_count"],
                     result["logical_database_artifact_count"],
+                    result["canonical_storage_artifact_count"],
                 )
             )
             return 0

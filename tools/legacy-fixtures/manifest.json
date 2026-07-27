@@ -1,12 +1,30 @@
 {
   "database_name": "GPSLOGGERDB_LONG2KNOW",
+  "determinism": {
+    "json_encoding": "UTF-8",
+    "json_newline": "LF",
+    "sqlite_host_header_ignored_byte_ranges": [
+      [
+        18,
+        20
+      ],
+      [
+        24,
+        28
+      ],
+      [
+        92,
+        100
+      ]
+    ]
+  },
   "fixture_namespace_uuid": "8f13caf0-f046-575f-b2cb-fa4a5fbd1ae6",
   "fixtures": [
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/empty.db"
         }
@@ -108,13 +126,14 @@
       },
       "expected_output": "expected/empty.json",
       "name": "empty",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "713d4b476848703f5da58f0f9e7584def438ed74e9abf804fbc00d98a08da4b9"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 8192,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/startup_no_business_tables.db"
         }
@@ -216,13 +235,14 @@
       },
       "expected_output": "expected/startup_no_business_tables.json",
       "name": "startup_no_business_tables",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "7d0fced3186c8a2eadbde7cbc46a5219c4fd3cb34f27a8b0230cfb24eec752a1"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 16384,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/startup_activity_only.db"
         }
@@ -325,13 +345,14 @@
       },
       "expected_output": "expected/startup_activity_only.json",
       "name": "startup_activity_only",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "cf9fed2943af435fc9d35ed7d89d3876cd8a8f5cc40e3729b71e89a004055989"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/startup_activity_id_zero.db"
         }
@@ -444,13 +465,14 @@
       },
       "expected_output": "expected/startup_activity_id_zero.json",
       "name": "startup_activity_id_zero",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "d1e1cf03a6214c603d4d09dd94bdf42108e62dab5e2a93ac0c9fad4004dd5fda"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/start_only_zero_points.db"
         }
@@ -561,28 +583,26 @@
       },
       "expected_output": "expected/start_only_zero_points.json",
       "name": "start_only_zero_points",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "1d6d746d3c3b50600a71b2e8ada51d1b64c7d0d53d5676ac339502187bc759ad"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
-          "exact_bytes_required": true,
-          "path": "fixtures/active_wal_snapshot.db",
-          "sha256": "3710fbe109a0ca1f3d3ec01e0069e5859a3fa6e30526b2c98a7e48f4237e59bf"
+          "comparison": "active_wal_semantics",
+          "exact_bytes_required": false,
+          "path": "fixtures/active_wal_snapshot.db"
         },
         {
-          "bytes": 12392,
-          "exact_bytes_required": true,
-          "path": "fixtures/active_wal_snapshot.db-wal",
-          "sha256": "dc40e44b03b868b8b28b0813fcb694e15374a9b4f47fcb7b84c860f6c02ca10c"
+          "comparison": "active_wal_semantics",
+          "exact_bytes_required": false,
+          "path": "fixtures/active_wal_snapshot.db-wal"
         },
         {
-          "bytes": 32768,
-          "exact_bytes_required": true,
-          "path": "fixtures/active_wal_snapshot.db-shm",
-          "sha256": "0394228aa568f3741878040e90ee25f5151f1fde5b9387385adfce3151a67cd5"
+          "comparison": "active_wal_semantics",
+          "exact_bytes_required": false,
+          "path": "fixtures/active_wal_snapshot.db-shm"
         }
       ],
       "database": "fixtures/active_wal_snapshot.db",
@@ -714,13 +734,14 @@
       },
       "expected_output": "expected/active_wal_snapshot.json",
       "name": "active_wal_snapshot",
-      "storage": "active_wal"
+      "storage": "active_wal",
+      "storage_canonical_checksum": "52c28738f4e9128c19ea86b28b93fdbe6139a9dd3ea60fbf619415924ea174bd"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/representative.db"
         }
@@ -861,13 +882,14 @@
       },
       "expected_output": "expected/representative.json",
       "name": "representative",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "305d86861fd90ab8a55593d5178cb9129a347432e4bcb4caad17abb51c1449c9"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/timestamp_ordering.db"
         }
@@ -988,13 +1010,14 @@
       },
       "expected_output": "expected/timestamp_ordering.json",
       "name": "timestamp_ordering",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "13627d92e411879c2d1cc551aa4eebb5fd702af2e5ccf4dd05cc5a50b5114c63"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/precision.db"
         }
@@ -1179,33 +1202,34 @@
       },
       "expected_output": "expected/precision.json",
       "name": "precision",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "079fdd8dd9098d435ec38bccc45d56bccc7861a01b6a2fd8c8cc988430432d80"
     },
     {
       "android_locale": "ar_EG",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/localized_timestamps.db"
         }
       ],
       "database": "fixtures/localized_timestamps.db",
       "database_identity": "synthetic:sport-logger:legacy:localized_timestamps:v1",
-      "description": "Arabic-Egypt locale rows using the Arabic-Indic digits emitted by locale-sensitive SimpleDateFormat, plus strict malformed controls.",
+      "description": "Current Arabic-Egypt metadata with source-realistic Arabic-Indic, historical Bengali, and historical ASCII rows, plus strict mixed-block and Unicode-format controls.",
       "expected": {
-        "activity_rows": 6,
+        "activity_rows": 10,
         "canonical": {
           "orphan_track_points": 0,
           "partial_sessions": 0,
-          "rejected_activity_rows": 5,
-          "rejected_track_point_rows": 4,
-          "sessions": 1,
-          "source_activity_rows": 6,
-          "source_track_point_rows": 6,
-          "track_points": 2
+          "rejected_activity_rows": 7,
+          "rejected_track_point_rows": 6,
+          "sessions": 3,
+          "source_activity_rows": 10,
+          "source_track_point_rows": 12,
+          "track_points": 6
         },
-        "canonical_output_logical_checksum": "ef3f2b2c346e52fe87592c950c64a21ec98f3846765e9b845766126034164fd5",
+        "canonical_output_logical_checksum": "d7bd6640573ba07b2f6e57f40fcd17a0f1ed368026cb819d6b689bab37a5f511",
         "diagnostics": {
           "data_state": "contains_business_rows",
           "ordering": {
@@ -1241,9 +1265,9 @@
         },
         "idempotency": null,
         "logical_checksums": {
-          "activity": "cda7608c763f67f022fdf62d6f0d4a2ddd2be5870e2a17402d63b5e9c8546f5f",
-          "database": "9d9a789d2d43989750306b2340e5c416ef5af59c205ae9ac25fa8fdbcbbefa7d",
-          "gps_points": "5cf3c3bb06cf4edf4256c63aaeb244617d0c35c908886904588364eafe93b2a7"
+          "activity": "8e1f8fd41d2aa85ae351a83d5b8e906e603fa17815b494f83601cc5b91286655",
+          "database": "72aa0456fbcef5226c28786ca38a7d5542cf76ccb367b963493494d07b603f3b",
+          "gps_points": "63c5ef822a59d72da5261e1fbfa09e8528983da7c6f6ffc2c19e0763f3f9aead"
         },
         "physical_orphan_track_points": 0,
         "platform_metadata": {
@@ -1258,7 +1282,9 @@
           }
         },
         "points_per_activity": {
-          "1": 6
+          "1": 8,
+          "2": 2,
+          "3": 2
         },
         "representative_values": [
           {
@@ -1272,16 +1298,32 @@
           {
             "column": "GMTTIMESTAMP",
             "comparison": "exact",
-            "expected": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
-            "legacy_id": 2,
+            "expected": "২০২৪০৭০৮০৯১১১২",
+            "legacy_id": 4,
             "storage_type": "text",
             "table": "GPS_POINTS"
           },
           {
             "column": "GMTSTART",
             "comparison": "exact",
-            "expected": "٢٠٢٤٠٧٠٨09١٠١١",
+            "expected": "20240708091211",
             "legacy_id": 3,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "٢٠٢٤٠٧٠٨০৯١٠١١",
+            "legacy_id": 6,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "٢٠٢٤٠٧٠٨‏٠٩١٠١١",
+            "legacy_id": 7,
             "storage_type": "text",
             "table": "ACTIVITY"
           }
@@ -1289,38 +1331,39 @@
         "schema_logical_checksum": "a5dba611ed9fe3994cd9ae1227d16073ec4505c9c505f4cae5ac2b27ebded24c",
         "timestamps": {
           "activity": {
-            "invalid_count": 5,
-            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+            "invalid_count": 7,
+            "max": "20240708091213",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 5,
-            "valid_count": 2
+            "null_count": 7,
+            "valid_count": 6
           },
           "all": {
-            "invalid_count": 9,
-            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+            "invalid_count": 13,
+            "max": "20240708091213",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
-            "null_count": 5,
-            "valid_count": 4
+            "null_count": 7,
+            "valid_count": 12
           },
           "track_point": {
-            "invalid_count": 4,
-            "max": "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+            "invalid_count": 6,
+            "max": "20240708091212",
             "min": "٢٠٢٤٠٧٠٨٠٩١٠١١",
             "null_count": 0,
-            "valid_count": 2
+            "valid_count": 6
           }
         },
-        "track_point_rows": 6
+        "track_point_rows": 12
       },
       "expected_output": "expected/localized_timestamps.json",
       "name": "localized_timestamps",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "0e42eeae3d2517cd69b41567c7163a9020be92b511a6b10ed748388a7b14d9cc"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/orphan.db"
         }
@@ -1434,13 +1477,14 @@
       },
       "expected_output": "expected/orphan.json",
       "name": "orphan",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "c4567b6cfd76026dd6a2b6f465b9dd0e9808cfb679e4ac41b5c62642b03c0486"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/malformed_null_partial.db"
         }
@@ -1570,16 +1614,16 @@
       },
       "expected_output": "expected/malformed_null_partial.json",
       "name": "malformed_null_partial",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "b0fd204ea00218aa226b8f2613aaad5ab265fa8362550ec3acd1d0425d17db9e"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
-          "exact_bytes_required": true,
-          "path": "fixtures/malformed_schema.db",
-          "sha256": "88b7a3dd3081c8dada8bbc3b9827906171dbef6e2682b33575d7965303cf672d"
+          "comparison": "malformed_schema_semantics",
+          "exact_bytes_required": false,
+          "path": "fixtures/malformed_schema.db"
         }
       ],
       "database": "fixtures/malformed_schema.db",
@@ -1637,16 +1681,16 @@
       },
       "expected_output": "expected/malformed_schema.json",
       "name": "malformed_schema",
-      "storage": "malformed_schema"
+      "storage": "malformed_schema",
+      "storage_canonical_checksum": "047f70cce322158b37b7298de0b70cf31173d5935481f75220d7c57c03063a33"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 16384,
-          "exact_bytes_required": true,
-          "path": "fixtures/truncated.db",
-          "sha256": "7141e2b8654c9aad80f89361412938ee131c41091031e28a94c4c2a5df9dc08b"
+          "comparison": "truncated_canonical_bytes",
+          "exact_bytes_required": false,
+          "path": "fixtures/truncated.db"
         }
       ],
       "database": "fixtures/truncated.db",
@@ -1693,16 +1737,16 @@
       },
       "expected_output": "expected/truncated.json",
       "name": "truncated",
-      "storage": "truncated"
+      "storage": "truncated",
+      "storage_canonical_checksum": "80129db97882012165d5511fa25bd460c199e9b45556ae5fa25b9c5d0cc67036"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
-          "exact_bytes_required": true,
-          "path": "fixtures/corrupt.db",
-          "sha256": "d6b516c8b0d3bf2823d8e316308573667e058ebbb246afe6fffbe742ec125cb1"
+          "comparison": "corrupt_canonical_bytes",
+          "exact_bytes_required": false,
+          "path": "fixtures/corrupt.db"
         }
       ],
       "database": "fixtures/corrupt.db",
@@ -1749,13 +1793,14 @@
       },
       "expected_output": "expected/corrupt.json",
       "name": "corrupt",
-      "storage": "corrupt"
+      "storage": "corrupt",
+      "storage_canonical_checksum": "601cdf3f91a4bdd3470d474c036e84fad9fd6d1ab30612fa012fa0db36c5a9a8"
     },
     {
       "android_locale": "en_US",
       "artifacts": [
         {
-          "bytes": 20480,
+          "comparison": "logical_database",
           "exact_bytes_required": false,
           "path": "fixtures/interrupted_idempotency.db"
         }
@@ -2041,7 +2086,8 @@
       },
       "expected_output": "expected/interrupted_idempotency.json",
       "name": "interrupted_idempotency",
-      "storage": "standard"
+      "storage": "standard",
+      "storage_canonical_checksum": "6c71b236e91f2eb1795c9695d6a6db83010434374b1e0c40205d119ef5820e32"
     }
   ],
   "format_version": 1,

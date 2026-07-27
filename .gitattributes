@@ -5,3 +5,11 @@
 .squad/orchestration-log/** merge=union
 .squad/rai/audit-trail.md merge=union
 .squad/fact-checker/audit-trail.md merge=union
+
+# Legacy fixture text artifacts are generated and reviewed as UTF-8 with LF.
+tools/legacy-fixtures/manifest.json text eol=lf
+tools/legacy-fixtures/expected/*.json text eol=lf
+tools/legacy-fixtures/*.py text eol=lf
+tools/legacy-fixtures/*.java text eol=lf
+tools/legacy-fixtures/README.md text eol=lf
+docs/legacy-database-contract.md text eol=lf

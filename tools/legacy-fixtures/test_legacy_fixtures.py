@@ -49,7 +49,10 @@ EXPECTED_DEFECT_DETECTORS = {
     "float_precision_round_trip",
     "integer_truncation",
     "integer_precision_above_2_53",
+    "json_crlf_drift",
+    "localized_timestamp_ascii_arabic_only_parser",
     "localized_timestamp_ascii_only_parser",
+    "localized_timestamp_metadata_coupled_parser",
     "localized_timestamp_text_normalized",
     "invalid_sqlite_page_size_preflight",
     "malformed_schema_preflight",
@@ -68,6 +71,7 @@ EXPECTED_DEFECT_DETECTORS = {
     "timestamp_ordering",
     "truncated_sqlite_preflight",
     "truncated_sqlite_target_write",
+    "unicode_format_controls_stripped",
     "standard_database_logical_drift",
     "wal_inconsistent_snapshot",
     "wal_shm_omitted",
@@ -126,17 +130,53 @@ class LegacyFixtureTests(unittest.TestCase):
             },
         )
         for entry in manifest["fixtures"]:
+            self.assertEqual(
+                legacy_fixtures.fixture_artifact_comparison(
+                    next(
+                        case
+                        for case in legacy_fixtures.fixture_cases()
+                        if case.key == entry["name"]
+                    )
+                ),
+                entry["artifacts"][0]["comparison"],
+            )
+            self.assertEqual(64, len(entry["storage_canonical_checksum"]))
             for artifact in entry["artifacts"]:
                 path = TOOL_ROOT / artifact["path"]
-                self.assertEqual(path.stat().st_size, artifact["bytes"])
-                if artifact["exact_bytes_required"]:
-                    self.assertEqual(
-                        legacy_fixtures.file_sha256(path),
-                        artifact["sha256"],
-                    )
+                self.assertTrue(path.is_file())
+                self.assertFalse(artifact["exact_bytes_required"])
+                self.assertNotIn("bytes", artifact)
+                self.assertNotIn("sha256", artifact)
+        comparison_counts = {}
+        for entry in manifest["fixtures"]:
+            for artifact in entry["artifacts"]:
+                comparison = artifact["comparison"]
+                comparison_counts[comparison] = comparison_counts.get(comparison, 0) + 1
+        self.assertEqual(
+            {
+                legacy_fixtures.COMPARISON_ACTIVE_WAL: 3,
+                legacy_fixtures.COMPARISON_CORRUPT: 1,
+                legacy_fixtures.COMPARISON_LOGICAL_DATABASE: 12,
+                legacy_fixtures.COMPARISON_MALFORMED_SCHEMA: 1,
+                legacy_fixtures.COMPARISON_TRUNCATED: 1,
+            },
+            comparison_counts,
+        )
         self.assertEqual(
             ["ar_EG", "en_US"],
             manifest["source_schema"]["fixture_android_locales"],
+        )
+        self.assertEqual(
+            {
+                "json_encoding": "UTF-8",
+                "json_newline": "LF",
+                "sqlite_host_header_ignored_byte_ranges": [
+                    [18, 20],
+                    [24, 28],
+                    [92, 100],
+                ],
+            },
+            manifest["determinism"],
         )
 
     def test_android_metadata_is_verified_as_platform_metadata(self):
@@ -249,6 +289,8 @@ class LegacyFixtureTests(unittest.TestCase):
     def test_unicode_decimal_timestamp_normalization_is_strict(self):
         ascii_timestamp = "20240708091011"
         arabic_indic_timestamp = "٢٠٢٤٠٧٠٨٠٩١٠١١"
+        bengali_timestamp = "২০২৪০৭০৮০৯১০১১"
+        persian_timestamp = "۲۰۲۴۰۷۰۸۰۹۱۰۱۱"
         fullwidth_timestamp = "２０２４０７０８０９１０１１"
         expected = datetime(2024, 7, 8, 9, 10, 11)
         unicode_nd_digits = [
@@ -272,6 +314,14 @@ class LegacyFixtureTests(unittest.TestCase):
             legacy_fixtures.parse_strict_legacy_timestamp(
                 arabic_indic_timestamp
             ),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_strict_legacy_timestamp(bengali_timestamp),
+        )
+        self.assertEqual(
+            expected,
+            legacy_fixtures.parse_strict_legacy_timestamp(persian_timestamp),
         )
         self.assertEqual(
             expected,
@@ -316,7 +366,9 @@ class LegacyFixtureTests(unittest.TestCase):
             "non-decimal lookalike": "٢٠٢٤٠٧٠٨٠٩١٠١¹",
             "mixed ASCII and Arabic-Indic": "٢٠٢٤٠٧٠٨09١٠١١",
             "mixed Arabic digit sets": "٢٠٢٤٠٧٠٨۰۹١٠١١",
+            "mixed Arabic-Indic and Bengali": "٢٠٢٤٠٧٠٨০৯١٠١١",
             "embedded direction mark": "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
+            "embedded direction isolate": "٢٠٢٤٠٧٠٨\u2066٠٩١٠١١",
             "too short": "٢٠٢٤٠٧٠٨٠٩١٠١",
         }
         for label, value in invalid_values.items():
@@ -347,18 +399,41 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         self.assertEqual("ar_EG", case.android_locale)
         self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", case.activities[0][1])
+        self.assertEqual("২০২৪০৭০৮০৯১১১১", case.activities[1][1])
+        self.assertEqual("20240708091211", case.activities[2][1])
 
         output = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")[
             "localized_timestamps"
         ]
-        self.assertEqual(1, output["summary"]["sessions"])
-        self.assertEqual(2, output["summary"]["track_points"])
-        self.assertEqual(5, output["summary"]["rejected_activity_rows"])
-        self.assertEqual(4, output["summary"]["rejected_track_point_rows"])
-        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", output["sessions"][0]["gmt_start"])
-        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١٣", output["sessions"][0]["gmt_end"])
+        self.assertEqual(3, output["summary"]["sessions"])
+        self.assertEqual(6, output["summary"]["track_points"])
+        self.assertEqual(7, output["summary"]["rejected_activity_rows"])
+        self.assertEqual(6, output["summary"]["rejected_track_point_rows"])
         self.assertEqual(
-            ["٢٠٢٤٠٧٠٨٠٩١٠١١", "٢٠٢٤٠٧٠٨٠٩١٠١٢"],
+            [
+                "٢٠٢٤٠٧٠٨٠٩١٠١١",
+                "২০২৪০৭০৮০৯১১১১",
+                "20240708091211",
+            ],
+            [session["gmt_start"] for session in output["sessions"]],
+        )
+        self.assertEqual(
+            [
+                "٢٠٢٤٠٧٠٨٠٩١٠١٣",
+                "২০২৪০৭০৮০৯১১১৩",
+                "20240708091213",
+            ],
+            [session["gmt_end"] for session in output["sessions"]],
+        )
+        self.assertEqual(
+            [
+                "٢٠٢٤٠٧٠٨٠٩١٠١١",
+                "٢٠٢٤٠٧٠٨٠٩١٠١٢",
+                "২০২৪০৭০৮০৯১১১১",
+                "২০২৪০৭০৮০৯১১১২",
+                "20240708091211",
+                "20240708091212",
+            ],
             [point["gmt_timestamp"] for point in output["track_points"]],
         )
 
@@ -374,15 +449,23 @@ class LegacyFixtureTests(unittest.TestCase):
         }
         self.assertEqual(
             "٢٠٢٤٠٧٠٨09١٠١١",
-            rejected_activities[3]["raw"]["GMTSTART"],
+            rejected_activities[5]["raw"]["GMTSTART"],
         )
         self.assertEqual(
-            "٢٠٢٤٠٧٠٨٠٩١٠١¹",
-            rejected_activities[4]["raw"]["GMTSTART"],
+            "٢٠٢٤٠٧٠٨০৯١٠١١",
+            rejected_activities[6]["raw"]["GMTSTART"],
+        )
+        self.assertEqual(
+            "٢٠٢٤٠٧٠٨\u200f٠٩١٠١١",
+            rejected_activities[7]["raw"]["GMTSTART"],
+        )
+        self.assertEqual(
+            "٢٠٢٤٠٧٠٨\u2066٠٩١٠١٧",
+            rejected_points[10]["raw"]["GMTTIMESTAMP"],
         )
         self.assertEqual(
             "٢٠٢٤٠٧٠٨/٩١٠١٧",
-            rejected_points[6]["raw"]["GMTTIMESTAMP"],
+            rejected_points[12]["raw"]["GMTTIMESTAMP"],
         )
 
         manifest = legacy_fixtures.load_json(TOOL_ROOT / "manifest.json")
@@ -398,7 +481,7 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         timestamps = entry["expected"]["timestamps"]
         self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١١", timestamps["all"]["min"])
-        self.assertEqual("٢٠٢٤٠٧٠٨٠٩١٠١٣", timestamps["all"]["max"])
+        self.assertEqual("20240708091213", timestamps["all"]["max"])
 
     def test_sqlite_page_size_validation_blocks_all_illegal_encodings(self):
         legal_encodings = {
@@ -824,12 +907,231 @@ class LegacyFixtureTests(unittest.TestCase):
         finally:
             shutil.rmtree(work_dir)
 
+    def test_json_artifacts_are_utf8_lf_and_crlf_drift_is_rejected(self):
+        json_paths = [TOOL_ROOT / "manifest.json"]
+        json_paths.extend(sorted((TOOL_ROOT / "expected").glob("*.json")))
+        for path in json_paths:
+            with self.subTest(path=path.name):
+                data = path.read_bytes()
+                self.assertEqual(
+                    legacy_fixtures.pretty_json_bytes(
+                        legacy_fixtures.load_json(path)
+                    ),
+                    data,
+                )
+                self.assertTrue(data.endswith(b"\n"))
+                self.assertNotIn(b"\r", data)
+                self.assertFalse(data.startswith(b"\xef\xbb\xbf"))
+                data.decode("utf-8")
+
+        attributes = {
+            line.strip()
+            for line in (TOOL_ROOT.parent.parent / ".gitattributes")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertTrue(
+            {
+                "tools/legacy-fixtures/manifest.json text eol=lf",
+                "tools/legacy-fixtures/expected/*.json text eol=lf",
+                "tools/legacy-fixtures/*.py text eol=lf",
+                "tools/legacy-fixtures/*.java text eol=lf",
+                "tools/legacy-fixtures/README.md text eol=lf",
+                "docs/legacy-database-contract.md text eol=lf",
+            }.issubset(attributes)
+        )
+
+        work_dir = TOOL_ROOT / "generated" / ".json-newline-unit"
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True)
+        try:
+            generated = work_dir / "generated.json"
+            legacy_fixtures.write_json(
+                generated,
+                {"timestamp": "২০২৪০৭০৮০৯১০১১"},
+            )
+            self.assertEqual(
+                legacy_fixtures.pretty_json_bytes(
+                    {"timestamp": "২০২৪০৭০৮০৯১০১১"}
+                ),
+                generated.read_bytes(),
+            )
+            crlf = work_dir / "crlf.json"
+            crlf.write_bytes(generated.read_bytes().replace(b"\n", b"\r\n"))
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_exact_artifact_bytes(
+                    "CRLF JSON",
+                    generated,
+                    crlf,
+                )
+        finally:
+            shutil.rmtree(work_dir)
+
+    def test_storage_modes_ignore_host_headers_but_detect_meaningful_drift(self):
+        cases = {case.key: case for case in legacy_fixtures.fixture_cases()}
+        work_dir = TOOL_ROOT / "generated" / ".storage-comparison-unit"
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True)
+
+        def copy_case(case, label):
+            destination_dir = work_dir / label
+            destination_dir.mkdir(parents=True)
+            source_database = TOOL_ROOT / "fixtures" / "{}.db".format(case.key)
+            destination_database = destination_dir / "{}.db".format(case.key)
+            for source, destination in zip(
+                legacy_fixtures.fixture_artifact_paths(source_database, case),
+                legacy_fixtures.fixture_artifact_paths(destination_database, case),
+            ):
+                shutil.copyfile(source, destination)
+            return source_database, destination_database
+
+        def vary_host_header(
+            database,
+            vary_read_write=True,
+            vary_counters=True,
+        ):
+            database_bytes = bytearray(database.read_bytes())
+            if vary_read_write:
+                database_bytes[18] = 2 if database_bytes[18] == 1 else 1
+                database_bytes[19] = 2 if database_bytes[19] == 1 else 1
+            if vary_counters:
+                counter = (17).to_bytes(4, "big")
+                database_bytes[24:28] = counter
+                database_bytes[92:96] = counter
+            database_bytes[96:100] = (3049000).to_bytes(4, "big")
+            database.write_bytes(database_bytes)
+
+        try:
+            for fixture_name in (
+                "representative",
+                "malformed_schema",
+                "truncated",
+                "corrupt",
+            ):
+                case = cases[fixture_name]
+                source, variant = copy_case(case, "{}-header".format(fixture_name))
+                vary_host_header(variant)
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "{} host header".format(fixture_name),
+                    source,
+                    variant,
+                    case,
+                )
+
+            active_case = cases["active_wal_snapshot"]
+            source, variant = copy_case(active_case, "active-header")
+            vary_host_header(
+                variant,
+                vary_read_write=False,
+                vary_counters=False,
+            )
+            legacy_fixtures.compare_fixture_storage_artifacts(
+                "active WAL host header",
+                source,
+                variant,
+                active_case,
+            )
+
+            representative_case = cases["representative"]
+            source, payload_drift = copy_case(
+                representative_case,
+                "payload-drift",
+            )
+            connection = sqlite3.connect(str(payload_drift))
+            try:
+                with connection:
+                    connection.execute(
+                        "UPDATE ACTIVITY SET NAME = ? WHERE ID = 1",
+                        ("Changed logical value",),
+                    )
+            finally:
+                connection.close()
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "payload drift",
+                    source,
+                    payload_drift,
+                    representative_case,
+                )
+
+            malformed_case = cases["malformed_schema"]
+            source, schema_drift = copy_case(malformed_case, "schema-drift")
+            legacy_fixtures.create_database(
+                schema_drift,
+                malformed_case.activities,
+                malformed_case.track_points,
+                android_locale=malformed_case.android_locale,
+            )
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "schema drift",
+                    source,
+                    schema_drift,
+                    malformed_case,
+                )
+
+            truncated_case = cases["truncated"]
+            source, page_drift = copy_case(truncated_case, "page-drift")
+            database_bytes = bytearray(page_drift.read_bytes())
+            database_bytes[-1] ^= 0x01
+            page_drift.write_bytes(database_bytes)
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "retained page drift",
+                    source,
+                    page_drift,
+                    truncated_case,
+                )
+
+            corrupt_case = cases["corrupt"]
+            source, corruption_drift = copy_case(
+                corrupt_case,
+                "corruption-drift",
+            )
+            with legacy_fixtures.open_readonly(corruption_drift) as connection:
+                root_page = connection.execute(
+                    "SELECT rootpage FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'GPS_POINTS'"
+                ).fetchone()[0]
+            database_bytes = bytearray(corruption_drift.read_bytes())
+            page_size = legacy_fixtures.sqlite_page_size(database_bytes)
+            database_bytes[(root_page - 1) * page_size] = 13
+            corruption_drift.write_bytes(database_bytes)
+            with self.assertRaises(legacy_fixtures.FixtureValidationError):
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "corruption shape drift",
+                    source,
+                    corruption_drift,
+                    corrupt_case,
+                )
+
+            source, wal_drift = copy_case(active_case, "wal-payload-drift")
+            wal_path = Path(str(wal_drift) + "-wal")
+            wal_bytes = bytearray(wal_path.read_bytes())
+            wal_bytes[-1] ^= 0x01
+            wal_path.write_bytes(wal_bytes)
+            with self.assertRaises(
+                (legacy_fixtures.FixtureValidationError, sqlite3.DatabaseError)
+            ):
+                legacy_fixtures.compare_fixture_storage_artifacts(
+                    "active WAL payload drift",
+                    source,
+                    wal_drift,
+                    active_case,
+                )
+        finally:
+            shutil.rmtree(work_dir)
+
     def test_corpus_regenerates_deterministically(self):
         result = legacy_fixtures.verify_deterministic_regeneration(TOOL_ROOT)
         self.assertEqual(len(EXPECTED_FIXTURES), result["fixture_count"])
-        self.assertGreater(result["artifact_count"], len(EXPECTED_FIXTURES) * 2)
-        self.assertGreater(result["exact_byte_artifact_count"], 0)
-        self.assertGreater(result["logical_database_artifact_count"], 0)
+        self.assertEqual(35, result["artifact_count"])
+        self.assertEqual(17, result["exact_byte_artifact_count"])
+        self.assertEqual(12, result["logical_database_artifact_count"])
+        self.assertEqual(6, result["canonical_storage_artifact_count"])
 
 
 if __name__ == "__main__":
