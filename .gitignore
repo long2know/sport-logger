@@ -11,3 +11,19 @@
 /build
 /captures
 .externalNativeBuild
+# Squad: ignore runtime state (logs, inbox, sessions)
+# Note: .squad/casting/* is identity and MUST be committed to main, not ignored
+.squad/orchestration-log/
+.squad/log/
+.squad/decisions/inbox/
+.squad/sessions/
+.squad/.scratch/
+.squad/.cache/
+.squad/.first-run
+.squad/memory/audit.jsonl
+.squad/memory/index.json
+# Squad: SubSquad activation file (local to this machine)
+.squad-workstream
+
+# Local Copilot CLI MCP examples and overrides
+.copilot/

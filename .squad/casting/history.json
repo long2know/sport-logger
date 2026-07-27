@@ -1,0 +1,22 @@
+{
+  "universe_usage_history": [
+    {
+      "universe": "The Matrix",
+      "assignment_id": "sport-logger-modernization-20260725",
+      "used_at": "2026-07-25T20:51:18.431-07:00"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "sport-logger-modernization-20260725": {
+      "universe": "The Matrix",
+      "agents": {
+        "mobile-architect-lead": "Tank",
+        "wear-os-engineer": "Trinity",
+        "android-wear-ux-engineer": "Switch",
+        "sync-integrations-engineer": "Neo",
+        "research-quality-engineer": "Mouse"
+      },
+      "created_at": "2026-07-25T20:51:18.431-07:00"
+    }
+  }
+}
