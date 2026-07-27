@@ -15,7 +15,8 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 56 defect detectors.
+# all 57 declared defect detectors. Version- or build-specific detectors that
+# cannot run on the connected SQLite engine are reported as not applicable.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
 # Prove all supported SQLite capability paths make equivalent decisions.
@@ -36,8 +37,9 @@ JDK source-file mode.
 
 Current counted reality is 20 fixtures and 44 regeneration artifacts: 22
 exact-byte UTF-8/LF text artifacts, 16 logical standard databases, and 6
-canonical non-standard SQLite artifacts. The verifier runs 56 defect detectors,
-and the standard-library suite contains 24 tests.
+canonical non-standard SQLite artifacts. The verifier defines 57 defect
+detectors and reports separate applicable and not-applicable counts for the
+connected SQLite runtime. The standard-library suite contains 24 tests.
 
 ## Layout
 
@@ -83,22 +85,51 @@ target/receipt writes.
 
 Schema validation probes and caches `PRAGMA table_xinfo` support and the
 `sqlite_schema` catalog alias independently for each connection. Automatic
-validation prefers the universally compatible `sqlite_master` catalog:
+validation prefers the universally compatible `sqlite_master` catalog. Pure
+unit tests cover the complete selection matrix, while real-connection tests run
+only the host profile and capability subsets the host can safely emulate:
 
-- Android API 26 / SQLite 3.18.2 uses `table_info` plus `sqlite_master` only.
-- SQLite 3.26–3.32 uses `table_xinfo` plus `sqlite_master`.
-- SQLite 3.33+ uses the same preferred modern path; the explicitly probed
-  `sqlite_schema` alias is exercised only as an additional equivalence check.
+| SQLite profile | Column metadata | Catalog paths | Generated-column detector |
+|---|---|---|---|
+| Android API 26 / 3.18.2 | `table_info` | `sqlite_master` | N/A |
+| 3.26 | `table_xinfo` | `sqlite_master` | N/A |
+| 3.32 | `table_xinfo` | `sqlite_master` | Runs after a side-effect-free support probe |
+| 3.33+ | `table_xinfo` | `sqlite_master`, plus probed `sqlite_schema` equivalence | Runs after a side-effect-free support probe |
+
+The executable end-to-end profile count is derived from the probed host:
+3.18-class hosts run two canonical/malformed decisions, 3.26–3.32 hosts run
+four, and 3.33+ hosts run six. A host may disable capabilities to exercise a
+subset, but the harness never enables or assumes a capability the connection
+does not expose.
+
+The representative build matrix used by the unit contract is:
+
+| Runtime/build capabilities | Schema cases | Real profile decisions | Applicable/N/A detectors |
+|---|---:|---:|---:|
+| 3.18.2 / API26-style FTS4, no FTS5 | 9 | 2 | 55 / 2 |
+| 3.26.0 / FTS4, no FTS5 | 9 | 4 | 55 / 2 |
+| 3.32.0 / FTS4 + FTS5 | 11 | 4 | 57 / 0 |
+| 3.33+ / FTS4 + FTS5 | 11 | 6 | 57 / 0 |
+
+Those are capability-profile expectations, not assumptions about arbitrary
+desktop builds. For example, a 3.32 build without FTS5 reports that one
+detector as N/A and derives the lower executable case count automatically.
+
+Generated-column SQL is never parsed below SQLite 3.31. The universal
+virtual/shadow substitution uses API26-compatible FTS4 after an actual module
+probe. A separate FTS5 detector runs only when `ENABLE_FTS5` is reported and the
+module probe succeeds. Missing generated-column, FTS4, or FTS5 support is
+reported by name as N/A rather than passed or fatal. A catalog-only unit fixture
+still proves virtual-table records with root page `0` are rejected when no
+virtual-table module is available.
 
 The all-path validator and corpus verifier execute only paths supported by the
-connection. Corpus diagnostics are path-neutral, while guarded tests prove the
-legacy, intermediate, and current profiles make the same decision. Every
-supported path rejects hidden/generated columns, virtual or shadow
-substitutions, extra constraints/defaults/types/order, foreign keys, and
-unexpected tables, indexes, views, or triggers. Only the literal `sqlite_`
-prefix is internal, and the canonical schema explicitly permits only SQLite's
-AUTOINCREMENT-owned `sqlite_sequence`. User objects named `sqliteX...` remain
-visible and fail.
+connection. Corpus diagnostics are path-neutral, and every supported path
+rejects hidden/generated columns, virtual or shadow substitutions, extra
+constraints/defaults/types/order, foreign keys, and unexpected tables, indexes,
+views, or triggers. Only the literal `sqlite_` prefix is internal, and the
+canonical schema explicitly permits only SQLite's AUTOINCREMENT-owned
+`sqlite_sequence`. User objects named `sqliteX...` remain visible and fail.
 
 ## Locale-sensitive timestamps
 

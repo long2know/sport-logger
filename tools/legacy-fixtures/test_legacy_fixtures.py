@@ -56,6 +56,7 @@ EXPECTED_DEFECT_DETECTORS = {
     "calendar_year_magnitude_fixed_offset_heuristic",
     "duplicate_timestamp_collapsed",
     "float_precision_round_trip",
+    "fts5_virtual_table_shadow_substitution",
     "generated_column_hidden_from_table_info",
     "integer_truncation",
     "integer_precision_above_2_53",
@@ -346,6 +347,55 @@ class LegacyFixtureTests(unittest.TestCase):
             connection.execute("PRAGMA user_version = 0")
             return connection
 
+        capability_connection = sqlite3.connect(":memory:")
+        try:
+            host_schema_capabilities = legacy_fixtures.schema_capabilities(
+                capability_connection
+            )
+            detector_capabilities = (
+                legacy_fixtures.sqlite_detector_capabilities(
+                    capability_connection
+                )
+            )
+            api26_sql_guard = legacy_fixtures.SchemaSqlGuard(
+                capability_connection,
+                forbidden_tokens=("generated always", "using fts5"),
+            )
+            self.assertFalse(
+                legacy_fixtures.probe_generated_columns_support(
+                    api26_sql_guard,
+                    (3, 18, 2),
+                )
+            )
+            self.assertFalse(
+                legacy_fixtures.probe_virtual_table_module_support(
+                    api26_sql_guard,
+                    "fts5",
+                    compile_options=(),
+                )
+            )
+            self.assertEqual([], api26_sql_guard.rejected_statements)
+            self.assertEqual(
+                (),
+                tuple(
+                    capability_connection.execute(
+                        "SELECT name FROM sqlite_temp_master "
+                        "WHERE name GLOB '__sport_logger_*'"
+                    )
+                ),
+            )
+            self.assertEqual(
+                (),
+                tuple(
+                    capability_connection.execute(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE name GLOB '__sport_logger_*'"
+                    )
+                ),
+            )
+        finally:
+            capability_connection.close()
+
         formatting = connection_with_activity(
             (
                 'create /* formatting only */ table "ACTIVITY" ('
@@ -372,39 +422,39 @@ class LegacyFixtureTests(unittest.TestCase):
         finally:
             formatting.close()
 
-        generated = connection_with_activity(
-            (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
-                "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
-            )
-        )
-        try:
-            self.assertEqual(
-                tuple(
-                    row[:6]
-                    for row in legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"]
-                ),
-                legacy_fixtures.table_info(generated, "ACTIVITY"),
-            )
-            self.assertNotEqual(
-                legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
-                legacy_fixtures.table_xinfo(generated, "ACTIVITY"),
-            )
-            diagnostics = legacy_fixtures.schema_diagnostics(generated)
-            self.assertIn(
-                "ACTIVITY:table_xinfo",
-                diagnostics["schema_errors"],
-            )
-            with self.assertRaises(legacy_fixtures.FixtureValidationError):
-                legacy_fixtures.validate_schema(
-                    generated,
-                    "generated column",
+        if detector_capabilities.generated_columns:
+            generated = connection_with_activity(
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                    "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
                 )
-        finally:
-            generated.close()
+            )
+            try:
+                self.assertEqual(
+                    legacy_fixtures.EXPECTED_TABLE_INFO["ACTIVITY"],
+                    legacy_fixtures.table_info(generated, "ACTIVITY"),
+                )
+                self.assertNotEqual(
+                    legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
+                    legacy_fixtures.table_xinfo(generated, "ACTIVITY"),
+                )
+                diagnostics = legacy_fixtures.schema_diagnostics(generated)
+                self.assertIn(
+                    "ACTIVITY:table_xinfo",
+                    diagnostics["schema_errors"],
+                )
+                with self.assertRaises(
+                    legacy_fixtures.FixtureValidationError
+                ):
+                    legacy_fixtures.validate_schema(
+                        generated,
+                        "generated column",
+                    )
+            finally:
+                generated.close()
 
         constraint = connection_with_activity(
             (
@@ -417,9 +467,14 @@ class LegacyFixtureTests(unittest.TestCase):
         )
         try:
             self.assertEqual(
-                legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
-                legacy_fixtures.table_xinfo(constraint, "ACTIVITY"),
+                legacy_fixtures.EXPECTED_TABLE_INFO["ACTIVITY"],
+                legacy_fixtures.table_info(constraint, "ACTIVITY"),
             )
+            if legacy_fixtures.table_xinfo_supported(constraint):
+                self.assertEqual(
+                    legacy_fixtures.EXPECTED_TABLE_XINFO["ACTIVITY"],
+                    legacy_fixtures.table_xinfo(constraint, "ACTIVITY"),
+                )
             diagnostics = legacy_fixtures.schema_diagnostics(constraint)
             self.assertIn(
                 "ACTIVITY:sqlite_master_sql",
@@ -475,8 +530,17 @@ class LegacyFixtureTests(unittest.TestCase):
             with self.subTest(schema=label):
                 connection = connection_with_activity(activity_sql)
                 try:
+                    effective_error = expected_error
+                    if (
+                        expected_error == "ACTIVITY:table_xinfo"
+                        and not host_schema_capabilities.table_xinfo
+                    ):
+                        effective_error = "ACTIVITY:table_info"
                     diagnostics = legacy_fixtures.schema_diagnostics(connection)
-                    self.assertIn(expected_error, diagnostics["schema_errors"])
+                    self.assertIn(
+                        effective_error,
+                        diagnostics["schema_errors"],
+                    )
                     with self.assertRaises(
                         legacy_fixtures.FixtureValidationError
                     ):
@@ -484,28 +548,256 @@ class LegacyFixtureTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-        virtual = connection_with_activity(
-            (
-                "CREATE VIRTUAL TABLE ACTIVITY USING fts5("
-                "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, PACE)"
+        catalog_only_virtual_errors = (
+            legacy_fixtures.sqlite_schema_record_errors(
+                "ACTIVITY",
+                {
+                    "type": "table",
+                    "name": "ACTIVITY",
+                    "table_name": "ACTIVITY",
+                    "root_page": 0,
+                    "sql": (
+                        "CREATE VIRTUAL TABLE ACTIVITY USING fts4("
+                        "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, "
+                        "TIME, PACE)"
+                    ),
+                },
+                "sqlite_master",
             )
         )
-        try:
-            diagnostics = legacy_fixtures.schema_diagnostics(virtual)
-            self.assertEqual("malformed_schema", diagnostics["state"])
-            self.assertIn(
-                "ACTIVITY:sqlite_schema_table_kind",
-                diagnostics["schema_errors"],
-            )
-            self.assertTrue(diagnostics["unexpected_tables"])
-            self.assertTrue(diagnostics["unexpected_schema_objects"])
-        finally:
-            virtual.close()
+        self.assertIn(
+            "ACTIVITY:sqlite_schema_table_kind",
+            catalog_only_virtual_errors,
+        )
+        self.assertIn(
+            "ACTIVITY:sqlite_master_sql",
+            catalog_only_virtual_errors,
+        )
+
+        for module, supported in (
+            ("fts4", detector_capabilities.fts4),
+            ("fts5", detector_capabilities.fts5),
+        ):
+            if not supported:
+                continue
+            with self.subTest(virtual_module=module):
+                virtual = connection_with_activity(
+                    (
+                        "CREATE VIRTUAL TABLE ACTIVITY USING {}("
+                        "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, "
+                        "TIME, PACE)"
+                    ).format(module)
+                )
+                try:
+                    diagnostics = legacy_fixtures.schema_diagnostics(virtual)
+                    self.assertEqual(
+                        "malformed_schema",
+                        diagnostics["state"],
+                    )
+                    self.assertIn(
+                        "ACTIVITY:sqlite_schema_table_kind",
+                        diagnostics["schema_errors"],
+                    )
+                    self.assertTrue(diagnostics["unexpected_tables"])
+                    self.assertTrue(
+                        diagnostics["unexpected_schema_objects"]
+                    )
+                finally:
+                    virtual.close()
 
     def test_capability_paths_match_and_never_hide_sqliteX_objects(self):
+        theoretical_profiles = legacy_fixtures.theoretical_sqlite_profiles()
+        self.assertEqual(
+            [
+                (
+                    "android_api_26_sqlite_3_18",
+                    (3, 18, 2),
+                    legacy_fixtures.SchemaCapabilities(False, False),
+                    False,
+                ),
+                (
+                    "sqlite_3_26",
+                    (3, 26, 0),
+                    legacy_fixtures.SchemaCapabilities(True, False),
+                    False,
+                ),
+                (
+                    "sqlite_3_32",
+                    (3, 32, 0),
+                    legacy_fixtures.SchemaCapabilities(True, False),
+                    True,
+                ),
+                (
+                    "sqlite_3_33_plus",
+                    (3, 33, 0),
+                    legacy_fixtures.SchemaCapabilities(True, True),
+                    True,
+                ),
+            ],
+            [
+                (
+                    profile.name,
+                    profile.sqlite_version,
+                    profile.schema_capabilities,
+                    profile.generated_columns,
+                )
+                for profile in theoretical_profiles
+            ],
+        )
+        for profile in theoretical_profiles:
+            with self.subTest(theoretical_profile=profile.name):
+                expected_paths = (
+                    (
+                        legacy_fixtures.SCHEMA_PATH_MODERN,
+                        legacy_fixtures.SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
+                        legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
+                    )
+                    if profile.schema_capabilities.sqlite_schema_alias
+                    else (
+                        (
+                            legacy_fixtures.SCHEMA_PATH_MODERN,
+                            legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
+                        )
+                        if profile.schema_capabilities.table_xinfo
+                        else (legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,)
+                    )
+                )
+                self.assertEqual(
+                    expected_paths,
+                    legacy_fixtures.schema_paths_for_capabilities(
+                        profile.schema_capabilities
+                    ),
+                )
+                self.assertEqual(
+                    expected_paths[0],
+                    legacy_fixtures.preferred_schema_path_for_capabilities(
+                        profile.schema_capabilities
+                    ),
+                )
+
+        representative_detector_profiles = (
+            (
+                "android_api_26_sqlite_3_18",
+                legacy_fixtures.SQLiteDetectorCapabilities(
+                    (3, 18, 2),
+                    generated_columns=False,
+                    fts4=True,
+                    fts5=False,
+                ),
+                {
+                    legacy_fixtures.GENERATED_COLUMN_DETECTOR,
+                    legacy_fixtures.FTS5_VIRTUAL_TABLE_DETECTOR,
+                },
+            ),
+            (
+                "sqlite_3_26",
+                legacy_fixtures.SQLiteDetectorCapabilities(
+                    (3, 26, 0),
+                    generated_columns=False,
+                    fts4=True,
+                    fts5=False,
+                ),
+                {
+                    legacy_fixtures.GENERATED_COLUMN_DETECTOR,
+                    legacy_fixtures.FTS5_VIRTUAL_TABLE_DETECTOR,
+                },
+            ),
+            (
+                "sqlite_3_32",
+                legacy_fixtures.SQLiteDetectorCapabilities(
+                    (3, 32, 0),
+                    generated_columns=True,
+                    fts4=True,
+                    fts5=True,
+                ),
+                set(),
+            ),
+            (
+                "sqlite_3_33_plus",
+                legacy_fixtures.SQLiteDetectorCapabilities(
+                    (3, 33, 0),
+                    generated_columns=True,
+                    fts4=True,
+                    fts5=True,
+                ),
+                set(),
+            ),
+        )
+        for name, capabilities, expected_not_applicable in (
+            representative_detector_profiles
+        ):
+            with self.subTest(detector_profile=name):
+                self.assertEqual(
+                    expected_not_applicable,
+                    {
+                        detector_name
+                        for detector_name, _ in (
+                            legacy_fixtures.optional_detector_not_applicable(
+                                capabilities
+                            )
+                        )
+                    },
+                )
+
+        capability_connection = sqlite3.connect(":memory:")
+        try:
+            host_schema_capabilities = legacy_fixtures.schema_capabilities(
+                capability_connection
+            )
+            detector_capabilities = (
+                legacy_fixtures.sqlite_detector_capabilities(
+                    capability_connection
+                )
+            )
+        finally:
+            capability_connection.close()
+        executable_profiles = legacy_fixtures.executable_schema_profiles(
+            host_schema_capabilities
+        )
+
         gate = legacy_fixtures.verify_legacy_schema_path(TOOL_ROOT)
-        self.assertEqual(10, gate["schemas_checked"])
-        self.assertEqual(6, gate["capability_profiles_checked"])
+        self.assertEqual(
+            8
+            + int(detector_capabilities.generated_columns)
+            + int(detector_capabilities.fts4)
+            + int(detector_capabilities.fts5),
+            gate["schemas_checked"],
+        )
+        self.assertEqual(
+            len(executable_profiles) * 2,
+            gate["capability_profiles_checked"],
+        )
+        self.assertEqual(
+            len(theoretical_profiles),
+            gate["theoretical_profiles_checked"],
+        )
+        self.assertEqual(
+            [profile.name for profile in executable_profiles],
+            gate["executable_profiles"],
+        )
+        self.assertEqual(
+            {
+                "sqlite_version": list(
+                    detector_capabilities.sqlite_version
+                ),
+                "generated_columns": detector_capabilities.generated_columns,
+                "fts4": detector_capabilities.fts4,
+                "fts5": detector_capabilities.fts5,
+            },
+            gate["runtime_capabilities"],
+        )
+        self.assertEqual(
+            {
+                name
+                for name, _ in legacy_fixtures.optional_detector_not_applicable(
+                    detector_capabilities
+                )
+            },
+            {
+                detector["name"]
+                for detector in gate["not_applicable_detectors"]
+            },
+        )
         self.assertEqual(
             legacy_fixtures.SCHEMA_PATH_MODERN,
             gate["modern_path"],
@@ -554,7 +846,9 @@ class LegacyFixtureTests(unittest.TestCase):
                     legacy_fixtures.create_schema(connection)
                     connection.execute(statement)
                     decisions = []
-                    for schema_path in legacy_fixtures.SCHEMA_PATHS:
+                    for schema_path in (
+                        legacy_fixtures.supported_schema_paths(connection)
+                    ):
                         diagnostics = legacy_fixtures.schema_diagnostics(
                             connection,
                             schema_path,
@@ -580,7 +874,12 @@ class LegacyFixtureTests(unittest.TestCase):
                                 label,
                                 schema_path=schema_path,
                             )
-                    self.assertEqual(decisions[0], decisions[1])
+                    self.assertTrue(
+                        all(
+                            decision == decisions[0]
+                            for decision in decisions[1:]
+                        )
+                    )
                     self.assertFalse(
                         legacy_fixtures.sqlite_internal_object_name(
                             expected_object.split(":", 1)[1]
@@ -614,43 +913,20 @@ class LegacyFixtureTests(unittest.TestCase):
         finally:
             connection.close()
 
-        capability_profiles = (
-            (
-                "android_api_26_sqlite_3_18",
-                ("table_xinfo", "sqlite_schema"),
-                legacy_fixtures.SchemaCapabilities(False, False),
-                legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
-                (legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,),
-            ),
-            (
-                "sqlite_3_26_to_3_32",
-                ("sqlite_schema",),
-                legacy_fixtures.SchemaCapabilities(True, False),
-                legacy_fixtures.SCHEMA_PATH_MODERN,
-                (
-                    legacy_fixtures.SCHEMA_PATH_MODERN,
-                    legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
-                ),
-            ),
-            (
-                "sqlite_3_33_plus",
-                (),
-                legacy_fixtures.SchemaCapabilities(True, True),
-                legacy_fixtures.SCHEMA_PATH_MODERN,
-                legacy_fixtures.SCHEMA_PATHS,
-            ),
-        )
         portable_diagnostics = {"canonical": [], "malformed": []}
-        for (
-            profile,
-            forbidden_tokens,
-            expected_capabilities,
-            expected_path,
-            expected_paths,
-        ) in capability_profiles:
+        for profile in executable_profiles:
+            expected_capabilities = profile.capabilities
+            expected_path = (
+                legacy_fixtures.preferred_schema_path_for_capabilities(
+                    expected_capabilities
+                )
+            )
+            expected_paths = legacy_fixtures.schema_paths_for_capabilities(
+                expected_capabilities
+            )
             for malformed in (False, True):
                 variant = "malformed" if malformed else "canonical"
-                with self.subTest(profile=profile, schema=variant):
+                with self.subTest(profile=profile.name, schema=variant):
                     connection = sqlite3.connect(":memory:")
                     try:
                         if malformed:
@@ -665,9 +941,8 @@ class LegacyFixtureTests(unittest.TestCase):
                                 "CREATE TABLE ACTIVITY "
                                 "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
                                 "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
-                                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, "
-                                "PACE REAL, HIDDEN_COPY TEXT GENERATED ALWAYS AS "
-                                "(GMTSTART) VIRTUAL)"
+                                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME INTEGER, "
+                                "PACE REAL)"
                             )
                             connection.execute(
                                 legacy_fixtures.CREATE_GPS_POINTS_SQL
@@ -678,14 +953,14 @@ class LegacyFixtureTests(unittest.TestCase):
 
                         guard = legacy_fixtures.SchemaSqlGuard(
                             connection,
-                            forbidden_tokens=forbidden_tokens,
+                            forbidden_tokens=profile.forbidden_tokens,
                         )
                         self.assertEqual(
                             expected_capabilities,
                             legacy_fixtures.schema_capabilities(guard),
                         )
                         self.assertEqual(
-                            len(forbidden_tokens),
+                            len(profile.forbidden_tokens),
                             len(guard.rejected_statements),
                         )
                         probe_statement_count = len(
@@ -712,7 +987,7 @@ class LegacyFixtureTests(unittest.TestCase):
                         guard.statements.clear()
                         selected_outcome = legacy_fixtures.schema_path_outcome(
                             guard,
-                            "{} {}".format(profile, variant),
+                            "{} {}".format(profile.name, variant),
                         )
                         self.assertEqual(
                             not malformed,
@@ -753,14 +1028,16 @@ class LegacyFixtureTests(unittest.TestCase):
                         else:
                             legacy_fixtures.validate_schema_all_paths(
                                 guard,
-                                "{} canonical all paths".format(profile),
+                                "{} canonical all paths".format(
+                                    profile.name
+                                ),
                             )
 
                         outcomes = [
                             legacy_fixtures.schema_path_outcome(
                                 guard,
                                 "{} {} [{}]".format(
-                                    profile,
+                                    profile.name,
                                     variant,
                                     schema_path,
                                 ),
@@ -1528,16 +1805,42 @@ class LegacyFixtureTests(unittest.TestCase):
     def test_fault_injection_detectors_reject_known_etl_failures(self):
         outputs = legacy_fixtures.load_outputs(TOOL_ROOT / "expected")
         cases = {case.key: case for case in legacy_fixtures.fixture_cases()}
-        detected = set(
-            legacy_fixtures.run_mutation_detection_tests(outputs)
-            + legacy_fixtures.run_storage_detection_tests(
+        report = legacy_fixtures.merge_detector_reports(
+            legacy_fixtures.run_mutation_detection_tests(outputs),
+            legacy_fixtures.run_storage_detection_tests(
                 TOOL_ROOT,
                 cases,
                 outputs,
-            )
+            ),
         )
-        self.assertEqual(len(EXPECTED_DEFECT_DETECTORS), len(detected))
-        self.assertEqual(EXPECTED_DEFECT_DETECTORS, detected)
+        detected = set(report.passed)
+        not_applicable = {
+            name for name, reason in report.not_applicable if reason
+        }
+        self.assertFalse(detected & not_applicable)
+        self.assertEqual(
+            EXPECTED_DEFECT_DETECTORS,
+            detected | not_applicable,
+        )
+
+        capability_connection = sqlite3.connect(":memory:")
+        try:
+            detector_capabilities = (
+                legacy_fixtures.sqlite_detector_capabilities(
+                    capability_connection
+                )
+            )
+        finally:
+            capability_connection.close()
+        self.assertEqual(
+            {
+                name
+                for name, _ in legacy_fixtures.optional_detector_not_applicable(
+                    detector_capabilities
+                )
+            },
+            not_applicable,
+        )
 
     def test_json_integer_comparison_is_exact_above_2_53(self):
         exact_id = 9007199254740993

@@ -178,26 +178,48 @@ metadata, which is not application data. Neither `android_metadata` nor
 Exact preflight probes and caches two independent, side-effect-free
 capabilities per connection: `PRAGMA table_xinfo` support and availability of
 the `sqlite_schema` catalog alias. It does not infer either capability from the
-other:
+other. Capability selection has a pure version-profile matrix plus
+host-derived integration profiles:
 
-1. Android API 26's SQLite 3.18.2 uses `PRAGMA table_info` plus exact
-   `sqlite_master` object and SQL validation. It never requires `table_xinfo`
-   or `sqlite_schema`.
-2. SQLite 3.26–3.32 uses `PRAGMA table_xinfo` plus `sqlite_master`.
-3. SQLite 3.33+ uses that same preferred modern path. An explicitly probed
-   `sqlite_schema` alias path is beneficial only as an additional controlled
-   equivalence check; migration acceptance never depends on the alias.
+| SQLite profile | Exact automatic path | Generated-column mutation |
+|---|---|---|
+| Android API 26 / 3.18.2 | `table_info` + `sqlite_master` | N/A; generated SQL is never parsed |
+| 3.26 | `table_xinfo` + `sqlite_master` | N/A |
+| 3.32 | `table_xinfo` + `sqlite_master` | Supported after a side-effect-free probe |
+| 3.33+ | `table_xinfo` + `sqlite_master`; probed `sqlite_schema` is an additional equivalence path | Supported after a side-effect-free probe |
+
+Real-connection expectations are derived from the capabilities the host
+actually exposes. A 3.18-class host runs only the legacy profile, a 3.26–3.32
+host runs its real profile plus the legacy subset, and a 3.33+ host also runs
+the alias-capable profile. Across canonical and malformed controls those are
+two, four, and six decisions respectively. Guards may disable a capability to
+exercise a subset; they never fabricate a missing capability.
+
+Representative FTS4/no-FTS5 builds produce 9 schema cases and 55 applicable /
+2 N/A detectors on 3.18.2 and 3.26. Representative FTS4+FTS5 builds produce
+11 cases and 57 applicable / 0 N/A detectors on 3.32 and 3.33+, with four and
+six real profile decisions respectively. These counts are derived outcomes;
+another build's compile options may legitimately change only the applicable/N/A
+split.
+
+Generated-column support is checked independently and no generated-column DDL
+is executed below SQLite 3.31. The universal virtual/shadow-table mutation uses
+API26-compatible FTS4 after probing the module. FTS5 has a separate detector
+that runs only when the compile option and module are available. Unsupported
+generated-column, FTS4, and FTS5 detectors are reported explicitly as N/A, not
+counted as passes and not allowed to abort the gate. A pure catalog-record test
+still proves virtual-table records and SQL are rejected when a runtime exposes
+no usable virtual-table module.
 
 All-path and corpus verification execute only plans supported by the current
-connection. Corpus diagnostics omit runtime-specific path details, while
-guarded simulations compare the legacy, intermediate, and current decisions.
-Every supported path requires each table to be a real table b-tree with the
-expected name, column order/types/defaults/constraints, no hidden/generated
-columns, no foreign keys or indexes, and no extra tables, views, triggers,
-indexes, virtual tables, or shadow tables. Exact SQL token comparison is what
-lets the API-26 path reject generated columns and extra constraints that
-`table_info` cannot show. It tolerates only formatting differences such as
-whitespace, comments, keyword case, and identifier quoting.
+connection. Corpus diagnostics omit runtime-specific path details. Every
+supported path requires each table to be a real table b-tree with the expected
+name, column order/types/defaults/constraints, no hidden/generated columns, no
+foreign keys or indexes, and no extra tables, views, triggers, indexes, virtual
+tables, or shadow tables. Exact SQL token comparison is what lets the API-26
+path reject generated columns and extra constraints that `table_info` cannot
+show on a database produced by a capable engine. It tolerates only formatting
+differences such as whitespace, comments, keyword case, and identifier quoting.
 
 Schema enumeration filters only the literal, case-insensitive `sqlite_` prefix.
 The canonical schema explicitly permits only `sqlite_sequence`, justified by
@@ -502,13 +524,16 @@ The counted corpus is 20 fixtures and 44 regeneration artifacts: 22 exact-byte
 UTF-8/LF text files, 16 logical standard databases, and 6 canonical
 non-standard SQLite artifacts. The standard-library suite contains 24 tests.
 
-The verifier runs 56 detectors covering integer and double narrowing,
+The verifier defines 57 detectors, running every detector supported by the
+connected SQLite engine and reporting unsupported feature detectors as N/A.
+They cover integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
 deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
 sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
 committed-prefix omission), receipt-gap completion, Android metadata readiness,
 illegal page-size/read/write versions, mismatched header counters, logical
-database drift, API-26/intermediate/current generated-column and virtual/shadow rejection,
+database drift, capability-gated generated-column rejection, API26-compatible
+FTS4 virtual/shadow rejection, optional FTS5 rejection,
 literal `sqlite_` filtering with `sqliteX...` table/index/trigger/view controls,
 Gregorian-only parsing, digit-shape and year-magnitude/fixed-offset calendar
 heuristics, migration of ambiguous or mixed-evidence rows, omission of any

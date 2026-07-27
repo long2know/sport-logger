@@ -63,6 +63,19 @@ SCHEMA_PATHS = (
     SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
     SCHEMA_PATH_ANDROID_API_26,
 )
+SQLITE_TABLE_XINFO_MIN_VERSION = (3, 26, 0)
+SQLITE_GENERATED_COLUMNS_MIN_VERSION = (3, 31, 0)
+SQLITE_SCHEMA_ALIAS_MIN_VERSION = (3, 33, 0)
+THEORETICAL_SQLITE_PROFILE_VERSIONS = (
+    ("android_api_26_sqlite_3_18", (3, 18, 2)),
+    ("sqlite_3_26", (3, 26, 0)),
+    ("sqlite_3_32", (3, 32, 0)),
+    ("sqlite_3_33_plus", (3, 33, 0)),
+)
+
+GENERATED_COLUMN_DETECTOR = "generated_column_hidden_from_table_info"
+FTS4_VIRTUAL_TABLE_DETECTOR = "virtual_table_shadow_substitution"
+FTS5_VIRTUAL_TABLE_DETECTOR = "fts5_virtual_table_shadow_substitution"
 
 STORAGE_STANDARD = "standard"
 STORAGE_ACTIVE_WAL = "active_wal"
@@ -185,6 +198,35 @@ class FixtureValidationError(RuntimeError):
 class SchemaCapabilities:
     table_xinfo: bool
     sqlite_schema_alias: bool
+
+
+@dataclass(frozen=True)
+class SQLiteVersionProfile:
+    name: str
+    sqlite_version: Tuple[int, int, int]
+    schema_capabilities: SchemaCapabilities
+    generated_columns: bool
+
+
+@dataclass(frozen=True)
+class ExecutableSchemaProfile:
+    name: str
+    capabilities: SchemaCapabilities
+    forbidden_tokens: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SQLiteDetectorCapabilities:
+    sqlite_version: Tuple[int, int, int]
+    generated_columns: bool
+    fts4: bool
+    fts5: bool
+
+
+@dataclass(frozen=True)
+class DetectorReport:
+    passed: Tuple[str, ...]
+    not_applicable: Tuple[Tuple[str, str], ...] = ()
 
 
 _SCHEMA_CAPABILITY_CACHE: Dict[
@@ -2498,6 +2540,300 @@ def table_xinfo(
     return tuple(rows)
 
 
+def normalized_sqlite_version(
+    version: Sequence[int],
+) -> Tuple[int, int, int]:
+    if len(version) < 2 or len(version) > 3:
+        raise FixtureValidationError(
+            "SQLite version must contain two or three numeric components"
+        )
+    normalized = tuple(int(component) for component in version)
+    if any(component < 0 for component in normalized):
+        raise FixtureValidationError(
+            "SQLite version components must be non-negative"
+        )
+    return (
+        normalized[0],
+        normalized[1],
+        normalized[2] if len(normalized) == 3 else 0,
+    )
+
+
+def schema_capabilities_for_version(
+    version: Sequence[int],
+) -> SchemaCapabilities:
+    normalized = normalized_sqlite_version(version)
+    return SchemaCapabilities(
+        table_xinfo=normalized >= SQLITE_TABLE_XINFO_MIN_VERSION,
+        sqlite_schema_alias=normalized >= SQLITE_SCHEMA_ALIAS_MIN_VERSION,
+    )
+
+
+def generated_columns_supported_by_version(
+    version: Sequence[int],
+) -> bool:
+    return (
+        normalized_sqlite_version(version)
+        >= SQLITE_GENERATED_COLUMNS_MIN_VERSION
+    )
+
+
+def theoretical_sqlite_profiles() -> Tuple[SQLiteVersionProfile, ...]:
+    return tuple(
+        SQLiteVersionProfile(
+            name=name,
+            sqlite_version=version,
+            schema_capabilities=schema_capabilities_for_version(version),
+            generated_columns=generated_columns_supported_by_version(version),
+        )
+        for name, version in THEORETICAL_SQLITE_PROFILE_VERSIONS
+    )
+
+
+def schema_paths_for_capabilities(
+    capabilities: SchemaCapabilities,
+) -> Tuple[str, ...]:
+    paths: List[str] = []
+    if capabilities.table_xinfo:
+        paths.append(SCHEMA_PATH_MODERN)
+        if capabilities.sqlite_schema_alias:
+            paths.append(SCHEMA_PATH_SQLITE_SCHEMA_ALIAS)
+    paths.append(SCHEMA_PATH_ANDROID_API_26)
+    return tuple(paths)
+
+
+def preferred_schema_path_for_capabilities(
+    capabilities: SchemaCapabilities,
+) -> str:
+    return schema_paths_for_capabilities(capabilities)[0]
+
+
+def schema_capabilities_are_subset(
+    candidate: SchemaCapabilities,
+    host: SchemaCapabilities,
+) -> bool:
+    return (
+        (not candidate.table_xinfo or host.table_xinfo)
+        and (not candidate.sqlite_schema_alias or host.sqlite_schema_alias)
+    )
+
+
+def executable_schema_profiles(
+    host_capabilities: SchemaCapabilities,
+) -> Tuple[ExecutableSchemaProfile, ...]:
+    targets = (
+        (
+            "android_api_26_sqlite_3_18",
+            SchemaCapabilities(False, False),
+        ),
+        (
+            "sqlite_3_26_to_3_32",
+            SchemaCapabilities(True, False),
+        ),
+        (
+            "sqlite_3_33_plus",
+            SchemaCapabilities(True, True),
+        ),
+    )
+    profiles: List[ExecutableSchemaProfile] = []
+    for name, capabilities in targets:
+        if not schema_capabilities_are_subset(capabilities, host_capabilities):
+            continue
+        forbidden_tokens: List[str] = []
+        if host_capabilities.table_xinfo and not capabilities.table_xinfo:
+            forbidden_tokens.append("table_xinfo")
+        if (
+            host_capabilities.sqlite_schema_alias
+            and not capabilities.sqlite_schema_alias
+        ):
+            forbidden_tokens.append("sqlite_schema")
+        profiles.append(
+            ExecutableSchemaProfile(
+                name=name,
+                capabilities=capabilities,
+                forbidden_tokens=tuple(forbidden_tokens),
+            )
+        )
+    return tuple(profiles)
+
+
+def sqlite_runtime_version(
+    connection: sqlite3.Connection,
+) -> Tuple[int, int, int]:
+    row = connection.execute("SELECT sqlite_version()").fetchone()
+    value = row[0] if row else None
+    match = (
+        re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+        if isinstance(value, str)
+        else None
+    )
+    if match is None:
+        raise FixtureValidationError(
+            "SQLite connection returned an invalid version {!r}".format(value)
+        )
+    return tuple(int(component) for component in match.groups())
+
+
+def sqlite_compile_options(
+    connection: sqlite3.Connection,
+) -> frozenset[str]:
+    try:
+        rows = connection.execute("PRAGMA compile_options")
+    except Exception:
+        return frozenset()
+    return frozenset(
+        str(row[0]).upper()
+        for row in rows
+        if row and isinstance(row[0], str)
+    )
+
+
+def probe_generated_columns_support(
+    connection: sqlite3.Connection,
+    sqlite_version: Optional[Sequence[int]] = None,
+) -> bool:
+    version = (
+        normalized_sqlite_version(sqlite_version)
+        if sqlite_version is not None
+        else sqlite_runtime_version(connection)
+    )
+    if not generated_columns_supported_by_version(version):
+        return False
+    try:
+        tuple(
+            connection.execute(
+                "EXPLAIN CREATE TABLE __sport_logger_generated_column_probe "
+                "(source TEXT, derived TEXT GENERATED ALWAYS AS (source) VIRTUAL)"
+            )
+        )
+    except Exception:
+        return False
+    return True
+
+
+def probe_virtual_table_module_support(
+    connection: sqlite3.Connection,
+    module: str,
+    compile_options: Optional[Iterable[str]] = None,
+) -> bool:
+    if module not in ("fts4", "fts5"):
+        raise FixtureValidationError(
+            "Unsupported virtual-table capability probe {!r}".format(module)
+        )
+    options = (
+        frozenset(str(option).upper() for option in compile_options)
+        if compile_options is not None
+        else sqlite_compile_options(connection)
+    )
+    if (
+        module == "fts4"
+        and options
+        and not {"ENABLE_FTS3", "ENABLE_FTS4"} & options
+    ):
+        return False
+    if module == "fts5" and "ENABLE_FTS5" not in options:
+        return False
+    probe_table = "__sport_logger_{}_capability_probe".format(module)
+    created = False
+    try:
+        connection.execute(
+            "CREATE VIRTUAL TABLE temp.{} USING {}(value)".format(
+                probe_table,
+                module,
+            )
+        )
+        created = True
+        connection.execute("DROP TABLE temp.{}".format(probe_table))
+    except Exception:
+        if created:
+            try:
+                connection.execute("DROP TABLE temp.{}".format(probe_table))
+            except Exception:
+                pass
+        return False
+    return True
+
+
+def sqlite_detector_capabilities(
+    connection: sqlite3.Connection,
+) -> SQLiteDetectorCapabilities:
+    version = sqlite_runtime_version(connection)
+    compile_options = sqlite_compile_options(connection)
+    return SQLiteDetectorCapabilities(
+        sqlite_version=version,
+        generated_columns=probe_generated_columns_support(connection, version),
+        fts4=probe_virtual_table_module_support(
+            connection,
+            "fts4",
+            compile_options,
+        ),
+        fts5=probe_virtual_table_module_support(
+            connection,
+            "fts5",
+            compile_options,
+        ),
+    )
+
+
+def optional_detector_not_applicable(
+    capabilities: SQLiteDetectorCapabilities,
+) -> Tuple[Tuple[str, str], ...]:
+    version_text = ".".join(
+        str(component) for component in capabilities.sqlite_version
+    )
+    not_applicable: List[Tuple[str, str]] = []
+    if not capabilities.generated_columns:
+        not_applicable.append(
+            (
+                GENERATED_COLUMN_DETECTOR,
+                "SQLite {} does not support generated columns".format(
+                    version_text
+                ),
+            )
+        )
+    if not capabilities.fts4:
+        not_applicable.append(
+            (
+                FTS4_VIRTUAL_TABLE_DETECTOR,
+                "SQLite {} does not expose the API26-compatible FTS4 module".format(
+                    version_text
+                ),
+            )
+        )
+    if not capabilities.fts5:
+        not_applicable.append(
+            (
+                FTS5_VIRTUAL_TABLE_DETECTOR,
+                "SQLite {} does not expose the optional FTS5 module".format(
+                    version_text
+                ),
+            )
+        )
+    return tuple(not_applicable)
+
+
+def merge_detector_reports(*reports: DetectorReport) -> DetectorReport:
+    passed: List[str] = []
+    not_applicable: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+    for report in reports:
+        for name in report.passed:
+            if name in seen:
+                raise FixtureValidationError(
+                    "Duplicate defect-detector result {!r}".format(name)
+                )
+            seen.add(name)
+            passed.append(name)
+        for name, reason in report.not_applicable:
+            if name in seen:
+                raise FixtureValidationError(
+                    "Duplicate defect-detector result {!r}".format(name)
+                )
+            seen.add(name)
+            not_applicable.append((name, reason))
+    return DetectorReport(tuple(passed), tuple(not_applicable))
+
+
 def probe_table_xinfo_support(connection: sqlite3.Connection) -> bool:
     try:
         rows = tuple(
@@ -2546,14 +2882,7 @@ def sqlite_schema_alias_supported(connection: sqlite3.Connection) -> bool:
 def supported_schema_paths(
     connection: sqlite3.Connection,
 ) -> Tuple[str, ...]:
-    capabilities = schema_capabilities(connection)
-    paths: List[str] = []
-    if capabilities.table_xinfo:
-        paths.append(SCHEMA_PATH_MODERN)
-        if capabilities.sqlite_schema_alias:
-            paths.append(SCHEMA_PATH_SQLITE_SCHEMA_ALIAS)
-    paths.append(SCHEMA_PATH_ANDROID_API_26)
-    return tuple(paths)
+    return schema_paths_for_capabilities(schema_capabilities(connection))
 
 
 def resolve_schema_path(
@@ -2561,7 +2890,9 @@ def resolve_schema_path(
     schema_path: str = SCHEMA_PATH_AUTO,
 ) -> str:
     if schema_path == SCHEMA_PATH_AUTO:
-        return supported_schema_paths(connection)[0]
+        return preferred_schema_path_for_capabilities(
+            schema_capabilities(connection)
+        )
     if schema_path not in SCHEMA_PATHS:
         raise FixtureValidationError(
             "Unknown schema validation path {!r}".format(schema_path)
@@ -2709,6 +3040,33 @@ def sqlite_schema_record(
     }
 
 
+def sqlite_schema_record_errors(
+    table: str,
+    record: Optional[Mapping[str, Any]],
+    catalog: str,
+) -> List[str]:
+    if catalog not in ("sqlite_master", "sqlite_schema"):
+        raise FixtureValidationError(
+            "Unknown SQLite schema catalog {!r}".format(catalog)
+        )
+    if record is None:
+        return ["{}:schema_record".format(table)]
+    errors: List[str] = []
+    if (
+        record["type"] != "table"
+        or record["name"] != table
+        or record["table_name"] != table
+        or not isinstance(record["root_page"], int)
+        or record["root_page"] <= 0
+    ):
+        errors.append("{}:sqlite_schema_table_kind".format(table))
+    if canonical_schema_sql_tokens(
+        record["sql"]
+    ) != canonical_schema_sql_tokens(EXPECTED_SCHEMA_SQL[table]):
+        errors.append("{}:{}_sql".format(table, catalog))
+    return errors
+
+
 def table_schema_errors(
     connection: sqlite3.Connection,
     table: str,
@@ -2722,26 +3080,13 @@ def table_schema_errors(
     elif table_info(connection, table) != EXPECTED_TABLE_INFO[table]:
         errors.append("{}:table_info".format(table))
     record = sqlite_schema_record(connection, table, resolved_path)
-    if record is None:
-        errors.append("{}:schema_record".format(table))
-    else:
-        if (
-            record["type"] != "table"
-            or record["name"] != table
-            or record["table_name"] != table
-            or not isinstance(record["root_page"], int)
-            or record["root_page"] <= 0
-        ):
-            errors.append("{}:sqlite_schema_table_kind".format(table))
-        if canonical_schema_sql_tokens(
-            record["sql"]
-        ) != canonical_schema_sql_tokens(EXPECTED_SCHEMA_SQL[table]):
-            errors.append(
-                "{}:{}_sql".format(
-                    table,
-                    schema_catalog(resolved_path),
-                )
-            )
+    errors.extend(
+        sqlite_schema_record_errors(
+            table,
+            record,
+            schema_catalog(resolved_path),
+        )
+    )
     if tuple(
         connection.execute('PRAGMA foreign_key_list("{}")'.format(table))
     ):
@@ -6100,7 +6445,7 @@ def load_outputs(directory: Path) -> Mapping[str, Mapping[str, Any]]:
 
 def run_mutation_detection_tests(
     expected_outputs: Mapping[str, Mapping[str, Any]]
-) -> Tuple[str, ...]:
+) -> DetectorReport:
     passed: List[str] = []
 
     def rejected(name: str, candidate: Mapping[str, Mapping[str, Any]]) -> None:
@@ -6306,15 +6651,23 @@ def run_mutation_detection_tests(
     receipt_gap_replay["receipt_completed"] = False
     rejected("receipt_gap_not_completed", candidate)
 
-    return tuple(passed)
+    return DetectorReport(tuple(passed))
 
 
 def run_storage_detection_tests(
     root: Path,
     cases: Mapping[str, FixtureCase],
     expected_outputs: Mapping[str, Mapping[str, Any]],
-) -> Tuple[str, ...]:
+) -> DetectorReport:
     passed: List[str] = []
+    capability_connection = sqlite3.connect(":memory:")
+    try:
+        detector_capabilities = sqlite_detector_capabilities(
+            capability_connection
+        )
+    finally:
+        capability_connection.close()
+    not_applicable = optional_detector_not_applicable(detector_capabilities)
     active_case = cases["active_wal_snapshot"]
     active_database = root / "fixtures" / "active_wal_snapshot.db"
     work_dir = root / "generated" / ".storage-detectors"
@@ -7163,33 +7516,35 @@ def run_storage_detection_tests(
                 )
             passed.append(detector_name)
 
-        generated_column = work_dir / "generated-column.db"
-        create_schema_detector_database(
-            generated_column,
-            (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
-                "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
-            ),
-        )
-        with open_readonly(generated_column) as connection:
-            if table_info(connection, "ACTIVITY") != tuple(
-                row[:6] for row in EXPECTED_TABLE_XINFO["ACTIVITY"]
-            ):
-                raise FixtureValidationError(
-                    "Generated-column detector no longer demonstrates table_info loss"
-                )
-        require_schema_detector(
-            "generated_column_hidden_from_table_info",
-            generated_column,
-            {
-                SCHEMA_PATH_MODERN: "ACTIVITY:table_xinfo",
-                SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: "ACTIVITY:table_xinfo",
-                SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
-            },
-        )
+        if detector_capabilities.generated_columns:
+            generated_column = work_dir / "generated-column.db"
+            create_schema_detector_database(
+                generated_column,
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                    "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
+                ),
+            )
+            with open_readonly(generated_column) as connection:
+                if table_info(connection, "ACTIVITY") != tuple(
+                    row[:6] for row in EXPECTED_TABLE_XINFO["ACTIVITY"]
+                ):
+                    raise FixtureValidationError(
+                        "Generated-column detector no longer demonstrates "
+                        "table_info loss"
+                    )
+            require_schema_detector(
+                GENERATED_COLUMN_DETECTOR,
+                generated_column,
+                {
+                    SCHEMA_PATH_MODERN: "ACTIVITY:table_xinfo",
+                    SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: "ACTIVITY:table_xinfo",
+                    SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
+                },
+            )
 
         constraint_substitution = work_dir / "constraint-substitution.db"
         create_schema_detector_database(
@@ -7203,12 +7558,20 @@ def run_storage_detection_tests(
             ),
         )
         with open_readonly(constraint_substitution) as connection:
-            if table_xinfo(
+            if table_info(
                 connection,
                 "ACTIVITY",
-            ) != EXPECTED_TABLE_XINFO["ACTIVITY"]:
+            ) != EXPECTED_TABLE_INFO["ACTIVITY"]:
                 raise FixtureValidationError(
-                    "Constraint detector must differ only in sqlite_schema SQL"
+                    "Constraint detector must differ only in schema SQL"
+                )
+            if (
+                table_xinfo_supported(connection)
+                and table_xinfo(connection, "ACTIVITY")
+                != EXPECTED_TABLE_XINFO["ACTIVITY"]
+            ):
+                raise FixtureValidationError(
+                    "Constraint detector changed table_xinfo metadata"
                 )
         require_schema_detector(
             "sqlite_schema_constraint_substitution",
@@ -7220,25 +7583,44 @@ def run_storage_detection_tests(
             },
         )
 
-        virtual_substitution = work_dir / "virtual-substitution.db"
-        create_schema_detector_database(
-            virtual_substitution,
+        for module, detector_name, supported in (
             (
-                "CREATE VIRTUAL TABLE ACTIVITY USING fts5("
-                "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, PACE)"
+                "fts4",
+                FTS4_VIRTUAL_TABLE_DETECTOR,
+                detector_capabilities.fts4,
             ),
-        )
-        require_schema_detector(
-            "virtual_table_shadow_substitution",
-            virtual_substitution,
-            {
-                SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_table_kind",
-                SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: (
-                    "ACTIVITY:sqlite_schema_table_kind"
-                ),
-                SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_schema_table_kind",
-            },
-        )
+            (
+                "fts5",
+                FTS5_VIRTUAL_TABLE_DETECTOR,
+                detector_capabilities.fts5,
+            ),
+        ):
+            if not supported:
+                continue
+            virtual_substitution = work_dir / "{}-virtual-substitution.db".format(
+                module
+            )
+            create_schema_detector_database(
+                virtual_substitution,
+                (
+                    "CREATE VIRTUAL TABLE ACTIVITY USING {}("
+                    "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, "
+                    "PACE)"
+                ).format(module),
+            )
+            require_schema_detector(
+                detector_name,
+                virtual_substitution,
+                {
+                    SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_table_kind",
+                    SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: (
+                        "ACTIVITY:sqlite_schema_table_kind"
+                    ),
+                    SCHEMA_PATH_ANDROID_API_26: (
+                        "ACTIVITY:sqlite_schema_table_kind"
+                    ),
+                },
+            )
 
         logical_drift = work_dir / "standard-logical-drift.db"
         shutil.copyfile(representative_database, logical_drift)
@@ -7267,7 +7649,7 @@ def run_storage_detection_tests(
     finally:
         if work_dir.exists():
             shutil.rmtree(work_dir)
-    return tuple(passed)
+    return DetectorReport(tuple(passed), not_applicable)
 
 
 def verify_legacy_schema_path(
@@ -7278,61 +7660,46 @@ def verify_legacy_schema_path(
     malformed_database = root / "fixtures" / "malformed_schema.db"
     checked = 0
     capability_profiles_checked = 0
+    executable_profile_names: Optional[Tuple[str, ...]] = None
+    capability_connection = sqlite3.connect(":memory:")
+    try:
+        detector_capabilities = sqlite_detector_capabilities(
+            capability_connection
+        )
+    finally:
+        capability_connection.close()
+    not_applicable_detectors = optional_detector_not_applicable(
+        detector_capabilities
+    )
 
     def verify_capability_profiles(
         database: Path,
         label: str,
         accepted: bool,
     ) -> None:
-        nonlocal capability_profiles_checked
+        nonlocal capability_profiles_checked, executable_profile_names
         with open_readonly(database) as connection:
             host_capabilities = schema_capabilities(connection)
-            profiles = [
-                (
-                    "android_api_26_sqlite_3_18",
-                    ("table_xinfo", "sqlite_schema"),
-                    SchemaCapabilities(False, False),
-                    SCHEMA_PATH_ANDROID_API_26,
-                    (SCHEMA_PATH_ANDROID_API_26,),
-                )
-            ]
-            if host_capabilities.table_xinfo:
-                profiles.append(
-                    (
-                        "sqlite_3_26_to_3_32",
-                        ("sqlite_schema",),
-                        SchemaCapabilities(True, False),
-                        SCHEMA_PATH_MODERN,
-                        (
-                            SCHEMA_PATH_MODERN,
-                            SCHEMA_PATH_ANDROID_API_26,
-                        ),
-                    )
-                )
-            if (
-                host_capabilities.table_xinfo
-                and host_capabilities.sqlite_schema_alias
-            ):
-                profiles.append(
-                    (
-                        "sqlite_3_33_plus",
-                        (),
-                        SchemaCapabilities(True, True),
-                        SCHEMA_PATH_MODERN,
-                        SCHEMA_PATHS,
-                    )
+            profiles = executable_schema_profiles(host_capabilities)
+            profile_names = tuple(profile.name for profile in profiles)
+            if executable_profile_names is None:
+                executable_profile_names = profile_names
+            elif executable_profile_names != profile_names:
+                raise FixtureValidationError(
+                    "Fixture connections exposed different schema capabilities"
                 )
 
-            for (
-                profile,
-                forbidden_tokens,
-                expected_capabilities,
-                expected_path,
-                expected_paths,
-            ) in profiles:
+            for profile in profiles:
+                expected_capabilities = profile.capabilities
+                expected_path = preferred_schema_path_for_capabilities(
+                    expected_capabilities
+                )
+                expected_paths = schema_paths_for_capabilities(
+                    expected_capabilities
+                )
                 guard = SchemaSqlGuard(
                     connection,
-                    forbidden_tokens=forbidden_tokens,
+                    forbidden_tokens=profile.forbidden_tokens,
                 )
                 actual_capabilities = schema_capabilities(guard)
                 if actual_capabilities != expected_capabilities:
@@ -7340,7 +7707,7 @@ def verify_legacy_schema_path(
                         "{} {} capability probe mismatch: expected {}, "
                         "found {}".format(
                             label,
-                            profile,
+                            profile.name,
                             expected_capabilities,
                             actual_capabilities,
                         )
@@ -7351,7 +7718,7 @@ def verify_legacy_schema_path(
                         "{} {} supported paths mismatch: expected {}, "
                         "found {}".format(
                             label,
-                            profile,
+                            profile.name,
                             expected_paths,
                             actual_paths,
                         )
@@ -7360,14 +7727,14 @@ def verify_legacy_schema_path(
                     raise FixtureValidationError(
                         "{} {} selected the wrong schema path".format(
                             label,
-                            profile,
+                            profile.name,
                         )
                     )
 
                 guard.statements.clear()
                 outcome = schema_path_outcome(
                     guard,
-                    "{} {}".format(label, profile),
+                    "{} {}".format(label, profile.name),
                 )
                 if (
                     outcome["exact_schema_valid"] is not accepted
@@ -7376,19 +7743,19 @@ def verify_legacy_schema_path(
                     raise FixtureValidationError(
                         "{} {} made the wrong schema decision".format(
                             label,
-                            profile,
+                            profile.name,
                         )
                     )
                 selected_sql = "\n".join(guard.statements).casefold()
                 if "sqlite_master" not in selected_sql:
                     raise FixtureValidationError(
                         "{} {} did not use the preferred sqlite_master "
-                        "catalog".format(label, profile)
+                        "catalog".format(label, profile.name)
                     )
                 if "sqlite_schema" in selected_sql:
                     raise FixtureValidationError(
                         "{} {} used sqlite_schema for automatic "
-                        "validation".format(label, profile)
+                        "validation".format(label, profile.name)
                     )
                 expected_pragma = (
                     "table_xinfo"
@@ -7399,7 +7766,7 @@ def verify_legacy_schema_path(
                     raise FixtureValidationError(
                         "{} {} did not use {}".format(
                             label,
-                            profile,
+                            profile.name,
                             expected_pragma,
                         )
                     )
@@ -7407,7 +7774,11 @@ def verify_legacy_schema_path(
                 outcomes = [
                     schema_path_outcome(
                         guard,
-                        "{} {} [{}]".format(label, profile, schema_path),
+                        "{} {} [{}]".format(
+                            label,
+                            profile.name,
+                            schema_path,
+                        ),
                         schema_path=schema_path,
                     )
                     for schema_path in actual_paths
@@ -7416,7 +7787,7 @@ def verify_legacy_schema_path(
                     raise FixtureValidationError(
                         "{} {} supported paths made different decisions".format(
                             label,
-                            profile,
+                            profile.name,
                         )
                     )
                 capability_profiles_checked += 1
@@ -7510,77 +7881,94 @@ def verify_legacy_schema_path(
         False,
     )
 
-    variants = (
-        (
-            "generated column",
+    variants: List[Tuple[str, str, Tuple[str, ...]]] = []
+    if detector_capabilities.generated_columns:
+        variants.append(
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
-                "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
-            ),
-            (),
-        ),
+                "generated column",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                    "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
+                ),
+                (),
+            )
+        )
+    variants.extend(
         (
-            "extra check constraint",
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
-                "CHECK (DISTANCE IS NULL OR DISTANCE >= 0))"
+                "extra check constraint",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                    "CHECK (DISTANCE IS NULL OR DISTANCE >= 0))"
+                ),
+                (),
             ),
-            (),
-        ),
-        (
-            "extra default",
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR DEFAULT '', "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                "extra default",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR DEFAULT '', "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                (),
             ),
-            (),
-        ),
-        (
-            "reordered columns",
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, DESCRIPTION VARCHAR, "
-                "NAME VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                "reordered columns",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, DESCRIPTION VARCHAR, "
+                    "NAME VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                (),
             ),
-            (),
-        ),
-        (
-            "changed declared type",
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME TEXT, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                "changed declared type",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME TEXT, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                (),
             ),
-            (),
-        ),
-        (
-            "extra collation",
             (
-                "CREATE TABLE ACTIVITY "
-                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
-                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR COLLATE NOCASE, "
-                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                "extra collation",
+                (
+                    "CREATE TABLE ACTIVITY "
+                    "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR COLLATE NOCASE, "
+                    "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+                ),
+                (),
             ),
-            (),
-        ),
-        (
-            "virtual shadow substitution",
+        )
+    )
+    for module, supported in (
+        ("fts4", detector_capabilities.fts4),
+        ("fts5", detector_capabilities.fts5),
+    ):
+        if not supported:
+            continue
+        variants.append(
             (
-                "CREATE VIRTUAL TABLE ACTIVITY USING fts5("
-                "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, PACE)"
-            ),
-            (),
-        ),
+                "{} virtual shadow substitution".format(module.upper()),
+                (
+                    "CREATE VIRTUAL TABLE ACTIVITY USING {}("
+                    "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, "
+                    "PACE)"
+                ).format(module),
+                (),
+            )
+        )
+    variants.append(
         (
             "sqliteX user objects",
             CREATE_ACTIVITY_SQL,
@@ -7596,7 +7984,7 @@ def verify_legacy_schema_path(
                     "SELECT ID, GMTSTART FROM ACTIVITY"
                 ),
             ),
-        ),
+        )
     )
     for label, activity_sql, extra_sql in variants:
         connection = sqlite3.connect(":memory:")
@@ -7637,6 +8025,18 @@ def verify_legacy_schema_path(
     return {
         "schemas_checked": checked,
         "capability_profiles_checked": capability_profiles_checked,
+        "theoretical_profiles_checked": len(theoretical_sqlite_profiles()),
+        "executable_profiles": list(executable_profile_names or ()),
+        "runtime_capabilities": {
+            "sqlite_version": list(detector_capabilities.sqlite_version),
+            "generated_columns": detector_capabilities.generated_columns,
+            "fts4": detector_capabilities.fts4,
+            "fts5": detector_capabilities.fts5,
+        },
+        "not_applicable_detectors": [
+            {"name": name, "reason": reason}
+            for name, reason in not_applicable_detectors
+        ],
         "modern_path": SCHEMA_PATH_MODERN,
         "sqlite_schema_alias_path": SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
         "legacy_path": SCHEMA_PATH_ANDROID_API_26,
@@ -7838,16 +8238,24 @@ def verify_corpus(
         candidate_outputs = load_outputs(candidate_dir.resolve())
         validate_candidate_outputs(expected_outputs, candidate_outputs)
 
-    mutation_names: Tuple[str, ...] = ()
+    detector_report = DetectorReport(())
     if run_mutations:
-        mutation_names = (
-            run_mutation_detection_tests(expected_outputs)
-            + run_storage_detection_tests(root, cases, expected_outputs)
+        detector_report = merge_detector_reports(
+            run_mutation_detection_tests(expected_outputs),
+            run_storage_detection_tests(root, cases, expected_outputs),
         )
 
     return {
         "fixture_count": len(cases),
-        "mutation_detectors": list(mutation_names),
+        "mutation_detectors": list(detector_report.passed),
+        "not_applicable_mutation_detectors": [
+            {"name": name, "reason": reason}
+            for name, reason in detector_report.not_applicable
+        ],
+        "mutation_detector_count": (
+            len(detector_report.passed)
+            + len(detector_report.not_applicable)
+        ),
         "candidate_dir": str(candidate_dir.resolve()) if candidate_dir else None,
     }
 
@@ -8709,10 +9117,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 run_mutations=not args.skip_mutation_tests,
             )
             suffix = ""
-            if result["mutation_detectors"]:
-                suffix = " and {} defect detectors".format(
+            if result["mutation_detector_count"]:
+                suffix = " and {} applicable defect detectors".format(
                     len(result["mutation_detectors"])
                 )
+                not_applicable = result[
+                    "not_applicable_mutation_detectors"
+                ]
+                if not_applicable:
+                    suffix += " ({} not applicable: {})".format(
+                        len(not_applicable),
+                        ", ".join(
+                            detector["name"] for detector in not_applicable
+                        ),
+                    )
             if result["candidate_dir"]:
                 suffix += " plus candidate outputs"
             print(
@@ -8737,11 +9155,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if args.command == "verify-legacy-schema-path":
             result = verify_legacy_schema_path(args.root)
+            not_applicable = result["not_applicable_detectors"]
+            suffix = ""
+            if not_applicable:
+                suffix = "; {} detector(s) not applicable: {}".format(
+                    len(not_applicable),
+                    ", ".join(
+                        detector["name"] for detector in not_applicable
+                    ),
+                )
             print(
-                "Verified {} schemas and {} guarded capability-profile "
-                "decisions".format(
+                "Verified {} schemas, {} host-supported capability-profile "
+                "decisions, and {} pure version profiles{}".format(
                     result["schemas_checked"],
                     result["capability_profiles_checked"],
+                    result["theoretical_profiles_checked"],
+                    suffix,
                 )
             )
             return 0

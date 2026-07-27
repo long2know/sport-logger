@@ -24,8 +24,9 @@ Tagged v0.11
 watch SQLite database. Its 20 fixtures cover every digit block emitted by the
 pinned Temurin 17 formatter matrix, evidence-based calendar interpretation,
 database-wide ambiguity quarantine, WAL snapshots, capability-selected schema
-preflight down to Android API 26, corruption, precision, ordering, and
-idempotent replay. Any
+preflight down to Android API 26, FTS4-compatible virtual-table checks, explicit
+N/A reporting for unsupported generated-column/FTS5 detectors, corruption,
+precision, ordering, and idempotent replay. Any
 calendar-ambiguous row retains and quarantines the whole source migration with
 zero target writes and no receipt.
 
