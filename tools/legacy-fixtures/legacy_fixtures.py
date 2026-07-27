@@ -9,7 +9,9 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import sqlite3
+import struct
 import sys
 import uuid
 from contextlib import contextmanager
@@ -28,6 +30,16 @@ FIXTURE_NAMESPACE = uuid.uuid5(
     "https://github.com/long2know/sport-logger/legacy-fixtures/v1",
 )
 TIMESTAMP_PATTERN = re.compile(r"^[0-9]{14}$")
+SQLITE_HEADER = b"SQLite format 3\x00"
+
+STORAGE_STANDARD = "standard"
+STORAGE_ACTIVE_WAL = "active_wal"
+STORAGE_MALFORMED_SCHEMA = "malformed_schema"
+STORAGE_TRUNCATED = "truncated"
+STORAGE_CORRUPT = "corrupt"
+
+WAL_SALT_1 = 0x13579BDF
+WAL_SALT_2 = 0x2468ACE0
 
 ACTIVITY_COLUMNS = (
     "ID",
@@ -116,6 +128,8 @@ class FixtureCase:
     business_tables: Tuple[str, ...] = BUSINESS_TABLES
     representative_values: Tuple[Mapping[str, Any], ...] = ()
     exercise_idempotency: bool = False
+    storage: str = STORAGE_STANDARD
+    blocked_reason: Optional[str] = None
 
     @property
     def database_identity(self) -> str:
@@ -224,6 +238,92 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "comparison": exact,
                 },
             ),
+        ),
+        FixtureCase(
+            key="start_only_zero_points",
+            description=(
+                "Complete schema with one source-reachable activity containing only "
+                "GMTSTART and no GPS points; point-driven or inner-join extraction "
+                "must not drop it."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240101120000",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(),
+            representative_values=(
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 1,
+                    "column": "GMTSTART",
+                    "expected": "20240101120000",
+                    "comparison": exact,
+                },
+            ),
+        ),
+        FixtureCase(
+            key="active_wal_snapshot",
+            description=(
+                "Android-compatible WAL snapshot whose committed activity and point "
+                "rows remain outside the main database file in the active -wal/-shm "
+                "snapshot."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240101130000",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "20240101130000",
+                    47.0,
+                    -122.0,
+                    10.0,
+                    3.0,
+                    1.5,
+                    90.0,
+                    100.0,
+                ),
+                point(
+                    2,
+                    1,
+                    "20240101130001",
+                    47.0001,
+                    -122.0001,
+                    10.25,
+                    3.25,
+                    1.625,
+                    91.0,
+                    101.0,
+                ),
+            ),
+            representative_values=(
+                {
+                    "table": "GPS_POINTS",
+                    "legacy_id": 2,
+                    "column": "GMTTIMESTAMP",
+                    "expected": "20240101130001",
+                    "comparison": exact,
+                },
+            ),
+            storage=STORAGE_ACTIVE_WAL,
         ),
         FixtureCase(
             key="representative",
@@ -362,6 +462,79 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             ),
         ),
         FixtureCase(
+            key="timestamp_ordering",
+            description=(
+                "Duplicate and non-monotonic point timestamps stored in required "
+                "ascending signed 64-bit ID order."
+            ),
+            activities=(
+                activity(
+                    9007199254740993,
+                    "20240801000000",
+                    "20240801000003",
+                    "Synthetic Timestamp Ordering",
+                    "ID order is authoritative even when timestamps duplicate or regress.",
+                    3.0,
+                    3.0,
+                    1.0,
+                ),
+            ),
+            track_points=(
+                point(
+                    2147483648,
+                    9007199254740993,
+                    "20240801000002",
+                    35.0,
+                    -120.0,
+                    1.0,
+                    2.0,
+                    3.0,
+                    4.0,
+                    100.0,
+                ),
+                point(
+                    9007199254740992,
+                    9007199254740993,
+                    "20240801000001",
+                    35.0001,
+                    -120.0001,
+                    1.1,
+                    2.1,
+                    3.1,
+                    4.1,
+                    101.0,
+                ),
+                point(
+                    9007199254740993,
+                    9007199254740993,
+                    "20240801000002",
+                    35.0002,
+                    -120.0002,
+                    1.2,
+                    2.2,
+                    3.2,
+                    4.2,
+                    102.0,
+                ),
+            ),
+            representative_values=(
+                {
+                    "table": "GPS_POINTS",
+                    "legacy_id": 9007199254740992,
+                    "column": "GMTTIMESTAMP",
+                    "expected": "20240801000001",
+                    "comparison": exact,
+                },
+                {
+                    "table": "GPS_POINTS",
+                    "legacy_id": 9007199254740993,
+                    "column": "ID",
+                    "expected": 9007199254740993,
+                    "comparison": exact,
+                },
+            ),
+        ),
+        FixtureCase(
             key="precision",
             description=(
                 "Precision-sensitive REAL values, leap-day timestamps, fractional "
@@ -430,6 +603,13 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "column": "ID",
                     "expected": 9007199254740993,
                     "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 9007199254740993,
+                    "column": "TIME",
+                    "expected": 1.000000000000001,
+                    "comparison": "ieee754",
                 },
                 {
                     "table": "GPS_POINTS",
@@ -615,6 +795,111 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "comparison": exact,
                 },
             ),
+        ),
+        FixtureCase(
+            key="malformed_schema",
+            description=(
+                "Structurally intact SQLite database with both business table names "
+                "but an incompatible ACTIVITY column declaration."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240901000000",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "20240901000000",
+                    1.0,
+                    2.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.0,
+                ),
+            ),
+            storage=STORAGE_MALFORMED_SCHEMA,
+            blocked_reason="malformed_schema",
+        ),
+        FixtureCase(
+            key="truncated",
+            description=(
+                "SQLite database shortened by one declared page; migration must stop "
+                "at file-structure preflight."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240902000000",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "20240902000000",
+                    1.0,
+                    2.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.0,
+                ),
+            ),
+            storage=STORAGE_TRUNCATED,
+            blocked_reason="truncated_sqlite",
+        ),
+        FixtureCase(
+            key="corrupt",
+            description=(
+                "Page-aligned SQLite database with a damaged GPS_POINTS b-tree page; "
+                "integrity preflight must block migration."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240903000000",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "20240903000000",
+                    1.0,
+                    2.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.0,
+                ),
+            ),
+            storage=STORAGE_CORRUPT,
+            blocked_reason="corrupt_sqlite",
         ),
         FixtureCase(
             key="interrupted_idempotency",
@@ -819,6 +1104,259 @@ def create_database(
         connection.close()
 
 
+def insert_fixture_rows(
+    connection: sqlite3.Connection,
+    activities: Sequence[Sequence[Any]],
+    track_points: Sequence[Sequence[Any]],
+) -> None:
+    connection.executemany(
+        "INSERT INTO ACTIVITY ({}) VALUES ({})".format(
+            ", ".join(ACTIVITY_COLUMNS),
+            ", ".join("?" for _ in ACTIVITY_COLUMNS),
+        ),
+        activities,
+    )
+    connection.executemany(
+        "INSERT INTO GPS_POINTS ({}) VALUES ({})".format(
+            ", ".join(GPS_POINT_COLUMNS),
+            ", ".join("?" for _ in GPS_POINT_COLUMNS),
+        ),
+        track_points,
+    )
+
+
+def wal_checksum(
+    data: bytes,
+    byte_order: str,
+    seed: Tuple[int, int] = (0, 0),
+) -> Tuple[int, int]:
+    if len(data) % 8 != 0:
+        raise FixtureValidationError("WAL checksum input must use 8-byte groups")
+    words = struct.unpack(
+        "{}{}I".format(byte_order, len(data) // 4),
+        data,
+    )
+    first, second = seed
+    for index in range(0, len(words), 2):
+        first = (first + words[index] + second) & 0xFFFFFFFF
+        second = (second + words[index + 1] + first) & 0xFFFFFFFF
+    return first, second
+
+
+def canonicalize_wal(wal_path: Path) -> int:
+    wal = bytearray(wal_path.read_bytes())
+    if len(wal) < 32:
+        raise FixtureValidationError("Active WAL is missing its 32-byte header")
+    magic = struct.unpack(">I", wal[0:4])[0]
+    if magic == 0x377F0682:
+        checksum_byte_order = "<"
+    elif magic == 0x377F0683:
+        checksum_byte_order = ">"
+    else:
+        raise FixtureValidationError(
+            "Unsupported WAL magic 0x{:08x}".format(magic)
+        )
+    page_size = struct.unpack(">I", wal[8:12])[0]
+    if page_size == 0:
+        page_size = 65536
+    frame_size = 24 + page_size
+    if (len(wal) - 32) % frame_size != 0:
+        raise FixtureValidationError("Active WAL has an incomplete frame")
+
+    struct.pack_into(">II", wal, 16, WAL_SALT_1, WAL_SALT_2)
+    checksum = wal_checksum(bytes(wal[:24]), checksum_byte_order)
+    struct.pack_into(">II", wal, 24, *checksum)
+
+    frame_count = 0
+    offset = 32
+    while offset < len(wal):
+        struct.pack_into(">II", wal, offset + 8, WAL_SALT_1, WAL_SALT_2)
+        checksum = wal_checksum(
+            bytes(wal[offset : offset + 8])
+            + bytes(wal[offset + 24 : offset + frame_size]),
+            checksum_byte_order,
+            checksum,
+        )
+        struct.pack_into(">II", wal, offset + 16, *checksum)
+        frame_count += 1
+        offset += frame_size
+    if frame_count == 0:
+        raise FixtureValidationError("Active WAL must contain committed frames")
+    wal_path.write_bytes(wal)
+    return frame_count
+
+
+def create_active_wal_snapshot(
+    root: Path,
+    database: Path,
+    activities: Sequence[Sequence[Any]],
+    track_points: Sequence[Sequence[Any]],
+) -> None:
+    remove_database_artifacts(database)
+    work_dir = root / "generated" / ".active-wal-work"
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True)
+    source = work_dir / "source.db"
+    canonical = work_dir / "canonical.db"
+
+    writer: Optional[sqlite3.Connection] = None
+    snapshot: Optional[sqlite3.Connection] = None
+    try:
+        create_database(source, (), ())
+        writer = sqlite3.connect(str(source))
+        journal_mode = writer.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+        if str(journal_mode).lower() != "wal":
+            raise FixtureValidationError("Could not enable WAL mode for snapshot")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("PRAGMA synchronous = FULL")
+        with writer:
+            insert_fixture_rows(writer, activities, track_points)
+
+        source_wal = Path(str(source) + "-wal")
+        source_shm = Path(str(source) + "-shm")
+        if not source_wal.is_file() or not source_shm.is_file():
+            raise FixtureValidationError("Active source did not retain WAL sidecars")
+        shutil.copyfile(source, canonical)
+        canonical_wal = Path(str(canonical) + "-wal")
+        shutil.copyfile(source_wal, canonical_wal)
+        canonicalize_wal(canonical_wal)
+
+        snapshot = sqlite3.connect(str(canonical))
+        snapshot.execute("PRAGMA query_only = ON")
+        snapshot.execute("SELECT COUNT(*) FROM ACTIVITY").fetchone()
+        canonical_shm = Path(str(canonical) + "-shm")
+        if not canonical_shm.is_file():
+            raise FixtureValidationError("Canonical WAL did not rebuild -shm")
+
+        database.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(canonical, database)
+        shutil.copyfile(canonical_wal, Path(str(database) + "-wal"))
+        shutil.copyfile(canonical_shm, Path(str(database) + "-shm"))
+    finally:
+        if snapshot is not None:
+            snapshot.close()
+        if writer is not None:
+            writer.close()
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+
+
+def create_malformed_schema_database(
+    database: Path,
+    activities: Sequence[Sequence[Any]],
+    track_points: Sequence[Sequence[Any]],
+) -> None:
+    database.parent.mkdir(parents=True, exist_ok=True)
+    remove_database_artifacts(database)
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        with connection:
+            connection.execute(CREATE_ANDROID_METADATA_SQL)
+            connection.execute(
+                "INSERT INTO android_metadata (locale) VALUES (?)",
+                (ANDROID_METADATA_LOCALE,),
+            )
+            connection.execute(
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, "
+                "GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR, "
+                "DISTANCE REAL, TIME INTEGER, PACE REAL);"
+            )
+            connection.execute(CREATE_GPS_POINTS_SQL)
+            connection.execute("PRAGMA user_version = 0")
+            insert_fixture_rows(connection, activities, track_points)
+        connection.execute("VACUUM")
+    finally:
+        connection.close()
+
+
+def sqlite_page_size(database_bytes: bytes) -> int:
+    if len(database_bytes) < 100 or database_bytes[:16] != SQLITE_HEADER:
+        raise FixtureValidationError("File lacks a complete SQLite header")
+    encoded_page_size = int.from_bytes(database_bytes[16:18], "big")
+    return 65536 if encoded_page_size == 1 else encoded_page_size
+
+
+def create_truncated_database(
+    database: Path,
+    activities: Sequence[Sequence[Any]],
+    track_points: Sequence[Sequence[Any]],
+) -> None:
+    create_database(database, activities, track_points)
+    database_bytes = database.read_bytes()
+    page_size = sqlite_page_size(database_bytes)
+    if len(database_bytes) <= page_size:
+        raise FixtureValidationError("Truncation seed must contain multiple pages")
+    database.write_bytes(database_bytes[:-page_size])
+
+
+def create_corrupt_database(
+    database: Path,
+    activities: Sequence[Sequence[Any]],
+    track_points: Sequence[Sequence[Any]],
+) -> None:
+    create_database(database, activities, track_points)
+    with open_readonly(database) as connection:
+        root_page = connection.execute(
+            "SELECT rootpage FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'GPS_POINTS'"
+        ).fetchone()[0]
+    database_bytes = bytearray(database.read_bytes())
+    page_size = sqlite_page_size(database_bytes)
+    page_offset = (int(root_page) - 1) * page_size
+    if page_offset >= len(database_bytes):
+        raise FixtureValidationError("GPS_POINTS root page is outside the database")
+    database_bytes[page_offset] = 0
+    database.write_bytes(database_bytes)
+
+
+def generate_case_database(root: Path, case: FixtureCase, database: Path) -> None:
+    if case.storage == STORAGE_STANDARD:
+        create_database(
+            database,
+            case.activities,
+            case.track_points,
+            case.business_tables,
+        )
+        return
+    if case.storage == STORAGE_ACTIVE_WAL:
+        create_active_wal_snapshot(
+            root,
+            database,
+            case.activities,
+            case.track_points,
+        )
+        return
+    if case.storage == STORAGE_MALFORMED_SCHEMA:
+        create_malformed_schema_database(
+            database,
+            case.activities,
+            case.track_points,
+        )
+        return
+    if case.storage == STORAGE_TRUNCATED:
+        create_truncated_database(
+            database,
+            case.activities,
+            case.track_points,
+        )
+        return
+    if case.storage == STORAGE_CORRUPT:
+        create_corrupt_database(
+            database,
+            case.activities,
+            case.track_points,
+        )
+        return
+    raise FixtureValidationError(
+        "{} has unknown storage mode {!r}".format(case.key, case.storage)
+    )
+
+
 def table_info(connection: sqlite3.Connection, table: str) -> Tuple[Tuple[Any, ...], ...]:
     return tuple(tuple(row) for row in connection.execute('PRAGMA table_info("{}")'.format(table)))
 
@@ -880,7 +1418,27 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
     missing_business_tables = [
         table for table in BUSINESS_TABLES if table not in user_tables
     ]
-    if not missing_business_tables:
+    schema_errors: List[str] = []
+    for table in PLATFORM_TABLES + BUSINESS_TABLES:
+        if table not in user_tables:
+            continue
+        if table_info(connection, table) != EXPECTED_TABLE_INFO[table]:
+            schema_errors.append("{}:table_info".format(table))
+        if table in BUSINESS_TABLES and tuple(
+            connection.execute('PRAGMA foreign_key_list("{}")'.format(table))
+        ):
+            schema_errors.append("{}:foreign_keys".format(table))
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 0:
+        schema_errors.append("database:user_version")
+    unexpected_tables = sorted(
+        user_tables - set(BUSINESS_TABLES) - set(PLATFORM_TABLES)
+    )
+    if unexpected_tables:
+        schema_errors.append("database:unexpected_tables")
+
+    if schema_errors:
+        state = "malformed_schema"
+    elif not missing_business_tables:
         state = "complete"
     elif not business_tables_present:
         state = "no_business_tables"
@@ -894,9 +1452,8 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
         "platform_tables_present": [
             table for table in PLATFORM_TABLES if table in user_tables
         ],
-        "unexpected_tables": sorted(
-            user_tables - set(BUSINESS_TABLES) - set(PLATFORM_TABLES)
-        ),
+        "unexpected_tables": unexpected_tables,
+        "schema_errors": sorted(schema_errors),
     }
 
 
@@ -955,6 +1512,146 @@ def validate_schema(
             "{} user_version must be 0, found {}".format(label, user_version)
         )
     return hash_value(schema_payload(connection))
+
+
+def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
+    size = database.stat().st_size
+    with database.open("rb") as handle:
+        header = handle.read(100)
+    if len(header) < 100:
+        return {
+            "status": "truncated",
+            "actual_bytes": size,
+            "page_size": None,
+            "declared_pages": None,
+            "declared_bytes": None,
+        }
+    if header[:16] != SQLITE_HEADER:
+        return {
+            "status": "invalid_header",
+            "actual_bytes": size,
+            "page_size": None,
+            "declared_pages": None,
+            "declared_bytes": None,
+        }
+    page_size = sqlite_page_size(header)
+    declared_pages = int.from_bytes(header[28:32], "big")
+    declared_bytes = declared_pages * page_size
+    if size < declared_bytes or size % page_size != 0:
+        status = "truncated"
+    elif size > declared_bytes:
+        status = "trailing_bytes"
+    else:
+        status = "complete"
+    return {
+        "status": status,
+        "actual_bytes": size,
+        "page_size": page_size,
+        "declared_pages": declared_pages,
+        "declared_bytes": declared_bytes,
+    }
+
+
+def sqlite_integrity_diagnostics(database: Path) -> Mapping[str, Any]:
+    try:
+        with open_readonly(database) as connection:
+            results = tuple(
+                str(row[0]) for row in connection.execute("PRAGMA integrity_check")
+            )
+    except sqlite3.DatabaseError:
+        return {
+            "status": "failed",
+            "result_count": 0,
+        }
+    if results == ("ok",):
+        return {
+            "status": "passed",
+            "result_count": 1,
+        }
+    return {
+        "status": "failed",
+        "result_count": len(results),
+    }
+
+
+def blocked_migration_expectations(reason: str) -> Mapping[str, Any]:
+    return {
+        "status": "blocked",
+        "reason": reason,
+        "source_rows_read": 0,
+        "target_write_attempted": False,
+        "target_rows_written": 0,
+        "receipt_write_attempted": False,
+        "receipt_written": False,
+    }
+
+
+def build_blocked_preflight_output(
+    case: FixtureCase,
+    database: Path,
+) -> Mapping[str, Any]:
+    structure = sqlite_file_structure_diagnostics(database)
+    integrity: Mapping[str, Any]
+    schema_check: Mapping[str, Any]
+    detected_reason: Optional[str] = None
+
+    if structure["status"] == "truncated":
+        detected_reason = "truncated_sqlite"
+        integrity = {"status": "not_run", "result_count": 0}
+        schema_check = {"status": "not_run", "state": None, "schema_errors": []}
+    elif structure["status"] != "complete":
+        detected_reason = "corrupt_sqlite"
+        integrity = {"status": "not_run", "result_count": 0}
+        schema_check = {"status": "not_run", "state": None, "schema_errors": []}
+    else:
+        integrity = sqlite_integrity_diagnostics(database)
+        if integrity["status"] != "passed":
+            detected_reason = "corrupt_sqlite"
+            schema_check = {
+                "status": "not_run",
+                "state": None,
+                "schema_errors": [],
+            }
+        else:
+            with open_readonly(database) as connection:
+                diagnostics = schema_diagnostics(connection)
+            schema_check = {
+                "status": (
+                    "passed"
+                    if diagnostics["migration_readiness"] == "ready"
+                    else "failed"
+                ),
+                "state": diagnostics["state"],
+                "schema_errors": diagnostics["schema_errors"],
+            }
+            if schema_check["status"] == "failed":
+                detected_reason = diagnostics["state"]
+
+    if detected_reason != case.blocked_reason:
+        raise FixtureValidationError(
+            "{} expected preflight block {!r}, found {!r}".format(
+                case.key,
+                case.blocked_reason,
+                detected_reason,
+            )
+        )
+    return {
+        "format_version": FORMAT_VERSION,
+        "output_kind": "blocked_preflight",
+        "fixture": case.key,
+        "database_identity": case.database_identity,
+        "diagnostics": {
+            "data_state": "not_examined_due_to_blocked_preflight",
+            "preflight": {
+                "file_structure": structure,
+                "integrity_check": integrity,
+                "schema_check": schema_check,
+            },
+        },
+        "migration_expectations": blocked_migration_expectations(
+            detected_reason
+        ),
+    }
 
 
 def read_table_rows(
@@ -1035,6 +1732,104 @@ def logical_checksums(
     }
 
 
+def active_wal_snapshot_diagnostics(
+    database: Path,
+    case: FixtureCase,
+) -> Mapping[str, Any]:
+    wal_path = Path(str(database) + "-wal")
+    shm_path = Path(str(database) + "-shm")
+    missing = [
+        path.name
+        for path in (database, wal_path, shm_path)
+        if not path.is_file()
+    ]
+    if missing:
+        raise FixtureValidationError(
+            "{} active snapshot is missing {}".format(case.key, missing)
+        )
+
+    wal = wal_path.read_bytes()
+    if len(wal) < 32:
+        raise FixtureValidationError("{} WAL header is truncated".format(case.key))
+    magic, _, encoded_page_size = struct.unpack(">III", wal[:12])
+    if magic not in (0x377F0682, 0x377F0683):
+        raise FixtureValidationError("{} WAL magic is invalid".format(case.key))
+    page_size = 65536 if encoded_page_size == 0 else encoded_page_size
+    frame_size = 24 + page_size
+    if (len(wal) - 32) % frame_size != 0:
+        raise FixtureValidationError("{} WAL frames are truncated".format(case.key))
+    frame_count = (len(wal) - 32) // frame_size
+    if frame_count == 0:
+        raise FixtureValidationError("{} WAL has no frames".format(case.key))
+    salt_1, salt_2 = struct.unpack(">II", wal[16:24])
+    if (salt_1, salt_2) != (WAL_SALT_1, WAL_SALT_2):
+        raise FixtureValidationError("{} WAL salts are not canonical".format(case.key))
+    final_commit_pages = struct.unpack(
+        ">I",
+        wal[32 + (frame_count - 1) * frame_size + 4 : 40 + (frame_count - 1) * frame_size],
+    )[0]
+    if final_commit_pages == 0:
+        raise FixtureValidationError(
+            "{} WAL does not end with a committed transaction".format(case.key)
+        )
+
+    immutable_uri = "file:{}?mode=ro&immutable=1".format(
+        database.resolve().as_posix()
+    )
+    main_only = sqlite3.connect(immutable_uri, uri=True)
+    try:
+        main_rows = read_all_rows(main_only)
+    finally:
+        main_only.close()
+    main_only_counts = {
+        "activity_rows": len(main_rows["ACTIVITY"]),
+        "track_point_rows": len(main_rows["GPS_POINTS"]),
+    }
+    if main_only_counts != {"activity_rows": 0, "track_point_rows": 0}:
+        raise FixtureValidationError(
+            "{} committed rows leaked into the main file".format(case.key)
+        )
+
+    with open_readonly(database) as source:
+        source.execute("BEGIN")
+        full_rows = read_all_rows(source)
+        backup = sqlite3.connect(":memory:")
+        try:
+            source.backup(backup)
+            backup_rows = read_all_rows(backup)
+            backup_integrity = tuple(
+                row[0] for row in backup.execute("PRAGMA integrity_check")
+            )
+        finally:
+            backup.close()
+            source.rollback()
+    compare_rows_to_case(case, full_rows)
+    compare_rows_to_case(case, backup_rows)
+    if backup_integrity != ("ok",):
+        raise FixtureValidationError(
+            "{} consistent backup failed integrity check".format(case.key)
+        )
+
+    return {
+        "mode": "active_wal",
+        "required_artifacts": [
+            database.name,
+            wal_path.name,
+            shm_path.name,
+        ],
+        "page_size": page_size,
+        "wal_frames": frame_count,
+        "shm_bytes": shm_path.stat().st_size,
+        "rows_resident_in_wal": True,
+        "main_only_counts": main_only_counts,
+        "consistent_read_transaction": {
+            "activity_rows": len(backup_rows["ACTIVITY"]),
+            "track_point_rows": len(backup_rows["GPS_POINTS"]),
+            "integrity_check": "ok",
+        },
+    }
+
+
 def strict_legacy_timestamp(value: Any) -> bool:
     if not isinstance(value, str) or not TIMESTAMP_PATTERN.fullmatch(value):
         return False
@@ -1051,6 +1846,12 @@ def finite_number(value: Any) -> bool:
         and not isinstance(value, bool)
         and math.isfinite(float(value))
     )
+
+
+def ieee754_double_hex(value: Any) -> str:
+    if not finite_number(value):
+        raise FixtureValidationError("IEEE-754 comparison requires a finite number")
+    return float(value).hex()
 
 
 def row_mapping(columns: Sequence[str], row: Sequence[Any]) -> Dict[str, Any]:
@@ -1221,6 +2022,40 @@ def rejected_row(
     }
 
 
+def ordering_diagnostics(
+    rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
+) -> Mapping[str, Any]:
+    activity_ids = [
+        row_mapping(ACTIVITY_COLUMNS, row)["ID"]
+        for row in rows_by_table["ACTIVITY"]
+    ]
+    point_rows = [
+        row_mapping(GPS_POINT_COLUMNS, row)
+        for row in rows_by_table["GPS_POINTS"]
+    ]
+    point_ids = [row["ID"] for row in point_rows]
+    valid_timestamps = [
+        row["GMTTIMESTAMP"]
+        for row in point_rows
+        if strict_legacy_timestamp(row["GMTTIMESTAMP"])
+    ]
+    return {
+        "activity_rows_ordered_by_64_bit_id": activity_ids == sorted(activity_ids),
+        "track_point_rows_ordered_by_64_bit_id": point_ids == sorted(point_ids),
+        "duplicate_track_point_timestamp_rows": (
+            len(valid_timestamps) - len(set(valid_timestamps))
+        ),
+        "non_monotonic_track_point_timestamp_transitions": sum(
+            1
+            for previous, current in zip(
+                valid_timestamps,
+                valid_timestamps[1:],
+            )
+            if current < previous
+        ),
+    }
+
+
 def build_canonical_output(
     case: FixtureCase,
     rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
@@ -1289,6 +2124,7 @@ def build_canonical_output(
     )
     output: Dict[str, Any] = {
         "format_version": FORMAT_VERSION,
+        "output_kind": "canonical",
         "fixture": case.key,
         "database_identity": case.database_identity,
         "diagnostics": {
@@ -1298,6 +2134,7 @@ def build_canonical_output(
                 if not activity_rows and not point_rows
                 else "contains_business_rows"
             ),
+            "ordering": ordering_diagnostics(rows_by_table),
         },
         "sessions": sessions,
         "track_points": track_points,
@@ -1316,6 +2153,13 @@ def build_canonical_output(
             "rejected_track_point_rows": rejected_point_count,
         },
         "idempotency": None,
+        "migration_expectations": (
+            None
+            if source_schema_diagnostics["migration_readiness"] == "ready"
+            else blocked_migration_expectations(
+                source_schema_diagnostics["state"]
+            )
+        ),
     }
     if case.exercise_idempotency:
         output["idempotency"] = simulate_idempotent_migration(output)
@@ -1502,11 +2346,14 @@ def simulate_interrupted_insert_attempts(
     first_attempt = dict(first_attempt)
     first_attempt.update(migration_state_counts(by_source))
     first_attempt["migration_complete"] = False
+    first_attempt["receipt_present"] = False
 
     replay = apply_insert_attempts(by_source, by_id, rerun_records)
     replay = dict(replay)
     replay.update(migration_state_counts(by_source))
     replay["migration_complete"] = True
+    replay["receipt_present"] = True
+    replay["receipt_completed"] = True
 
     final_state = migration_state_payload(by_source)
     assert_exact_final_state(interruption_point, final_state, expected_state)
@@ -1545,11 +2392,65 @@ def simulate_same_run_duplicates(
     result.update(
         {
             "migration_complete": True,
+            "receipt_present": True,
+            "receipt_completed": True,
             "exact_final_equality": True,
             "state_logical_checksum": hash_value(final_state),
         }
     )
     return result
+
+
+def simulate_receipt_gap_replay(
+    output: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    records = ordered_migration_records(output)
+    expected_state = expected_migration_state(records)
+    by_source: Dict[str, Mapping[str, Any]] = {}
+    by_id: Dict[str, str] = {}
+
+    committed_rows = dict(apply_insert_attempts(by_source, by_id, records))
+    committed_rows.update(migration_state_counts(by_source))
+    committed_rows.update(
+        {
+            "migration_complete": False,
+            "receipt_present": False,
+            "receipt_completed": False,
+        }
+    )
+    committed_state = migration_state_payload(by_source)
+    assert_exact_final_state(
+        "receipt_gap_target_commit",
+        committed_state,
+        expected_state,
+    )
+
+    replay = dict(apply_insert_attempts(by_source, by_id, records))
+    replay.update(migration_state_counts(by_source))
+    replay.update(
+        {
+            "migration_complete": True,
+            "receipt_present": True,
+            "receipt_completed": True,
+        }
+    )
+    final_state = migration_state_payload(by_source)
+    assert_exact_final_state("receipt_gap_replay", final_state, expected_state)
+    if replay["inserted_rows"] != 0 or replay["duplicate_attempts"] != len(records):
+        raise FixtureValidationError(
+            "Receipt-gap replay must insert zero rows and count every duplicate"
+        )
+    if canonical_json_bytes(committed_state) != canonical_json_bytes(final_state):
+        raise FixtureValidationError("Receipt-gap replay changed committed target state")
+
+    return {
+        "failure_point": "after_target_commit_before_receipt",
+        "committed_rows": committed_rows,
+        "replay": replay,
+        "duplicate_attempts_prevented": replay["duplicate_attempts"],
+        "exact_state_preserved": True,
+        "state_logical_checksum": hash_value(final_state),
+    }
 
 
 def simulate_idempotent_migration(
@@ -1587,6 +2488,7 @@ def simulate_idempotent_migration(
                 )
             ),
             "same_run_duplicates": simulate_same_run_duplicates(output),
+            "receipt_gap_replay": simulate_receipt_gap_replay(output),
         },
     }
 
@@ -1699,6 +2601,18 @@ def compare_representative(representative: Mapping[str, Any], actual: Any) -> No
                 )
             )
         return
+    if comparison == "ieee754":
+        if ieee754_double_hex(actual) != ieee754_double_hex(expected):
+            raise FixtureValidationError(
+                "Representative {}:{} {} expected IEEE-754 {}, found {}".format(
+                    representative["table"],
+                    representative["legacy_id"],
+                    representative["column"],
+                    ieee754_double_hex(expected),
+                    ieee754_double_hex(actual),
+                )
+            )
+        return
     if comparison == "epsilon":
         epsilon = float(representative["epsilon"])
         if not finite_number(actual) or not finite_number(expected):
@@ -1718,6 +2632,50 @@ def compare_representative(representative: Mapping[str, Any], actual: Any) -> No
     )
 
 
+def fixture_artifact_paths(database: Path, case: FixtureCase) -> Tuple[Path, ...]:
+    if case.storage == STORAGE_ACTIVE_WAL:
+        return (
+            database,
+            Path(str(database) + "-wal"),
+            Path(str(database) + "-shm"),
+        )
+    return (database,)
+
+
+def file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def artifact_manifest(
+    root: Path,
+    database: Path,
+    case: FixtureCase,
+) -> List[Mapping[str, Any]]:
+    exact_bytes_required = case.storage != STORAGE_STANDARD
+    artifacts: List[Mapping[str, Any]] = []
+    for path in fixture_artifact_paths(database, case):
+        if not path.is_file():
+            raise FixtureValidationError(
+                "{} is missing fixture artifact {}".format(case.key, path)
+            )
+        artifact: Dict[str, Any] = {
+            "path": path.relative_to(root).as_posix(),
+            "bytes": path.stat().st_size,
+            "exact_bytes_required": exact_bytes_required,
+        }
+        if exact_bytes_required:
+            artifact["sha256"] = file_sha256(path)
+        artifacts.append(artifact)
+    return artifacts
+
+
 def manifest_entry(
     root: Path,
     case: FixtureCase,
@@ -1730,9 +2688,11 @@ def manifest_entry(
     return {
         "name": case.key,
         "description": case.description,
+        "storage": case.storage,
         "database": database.relative_to(root).as_posix(),
         "expected_output": expected_output_path.relative_to(root).as_posix(),
         "database_identity": case.database_identity,
+        "artifacts": artifact_manifest(root, database, case),
         "expected": {
             "activity_rows": len(rows_by_table["ACTIVITY"]),
             "track_point_rows": len(rows_by_table["GPS_POINTS"]),
@@ -1753,6 +2713,33 @@ def manifest_entry(
     }
 
 
+def blocked_manifest_entry(
+    root: Path,
+    case: FixtureCase,
+    database: Path,
+    expected_output_path: Path,
+    output: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    return {
+        "name": case.key,
+        "description": case.description,
+        "storage": case.storage,
+        "database": database.relative_to(root).as_posix(),
+        "expected_output": expected_output_path.relative_to(root).as_posix(),
+        "database_identity": case.database_identity,
+        "artifacts": artifact_manifest(root, database, case),
+        "expected": {
+            "generation_seed_counts": {
+                "activity_rows": len(case.activities),
+                "track_point_rows": len(case.track_points),
+            },
+            "diagnostics": output["diagnostics"],
+            "migration_expectations": output["migration_expectations"],
+            "canonical_output_logical_checksum": hash_value(output),
+        },
+    }
+
+
 def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     root = root.resolve()
     fixtures_dir = root / "fixtures"
@@ -1764,12 +2751,20 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     for case in fixture_cases():
         database = fixtures_dir / "{}.db".format(case.key)
         expected_output_path = expected_dir / "{}.json".format(case.key)
-        create_database(
-            database,
-            case.activities,
-            case.track_points,
-            case.business_tables,
-        )
+        generate_case_database(root, case, database)
+        if case.blocked_reason is not None:
+            output = build_blocked_preflight_output(case, database)
+            write_json(expected_output_path, output)
+            entries.append(
+                blocked_manifest_entry(
+                    root,
+                    case,
+                    database,
+                    expected_output_path,
+                    output,
+                )
+            )
+            continue
         with open_readonly(database) as connection:
             validate_schema(connection, case.key, case.business_tables)
             rows_by_table = read_all_rows(connection)
@@ -1778,6 +2773,10 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
                 rows_by_table,
                 schema_diagnostics(connection),
             )
+            if case.storage == STORAGE_ACTIVE_WAL:
+                output["diagnostics"]["snapshot"] = (
+                    active_wal_snapshot_diagnostics(database, case)
+                )
             write_json(expected_output_path, output)
             entries.append(
                 manifest_entry(
@@ -1848,7 +2847,6 @@ def compare_json(
     expected: Any,
     actual: Any,
     path: str = "$",
-    float_epsilon: float = 1e-12,
 ) -> None:
     if isinstance(expected, Mapping):
         if not isinstance(actual, Mapping):
@@ -1870,7 +2868,6 @@ def compare_json(
                 expected[key],
                 actual[key],
                 "{}.{}".format(path, key),
-                float_epsilon,
             )
         return
     if isinstance(expected, list):
@@ -1889,7 +2886,6 @@ def compare_json(
                 wanted,
                 found,
                 "{}[{}]".format(path, index),
-                float_epsilon,
             )
         return
     if isinstance(expected, int) and not isinstance(expected, bool):
@@ -1915,15 +2911,14 @@ def compare_json(
                     path, expected, actual
                 )
             )
-        if not math.isclose(
-            expected,
-            float(actual),
-            rel_tol=0.0,
-            abs_tol=float_epsilon,
-        ):
+        if ieee754_double_hex(expected) != ieee754_double_hex(actual):
             raise FixtureValidationError(
-                "{} numeric value expected {!r}, found {!r}".format(
-                    path, expected, actual
+                "{} IEEE-754 value expected {!r} ({}), found {!r} ({})".format(
+                    path,
+                    expected,
+                    ieee754_double_hex(expected),
+                    actual,
+                    ieee754_double_hex(actual),
                 )
             )
         return
@@ -1945,6 +2940,43 @@ def validate_output_invariants(
                     fixture_name, output.get("fixture")
                 )
             )
+        if output.get("output_kind") == "blocked_preflight":
+            expectations = output.get("migration_expectations")
+            if (
+                not isinstance(expectations, Mapping)
+                or expectations.get("status") != "blocked"
+                or expectations.get("source_rows_read") != 0
+                or expectations.get("target_write_attempted") is not False
+                or expectations.get("target_rows_written") != 0
+                or expectations.get("receipt_write_attempted") is not False
+                or expectations.get("receipt_written") is not False
+            ):
+                raise FixtureValidationError(
+                    "{} blocked migration expectations are unsafe".format(
+                        fixture_name
+                    )
+                )
+            preflight = output["diagnostics"]["preflight"]
+            if preflight["file_structure"]["status"] == "truncated":
+                detected_reason = "truncated_sqlite"
+            elif preflight["integrity_check"]["status"] == "failed":
+                detected_reason = "corrupt_sqlite"
+            else:
+                detected_reason = preflight["schema_check"]["state"]
+            if expectations["reason"] != detected_reason:
+                raise FixtureValidationError(
+                    "{} blocked reason does not match preflight".format(
+                        fixture_name
+                    )
+                )
+            continue
+        if output.get("output_kind") != "canonical":
+            raise FixtureValidationError(
+                "{} has unknown output kind {!r}".format(
+                    fixture_name,
+                    output.get("output_kind"),
+                )
+            )
         sessions = output["sessions"]
         track_points = output["track_points"]
         orphans = output["orphan_track_points"]
@@ -1964,12 +2996,16 @@ def validate_output_invariants(
                 )
             )
         expected_schema_state = (
-            "complete"
-            if not missing_business_tables
+            "malformed_schema"
+            if schema_diagnostic["schema_errors"]
             else (
-                "no_business_tables"
-                if not present_business_tables
-                else "partial_business_schema"
+                "complete"
+                if not missing_business_tables
+                else (
+                    "no_business_tables"
+                    if not present_business_tables
+                    else "partial_business_schema"
+                )
             )
         )
         if schema_diagnostic["state"] != expected_schema_state:
@@ -2093,6 +3129,33 @@ def validate_output_invariants(
                     )
                 source_keys[source] = record_id
 
+        ordering = diagnostics["ordering"]
+        if (
+            ordering["activity_rows_ordered_by_64_bit_id"] is not True
+            or ordering["track_point_rows_ordered_by_64_bit_id"] is not True
+        ):
+            raise FixtureValidationError(
+                "{} source rows are not in required 64-bit ID order".format(
+                    fixture_name
+                )
+            )
+
+        for label, records in (
+            ("sessions", sessions),
+            ("track_points", track_points),
+            ("orphan_track_points", orphans),
+        ):
+            legacy_ids = [record["legacy_id"] for record in records]
+            if legacy_ids != sorted(legacy_ids) or len(legacy_ids) != len(
+                set(legacy_ids)
+            ):
+                raise FixtureValidationError(
+                    "{} {} are not strictly ordered by legacy ID".format(
+                        fixture_name,
+                        label,
+                    )
+                )
+
         for point_row in track_points:
             if point_row["session_id"] not in session_ids:
                 raise FixtureValidationError(
@@ -2113,6 +3176,25 @@ def validate_output_invariants(
                 raise FixtureValidationError(
                     "{} orphan {} lacks missing_activity reason".format(
                         fixture_name, orphan["source_key"]
+                    )
+                )
+
+        migration_expectations = output["migration_expectations"]
+        if schema_diagnostic["migration_readiness"] == "ready":
+            if migration_expectations is not None:
+                raise FixtureValidationError(
+                    "{} ready schema unexpectedly blocks migration".format(
+                        fixture_name
+                    )
+                )
+        else:
+            if (
+                migration_expectations
+                != blocked_migration_expectations(schema_diagnostic["state"])
+            ):
+                raise FixtureValidationError(
+                    "{} blocked schema lacks no-write/no-receipt expectations".format(
+                        fixture_name
                     )
                 )
 
@@ -2155,6 +3237,9 @@ def validate_output_invariants(
                 if (
                     not scenario["exact_final_equality"]
                     or scenario["state_logical_checksum"] != expected_checksum
+                    or scenario["first_attempt"]["receipt_present"] is not False
+                    or scenario["replay"]["receipt_present"] is not True
+                    or scenario["replay"]["receipt_completed"] is not True
                 ):
                     raise FixtureValidationError(
                         "{} {} final state mismatch".format(
@@ -2169,9 +3254,36 @@ def validate_output_invariants(
                 or same_run["duplicate_rows"] != 0
                 or not same_run["exact_final_equality"]
                 or same_run["state_logical_checksum"] != expected_checksum
+                or same_run["receipt_present"] is not True
+                or same_run["receipt_completed"] is not True
             ):
                 raise FixtureValidationError(
                     "{} same-run duplicate accounting mismatch".format(fixture_name)
+                )
+            receipt_gap = scenarios["receipt_gap_replay"]
+            committed_rows = receipt_gap["committed_rows"]
+            replay = receipt_gap["replay"]
+            if (
+                committed_rows["inserted_rows"] != idempotency["canonical_insert_rows"]
+                or committed_rows["receipt_present"] is not False
+                or committed_rows["migration_complete"] is not False
+                or replay["inserted_rows"] != 0
+                or replay["duplicate_attempts"]
+                != idempotency["canonical_insert_rows"]
+                or replay["attempted_rows"]
+                != replay["duplicate_attempts"]
+                or replay["receipt_present"] is not True
+                or replay["receipt_completed"] is not True
+                or replay["migration_complete"] is not True
+                or receipt_gap["duplicate_attempts_prevented"]
+                != idempotency["canonical_insert_rows"]
+                or receipt_gap["exact_state_preserved"] is not True
+                or receipt_gap["state_logical_checksum"] != expected_checksum
+            ):
+                raise FixtureValidationError(
+                    "{} receipt-gap replay is incomplete or lossy".format(
+                        fixture_name
+                    )
                 )
 
 
@@ -2230,6 +3342,15 @@ def run_mutation_detection_tests(
         for session in candidate["precision"]["sessions"]
         if session["legacy_id"] == 9007199254740993
     )
+    precision_session["time"] = 1.0
+    rejected("float_precision_round_trip", candidate)
+
+    candidate = copy.deepcopy(expected_outputs)
+    precision_session = next(
+        session
+        for session in candidate["precision"]["sessions"]
+        if session["legacy_id"] == 9007199254740993
+    )
     precision_session["legacy_id"] = 9007199254740992
     rejected("integer_precision_above_2_53", candidate)
 
@@ -2252,6 +3373,24 @@ def run_mutation_detection_tests(
     rejected("timestamp_drift", candidate)
 
     candidate = copy.deepcopy(expected_outputs)
+    candidate["timestamp_ordering"]["track_points"].sort(
+        key=lambda row: (row["gmt_timestamp"], row["legacy_id"])
+    )
+    rejected("timestamp_ordering", candidate)
+
+    candidate = copy.deepcopy(expected_outputs)
+    timestamp_output = candidate["timestamp_ordering"]
+    duplicate_timestamp = timestamp_output["track_points"].pop()
+    if duplicate_timestamp["gmt_timestamp"] != "20240801000002":
+        raise FixtureValidationError("Timestamp fixture lost its duplicate control")
+    timestamp_output["summary"]["source_track_point_rows"] -= 1
+    timestamp_output["summary"]["track_points"] -= 1
+    timestamp_output["diagnostics"]["ordering"][
+        "duplicate_track_point_timestamp_rows"
+    ] = 0
+    rejected("duplicate_timestamp_collapsed", candidate)
+
+    candidate = copy.deepcopy(expected_outputs)
     points = candidate["representative"]["track_points"]
     points[1]["deterministic_id"] = points[0]["deterministic_id"]
     rejected("duplicate_deterministic_ids", candidate)
@@ -2262,6 +3401,52 @@ def run_mutation_detection_tests(
     orphan.pop("reason")
     candidate["orphan"]["track_points"].append(orphan)
     rejected("orphan_mishandling", candidate)
+
+    for fixture_name, detector_name in (
+        ("start_only_zero_points", "start_only_activity_dropped"),
+        ("active_wal_snapshot", "wal_sidecars_ignored"),
+    ):
+        candidate = copy.deepcopy(expected_outputs)
+        output = candidate[fixture_name]
+        output["sessions"] = []
+        output["track_points"] = []
+        output["orphan_track_points"] = []
+        output["rejected_rows"] = []
+        output["summary"].update(
+            {
+                "source_activity_rows": 0,
+                "source_track_point_rows": 0,
+                "sessions": 0,
+                "partial_sessions": 0,
+                "track_points": 0,
+                "orphan_track_points": 0,
+                "rejected_activity_rows": 0,
+                "rejected_track_point_rows": 0,
+            }
+        )
+        output["diagnostics"]["data_state"] = "empty"
+        output["diagnostics"]["ordering"].update(
+            {
+                "duplicate_track_point_timestamp_rows": 0,
+                "non_monotonic_track_point_timestamp_transitions": 0,
+            }
+        )
+        rejected(detector_name, candidate)
+
+    for fixture_name, detector_name in (
+        ("malformed_schema", "malformed_schema_target_write"),
+        ("truncated", "truncated_sqlite_target_write"),
+        ("corrupt", "corrupt_sqlite_receipt_write"),
+    ):
+        candidate = copy.deepcopy(expected_outputs)
+        expectations = candidate[fixture_name]["migration_expectations"]
+        if fixture_name == "corrupt":
+            expectations["receipt_write_attempted"] = True
+            expectations["receipt_written"] = True
+        else:
+            expectations["target_write_attempted"] = True
+            expectations["target_rows_written"] = 1
+        rejected(detector_name, candidate)
 
     interrupted = expected_outputs["interrupted_idempotency"]
     bad_rerun = copy.deepcopy(interrupted)
@@ -2301,6 +3486,89 @@ def run_mutation_detection_tests(
             "Validator self-test did not detect partial_rerun_missing_row"
         )
 
+    candidate = copy.deepcopy(expected_outputs)
+    receipt_gap_replay = candidate["interrupted_idempotency"]["idempotency"][
+        "scenarios"
+    ]["receipt_gap_replay"]["replay"]
+    receipt_gap_replay["migration_complete"] = False
+    receipt_gap_replay["receipt_present"] = False
+    receipt_gap_replay["receipt_completed"] = False
+    rejected("receipt_gap_not_completed", candidate)
+
+    return tuple(passed)
+
+
+def run_storage_detection_tests(
+    root: Path,
+    cases: Mapping[str, FixtureCase],
+    expected_outputs: Mapping[str, Mapping[str, Any]],
+) -> Tuple[str, ...]:
+    passed: List[str] = []
+    active_case = cases["active_wal_snapshot"]
+    active_database = root / "fixtures" / "active_wal_snapshot.db"
+    work_dir = root / "generated" / ".storage-detectors"
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True)
+    try:
+        missing_shm = work_dir / "missing-shm.db"
+        shutil.copyfile(active_database, missing_shm)
+        shutil.copyfile(
+            Path(str(active_database) + "-wal"),
+            Path(str(missing_shm) + "-wal"),
+        )
+        try:
+            active_wal_snapshot_diagnostics(missing_shm, active_case)
+        except (FixtureValidationError, sqlite3.DatabaseError):
+            passed.append("wal_shm_omitted")
+        else:
+            raise FixtureValidationError(
+                "Validator self-test did not detect wal_shm_omitted"
+            )
+
+        torn = work_dir / "torn.db"
+        for source, destination in zip(
+            fixture_artifact_paths(active_database, active_case),
+            (
+                torn,
+                Path(str(torn) + "-wal"),
+                Path(str(torn) + "-shm"),
+            ),
+        ):
+            shutil.copyfile(source, destination)
+        torn_wal = Path(str(torn) + "-wal")
+        wal = torn_wal.read_bytes()
+        encoded_page_size = struct.unpack(">I", wal[8:12])[0]
+        page_size = 65536 if encoded_page_size == 0 else encoded_page_size
+        torn_wal.write_bytes(wal[: -(24 + page_size)])
+        try:
+            active_wal_snapshot_diagnostics(torn, active_case)
+        except (FixtureValidationError, sqlite3.DatabaseError):
+            passed.append("wal_inconsistent_snapshot")
+        else:
+            raise FixtureValidationError(
+                "Validator self-test did not detect wal_inconsistent_snapshot"
+            )
+
+        for fixture_name, detector_name in (
+            ("malformed_schema", "malformed_schema_preflight"),
+            ("truncated", "truncated_sqlite_preflight"),
+            ("corrupt", "corrupt_sqlite_preflight"),
+        ):
+            case = cases[fixture_name]
+            actual = build_blocked_preflight_output(
+                case,
+                root / "fixtures" / "{}.db".format(fixture_name),
+            )
+            compare_json(
+                expected_outputs[fixture_name],
+                actual,
+                "$.storage.{}".format(fixture_name),
+            )
+            passed.append(detector_name)
+    finally:
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
     return tuple(passed)
 
 
@@ -2357,6 +3625,8 @@ def verify_corpus(
             raise FixtureValidationError(
                 "{} database identity mismatch".format(name)
             )
+        if entry.get("storage") != case.storage:
+            raise FixtureValidationError("{} storage mode mismatch".format(name))
         database = root / entry["database"]
         expected_output_path = root / entry["expected_output"]
         if not database.is_file():
@@ -2365,6 +3635,24 @@ def verify_corpus(
             raise FixtureValidationError(
                 "Missing expected output {}".format(expected_output_path)
             )
+        if case.blocked_reason is not None:
+            output = build_blocked_preflight_output(case, database)
+            committed_output = load_json(expected_output_path)
+            compare_json(output, committed_output, "$.expected.{}".format(name))
+            expected_outputs[name] = committed_output
+            recomputed_entry = blocked_manifest_entry(
+                root,
+                case,
+                database,
+                expected_output_path,
+                output,
+            )
+            compare_json(
+                recomputed_entry,
+                entry,
+                "$.manifest.{}".format(name),
+            )
+            continue
         with open_readonly(database) as connection:
             schema_checksum = validate_schema(
                 connection,
@@ -2378,6 +3666,10 @@ def verify_corpus(
                 rows_by_table,
                 schema_diagnostics(connection),
             )
+            if case.storage == STORAGE_ACTIVE_WAL:
+                output["diagnostics"]["snapshot"] = (
+                    active_wal_snapshot_diagnostics(database, case)
+                )
             committed_output = load_json(expected_output_path)
             compare_json(output, committed_output, "$.expected.{}".format(name))
             expected_outputs[name] = committed_output
@@ -2412,13 +3704,70 @@ def verify_corpus(
 
     mutation_names: Tuple[str, ...] = ()
     if run_mutations:
-        mutation_names = run_mutation_detection_tests(expected_outputs)
+        mutation_names = (
+            run_mutation_detection_tests(expected_outputs)
+            + run_storage_detection_tests(root, cases, expected_outputs)
+        )
 
     return {
         "fixture_count": len(cases),
         "mutation_detectors": list(mutation_names),
         "candidate_dir": str(candidate_dir.resolve()) if candidate_dir else None,
     }
+
+
+def corpus_artifact_bytes(root: Path) -> Mapping[str, bytes]:
+    paths = [root / "manifest.json"]
+    paths.extend(sorted((root / "expected").glob("*.json")))
+    paths.extend(sorted(path for path in (root / "fixtures").iterdir() if path.is_file()))
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in paths
+    }
+
+
+def verify_deterministic_regeneration(
+    root: Path = TOOL_ROOT,
+) -> Mapping[str, Any]:
+    root = root.resolve()
+    work_dir = root / "generated" / ".deterministic-regeneration"
+    first = work_dir / "first"
+    second = work_dir / "second"
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    try:
+        generate_corpus(first)
+        generate_corpus(second)
+        first_artifacts = corpus_artifact_bytes(first)
+        second_artifacts = corpus_artifact_bytes(second)
+        committed_artifacts = corpus_artifact_bytes(root)
+        if set(first_artifacts) != set(second_artifacts):
+            raise FixtureValidationError(
+                "Deterministic generations produced different artifact sets"
+            )
+        if set(first_artifacts) != set(committed_artifacts):
+            raise FixtureValidationError(
+                "Committed corpus artifact set differs from regeneration"
+            )
+        mismatches = [
+            path
+            for path in sorted(first_artifacts)
+            if first_artifacts[path] != second_artifacts[path]
+            or first_artifacts[path] != committed_artifacts[path]
+        ]
+        if mismatches:
+            raise FixtureValidationError(
+                "Byte-for-byte deterministic regeneration failed for {}".format(
+                    mismatches
+                )
+            )
+        return {
+            "artifact_count": len(first_artifacts),
+            "fixture_count": len(fixture_cases()),
+        }
+    finally:
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
 
 
 def large_timestamp(base: datetime, offset_seconds: int) -> str:
@@ -2643,6 +3992,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Skip validator fault-injection self-tests.",
     )
 
+    subparsers.add_parser(
+        "verify-determinism",
+        help=(
+            "Regenerate the full corpus twice and compare every committed artifact "
+            "byte-for-byte."
+        ),
+    ).add_argument("--root", type=Path, default=TOOL_ROOT)
+
     large_parser = subparsers.add_parser(
         "large", help="Generate an uncommitted deterministic stress fixture."
     )
@@ -2695,6 +4052,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(
                 "Verified {} deterministic fixtures{}".format(
                     result["fixture_count"], suffix
+                )
+            )
+            return 0
+        if args.command == "verify-determinism":
+            result = verify_deterministic_regeneration(args.root)
+            print(
+                "Verified byte-for-byte regeneration of {} artifacts across {} "
+                "fixtures".format(
+                    result["artifact_count"],
+                    result["fixture_count"],
                 )
             )
             return 0

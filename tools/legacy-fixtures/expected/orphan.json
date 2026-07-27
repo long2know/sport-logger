@@ -2,6 +2,12 @@
   "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
   "diagnostics": {
     "data_state": "contains_business_rows",
+    "ordering": {
+      "activity_rows_ordered_by_64_bit_id": true,
+      "duplicate_track_point_timestamp_rows": 0,
+      "non_monotonic_track_point_timestamp_transitions": 0,
+      "track_point_rows_ordered_by_64_bit_id": true
+    },
     "schema": {
       "business_tables_present": [
         "ACTIVITY",
@@ -12,6 +18,7 @@
       "platform_tables_present": [
         "android_metadata"
       ],
+      "schema_errors": [],
       "state": "complete",
       "unexpected_tables": []
     }
@@ -19,6 +26,7 @@
   "fixture": "orphan",
   "format_version": 1,
   "idempotency": null,
+  "migration_expectations": null,
   "orphan_track_points": [
     {
       "accuracy": 3.25,
@@ -37,6 +45,7 @@
       "speed": 2.625
     }
   ],
+  "output_kind": "canonical",
   "rejected_rows": [],
   "sessions": [
     {

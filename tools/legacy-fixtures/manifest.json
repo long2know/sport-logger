@@ -3,6 +3,13 @@
   "fixture_namespace_uuid": "8f13caf0-f046-575f-b2cb-fa4a5fbd1ae6",
   "fixtures": [
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/empty.db"
+        }
+      ],
       "database": "fixtures/empty.db",
       "database_identity": "synthetic:sport-logger:legacy:empty:v1",
       "description": "Complete Android/application schema with no activities or track points; this is valid empty data.",
@@ -18,9 +25,15 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "f2f4ed225cbbabb8cab80df27a8f15bbb79c06d4b912c4743f59657b43b07e1c",
+        "canonical_output_logical_checksum": "cd09b900a0bf7666129581e9954f6dac569ecf861d9cb55c52dc7bea01304100",
         "diagnostics": {
           "data_state": "empty",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -31,6 +44,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -82,9 +96,17 @@
         "track_point_rows": 0
       },
       "expected_output": "expected/empty.json",
-      "name": "empty"
+      "name": "empty",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 8192,
+          "exact_bytes_required": false,
+          "path": "fixtures/startup_no_business_tables.db"
+        }
+      ],
       "database": "fixtures/startup_no_business_tables.db",
       "database_identity": "synthetic:sport-logger:legacy:startup_no_business_tables:v1",
       "description": "Startup snapshot after Android created platform metadata but before either application table was created.",
@@ -100,9 +122,15 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "6f317ad2ca4cd960c236fb3eca1268c391946d250551c67fbc7ba7b70d958239",
+        "canonical_output_logical_checksum": "d75bb3024745afb538c5a5fb65eb06233fa1dabda804e0adc5528addd8347685",
         "diagnostics": {
           "data_state": "empty",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [],
             "migration_readiness": "blocked",
@@ -113,6 +141,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "no_business_tables",
             "unexpected_tables": []
           }
@@ -164,9 +193,17 @@
         "track_point_rows": 0
       },
       "expected_output": "expected/startup_no_business_tables.json",
-      "name": "startup_no_business_tables"
+      "name": "startup_no_business_tables",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 16384,
+          "exact_bytes_required": false,
+          "path": "fixtures/startup_activity_only.db"
+        }
+      ],
       "database": "fixtures/startup_activity_only.db",
       "database_identity": "synthetic:sport-logger:legacy:startup_activity_only:v1",
       "description": "Startup snapshot interrupted between the independent ACTIVITY and GPS_POINTS CREATE TABLE statements.",
@@ -182,9 +219,15 @@
           "source_track_point_rows": 0,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "9c3b7f8249ba8899af679195a5b13243e4e0d70f86630be9de6420c31610f866",
+        "canonical_output_logical_checksum": "dd4e8ed25b0b3c266eb5b66c6b097d67c605022f8264155a1ff053f325ddf346",
         "diagnostics": {
           "data_state": "empty",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY"
@@ -196,6 +239,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "partial_business_schema",
             "unexpected_tables": []
           }
@@ -247,9 +291,17 @@
         "track_point_rows": 0
       },
       "expected_output": "expected/startup_activity_only.json",
-      "name": "startup_activity_only"
+      "name": "startup_activity_only",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/startup_activity_id_zero.db"
+        }
+      ],
       "database": "fixtures/startup_activity_id_zero.db",
       "database_identity": "synthetic:sport-logger:legacy:startup_activity_id_zero:v1",
       "description": "Complete schema with a scheduled startup point written before the new activity ID replaced the shared default value 0.",
@@ -265,9 +317,15 @@
           "source_track_point_rows": 1,
           "track_points": 0
         },
-        "canonical_output_logical_checksum": "325719e0895f280ac0258e6be32699abb19ddd5547b0b9b315b8922ac9606372",
+        "canonical_output_logical_checksum": "cf902077c204e966824545bd0e3cf53e5715111a1b06821f19ffa4f75668a1d2",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -278,6 +336,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -340,9 +399,265 @@
         "track_point_rows": 1
       },
       "expected_output": "expected/startup_activity_id_zero.json",
-      "name": "startup_activity_id_zero"
+      "name": "startup_activity_id_zero",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/start_only_zero_points.db"
+        }
+      ],
+      "database": "fixtures/start_only_zero_points.db",
+      "database_identity": "synthetic:sport-logger:legacy:start_only_zero_points:v1",
+      "description": "Complete schema with one source-reachable activity containing only GMTSTART and no GPS points; point-driven or inner-join extraction must not drop it.",
+      "expected": {
+        "activity_rows": 1,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 1,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 1,
+          "source_activity_rows": 1,
+          "source_track_point_rows": 0,
+          "track_points": 0
+        },
+        "canonical_output_logical_checksum": "725c618587d45d3ed7ee6fa739a4744643b615edbd85e0cc7903d7d47c4639ef",
+        "diagnostics": {
+          "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
+          "schema": {
+            "business_tables_present": [
+              "ACTIVITY",
+              "GPS_POINTS"
+            ],
+            "migration_readiness": "ready",
+            "missing_business_tables": [],
+            "platform_tables_present": [
+              "android_metadata"
+            ],
+            "schema_errors": [],
+            "state": "complete",
+            "unexpected_tables": []
+          }
+        },
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "edcb60e8d2dfa3228a609b080a3e3979d6d8b325ea3805be7dd35b8f950337ae",
+          "database": "941fbfd4058699074682974e3319c0786a9e87b4d0cd8156fb94f6815ea4f5f4",
+          "gps_points": "1450f5ef4278f4fec32645f139ea3fe9127b6ef22bddadaf72f874fbf67c443f"
+        },
+        "physical_orphan_track_points": 0,
+        "platform_metadata": {
+          "android_metadata": {
+            "business_data": false,
+            "rows": [
+              {
+                "locale": "en_US",
+                "storage_type": "text"
+              }
+            ]
+          }
+        },
+        "points_per_activity": {},
+        "representative_values": [
+          {
+            "column": "GMTSTART",
+            "comparison": "exact",
+            "expected": "20240101120000",
+            "legacy_id": 1,
+            "storage_type": "text",
+            "table": "ACTIVITY"
+          }
+        ],
+        "schema_logical_checksum": "a5dba611ed9fe3994cd9ae1227d16073ec4505c9c505f4cae5ac2b27ebded24c",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240101120000",
+            "min": "20240101120000",
+            "null_count": 1,
+            "valid_count": 1
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240101120000",
+            "min": "20240101120000",
+            "null_count": 1,
+            "valid_count": 1
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": null,
+            "min": null,
+            "null_count": 0,
+            "valid_count": 0
+          }
+        },
+        "track_point_rows": 0
+      },
+      "expected_output": "expected/start_only_zero_points.json",
+      "name": "start_only_zero_points",
+      "storage": "standard"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": true,
+          "path": "fixtures/active_wal_snapshot.db",
+          "sha256": "3710fbe109a0ca1f3d3ec01e0069e5859a3fa6e30526b2c98a7e48f4237e59bf"
+        },
+        {
+          "bytes": 12392,
+          "exact_bytes_required": true,
+          "path": "fixtures/active_wal_snapshot.db-wal",
+          "sha256": "dc40e44b03b868b8b28b0813fcb694e15374a9b4f47fcb7b84c860f6c02ca10c"
+        },
+        {
+          "bytes": 32768,
+          "exact_bytes_required": true,
+          "path": "fixtures/active_wal_snapshot.db-shm",
+          "sha256": "0394228aa568f3741878040e90ee25f5151f1fde5b9387385adfce3151a67cd5"
+        }
+      ],
+      "database": "fixtures/active_wal_snapshot.db",
+      "database_identity": "synthetic:sport-logger:legacy:active_wal_snapshot:v1",
+      "description": "Android-compatible WAL snapshot whose committed activity and point rows remain outside the main database file in the active -wal/-shm snapshot.",
+      "expected": {
+        "activity_rows": 1,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 1,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 1,
+          "source_activity_rows": 1,
+          "source_track_point_rows": 2,
+          "track_points": 2
+        },
+        "canonical_output_logical_checksum": "299cadc67f61a6c3bf4b56a171aeff55092b9bfdb2d0b7e97382621d4203fbea",
+        "diagnostics": {
+          "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
+          "schema": {
+            "business_tables_present": [
+              "ACTIVITY",
+              "GPS_POINTS"
+            ],
+            "migration_readiness": "ready",
+            "missing_business_tables": [],
+            "platform_tables_present": [
+              "android_metadata"
+            ],
+            "schema_errors": [],
+            "state": "complete",
+            "unexpected_tables": []
+          },
+          "snapshot": {
+            "consistent_read_transaction": {
+              "activity_rows": 1,
+              "integrity_check": "ok",
+              "track_point_rows": 2
+            },
+            "main_only_counts": {
+              "activity_rows": 0,
+              "track_point_rows": 0
+            },
+            "mode": "active_wal",
+            "page_size": 4096,
+            "required_artifacts": [
+              "active_wal_snapshot.db",
+              "active_wal_snapshot.db-wal",
+              "active_wal_snapshot.db-shm"
+            ],
+            "rows_resident_in_wal": true,
+            "shm_bytes": 32768,
+            "wal_frames": 3
+          }
+        },
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "44e99429c147eb7b76ac75c5f1415149ad5e29fcc2ecbfbc8059eed1dd554e68",
+          "database": "cf0bc0bc46642573dd50f179505ade3bec4d4fb67293c71f3b8849896638adb1",
+          "gps_points": "bb834346ba84e82ba8ca92059ce2637794f3ee653f1b15f813e4885c587b6783"
+        },
+        "physical_orphan_track_points": 0,
+        "platform_metadata": {
+          "android_metadata": {
+            "business_data": false,
+            "rows": [
+              {
+                "locale": "en_US",
+                "storage_type": "text"
+              }
+            ]
+          }
+        },
+        "points_per_activity": {
+          "1": 2
+        },
+        "representative_values": [
+          {
+            "column": "GMTTIMESTAMP",
+            "comparison": "exact",
+            "expected": "20240101130001",
+            "legacy_id": 2,
+            "storage_type": "text",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "a5dba611ed9fe3994cd9ae1227d16073ec4505c9c505f4cae5ac2b27ebded24c",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240101130000",
+            "min": "20240101130000",
+            "null_count": 1,
+            "valid_count": 1
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240101130001",
+            "min": "20240101130000",
+            "null_count": 1,
+            "valid_count": 3
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240101130001",
+            "min": "20240101130000",
+            "null_count": 0,
+            "valid_count": 2
+          }
+        },
+        "track_point_rows": 2
+      },
+      "expected_output": "expected/active_wal_snapshot.json",
+      "name": "active_wal_snapshot",
+      "storage": "active_wal"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/representative.db"
+        }
+      ],
       "database": "fixtures/representative.db",
       "database_identity": "synthetic:sport-logger:legacy:representative:v1",
       "description": "Three synthetic activities with multiple points, nullable optional measurements, and a source-reachable unfinished activity.",
@@ -358,9 +673,15 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "1455073ecd61e6b197d1e136ebe7bb01417efd5932d174cbe93535ade49b23a9",
+        "canonical_output_logical_checksum": "64f817fb8f88d819c35eb3ff40374afd0ad7e8eaf2a342dfa664a87cdafe9197",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -371,6 +692,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -461,9 +783,133 @@
         "track_point_rows": 6
       },
       "expected_output": "expected/representative.json",
-      "name": "representative"
+      "name": "representative",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/timestamp_ordering.db"
+        }
+      ],
+      "database": "fixtures/timestamp_ordering.db",
+      "database_identity": "synthetic:sport-logger:legacy:timestamp_ordering:v1",
+      "description": "Duplicate and non-monotonic point timestamps stored in required ascending signed 64-bit ID order.",
+      "expected": {
+        "activity_rows": 1,
+        "canonical": {
+          "orphan_track_points": 0,
+          "partial_sessions": 0,
+          "rejected_activity_rows": 0,
+          "rejected_track_point_rows": 0,
+          "sessions": 1,
+          "source_activity_rows": 1,
+          "source_track_point_rows": 3,
+          "track_points": 3
+        },
+        "canonical_output_logical_checksum": "4316e45cc4fabab23782034a0559bbf5ac03b7b55189c50c73037c8d015c2ee1",
+        "diagnostics": {
+          "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 1,
+            "non_monotonic_track_point_timestamp_transitions": 1,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
+          "schema": {
+            "business_tables_present": [
+              "ACTIVITY",
+              "GPS_POINTS"
+            ],
+            "migration_readiness": "ready",
+            "missing_business_tables": [],
+            "platform_tables_present": [
+              "android_metadata"
+            ],
+            "schema_errors": [],
+            "state": "complete",
+            "unexpected_tables": []
+          }
+        },
+        "idempotency": null,
+        "logical_checksums": {
+          "activity": "30723746dfde65ecad7ce1b296b41ea2ef923147e9193022c19bebd7975ae52f",
+          "database": "7692f0b5a3b81a3068933d4f3943c427e9cd2d3e0b0a73bcec9b88417ebee4c8",
+          "gps_points": "062e1e1b6a20c6696d54d838f6154f789fdf3f1f80377da242cc92356ed45355"
+        },
+        "physical_orphan_track_points": 0,
+        "platform_metadata": {
+          "android_metadata": {
+            "business_data": false,
+            "rows": [
+              {
+                "locale": "en_US",
+                "storage_type": "text"
+              }
+            ]
+          }
+        },
+        "points_per_activity": {
+          "9007199254740993": 3
+        },
+        "representative_values": [
+          {
+            "column": "GMTTIMESTAMP",
+            "comparison": "exact",
+            "expected": "20240801000001",
+            "legacy_id": 9007199254740992,
+            "storage_type": "text",
+            "table": "GPS_POINTS"
+          },
+          {
+            "column": "ID",
+            "comparison": "exact",
+            "expected": 9007199254740993,
+            "legacy_id": 9007199254740993,
+            "storage_type": "integer",
+            "table": "GPS_POINTS"
+          }
+        ],
+        "schema_logical_checksum": "a5dba611ed9fe3994cd9ae1227d16073ec4505c9c505f4cae5ac2b27ebded24c",
+        "timestamps": {
+          "activity": {
+            "invalid_count": 0,
+            "max": "20240801000003",
+            "min": "20240801000000",
+            "null_count": 0,
+            "valid_count": 2
+          },
+          "all": {
+            "invalid_count": 0,
+            "max": "20240801000003",
+            "min": "20240801000000",
+            "null_count": 0,
+            "valid_count": 5
+          },
+          "track_point": {
+            "invalid_count": 0,
+            "max": "20240801000002",
+            "min": "20240801000001",
+            "null_count": 0,
+            "valid_count": 3
+          }
+        },
+        "track_point_rows": 3
+      },
+      "expected_output": "expected/timestamp_ordering.json",
+      "name": "timestamp_ordering",
+      "storage": "standard"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/precision.db"
+        }
+      ],
       "database": "fixtures/precision.db",
       "database_identity": "synthetic:sport-logger:legacy:precision:v1",
       "description": "Precision-sensitive REAL values, leap-day timestamps, fractional heart rate, and an exact 64-bit ID above the JSON safe-integer range.",
@@ -479,9 +925,15 @@
           "source_track_point_rows": 2,
           "track_points": 2
         },
-        "canonical_output_logical_checksum": "84ff87b1ee6b2c4339bd0fee96f7f42a907db6239e043d37b543b051855e652c",
+        "canonical_output_logical_checksum": "08c31e6a727efab380ec4eb7ab48c47129a0e0286da59a25a4beda40aa1876e1",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -492,6 +944,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -534,6 +987,14 @@
             "expected": 9007199254740993,
             "legacy_id": 9007199254740993,
             "storage_type": "integer",
+            "table": "ACTIVITY"
+          },
+          {
+            "column": "TIME",
+            "comparison": "ieee754",
+            "expected": 1.000000000000001,
+            "legacy_id": 9007199254740993,
+            "storage_type": "real",
             "table": "ACTIVITY"
           },
           {
@@ -618,9 +1079,17 @@
         "track_point_rows": 2
       },
       "expected_output": "expected/precision.json",
-      "name": "precision"
+      "name": "precision",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/orphan.db"
+        }
+      ],
       "database": "fixtures/orphan.db",
       "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
       "description": "A valid activity plus one valid point and one point referencing a missing activity, which the legacy schema permits.",
@@ -636,9 +1105,15 @@
           "source_track_point_rows": 2,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "0ec7680e9a6c0cd8370b6b48271ad151807e24f6fbd6f9758bc4c9c7e51fc1c1",
+        "canonical_output_logical_checksum": "0393aa763fade9dd7580dcf3dd27f0040f4b1fdb497d627fa0295476e5751055",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -649,6 +1124,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -712,9 +1188,17 @@
         "track_point_rows": 2
       },
       "expected_output": "expected/orphan.json",
-      "name": "orphan"
+      "name": "orphan",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/malformed_null_partial.db"
+        }
+      ],
       "database": "fixtures/malformed_null_partial.db",
       "database_identity": "synthetic:sport-logger:legacy:malformed_null_partial:v1",
       "description": "A source-reachable partial activity plus constraint-permitted invalid timestamps, dynamic SQLite types, null ownership, and invalid ranges.",
@@ -730,9 +1214,15 @@
           "source_track_point_rows": 3,
           "track_points": 1
         },
-        "canonical_output_logical_checksum": "75c5b418f8072b6e9140fb3f2165d1facce318c38a0352fa368cdf4d0835e69a",
+        "canonical_output_logical_checksum": "155cf330b0c08ebd53600df063fc17bf3638f435a3faf7a29aeadebc8a38f175",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -743,6 +1233,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -822,9 +1313,178 @@
         "track_point_rows": 3
       },
       "expected_output": "expected/malformed_null_partial.json",
-      "name": "malformed_null_partial"
+      "name": "malformed_null_partial",
+      "storage": "standard"
     },
     {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": true,
+          "path": "fixtures/malformed_schema.db",
+          "sha256": "88b7a3dd3081c8dada8bbc3b9827906171dbef6e2682b33575d7965303cf672d"
+        }
+      ],
+      "database": "fixtures/malformed_schema.db",
+      "database_identity": "synthetic:sport-logger:legacy:malformed_schema:v1",
+      "description": "Structurally intact SQLite database with both business table names but an incompatible ACTIVITY column declaration.",
+      "expected": {
+        "canonical_output_logical_checksum": "61de385a49cd8aad978d492588f2a692e8a219be6e99a330e7f4fdd22799493c",
+        "diagnostics": {
+          "data_state": "not_examined_due_to_blocked_preflight",
+          "preflight": {
+            "file_structure": {
+              "actual_bytes": 20480,
+              "declared_bytes": 20480,
+              "declared_pages": 5,
+              "page_size": 4096,
+              "status": "complete"
+            },
+            "integrity_check": {
+              "result_count": 1,
+              "status": "passed"
+            },
+            "schema_check": {
+              "schema_errors": [
+                "ACTIVITY:table_info"
+              ],
+              "state": "malformed_schema",
+              "status": "failed"
+            }
+          }
+        },
+        "generation_seed_counts": {
+          "activity_rows": 1,
+          "track_point_rows": 1
+        },
+        "migration_expectations": {
+          "reason": "malformed_schema",
+          "receipt_write_attempted": false,
+          "receipt_written": false,
+          "source_rows_read": 0,
+          "status": "blocked",
+          "target_rows_written": 0,
+          "target_write_attempted": false
+        }
+      },
+      "expected_output": "expected/malformed_schema.json",
+      "name": "malformed_schema",
+      "storage": "malformed_schema"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 16384,
+          "exact_bytes_required": true,
+          "path": "fixtures/truncated.db",
+          "sha256": "7141e2b8654c9aad80f89361412938ee131c41091031e28a94c4c2a5df9dc08b"
+        }
+      ],
+      "database": "fixtures/truncated.db",
+      "database_identity": "synthetic:sport-logger:legacy:truncated:v1",
+      "description": "SQLite database shortened by one declared page; migration must stop at file-structure preflight.",
+      "expected": {
+        "canonical_output_logical_checksum": "c6ab6537262dafd23495a957a46e5dc5748f9b39591ee164498a7ea76ab1991b",
+        "diagnostics": {
+          "data_state": "not_examined_due_to_blocked_preflight",
+          "preflight": {
+            "file_structure": {
+              "actual_bytes": 16384,
+              "declared_bytes": 20480,
+              "declared_pages": 5,
+              "page_size": 4096,
+              "status": "truncated"
+            },
+            "integrity_check": {
+              "result_count": 0,
+              "status": "not_run"
+            },
+            "schema_check": {
+              "schema_errors": [],
+              "state": null,
+              "status": "not_run"
+            }
+          }
+        },
+        "generation_seed_counts": {
+          "activity_rows": 1,
+          "track_point_rows": 1
+        },
+        "migration_expectations": {
+          "reason": "truncated_sqlite",
+          "receipt_write_attempted": false,
+          "receipt_written": false,
+          "source_rows_read": 0,
+          "status": "blocked",
+          "target_rows_written": 0,
+          "target_write_attempted": false
+        }
+      },
+      "expected_output": "expected/truncated.json",
+      "name": "truncated",
+      "storage": "truncated"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": true,
+          "path": "fixtures/corrupt.db",
+          "sha256": "d6b516c8b0d3bf2823d8e316308573667e058ebbb246afe6fffbe742ec125cb1"
+        }
+      ],
+      "database": "fixtures/corrupt.db",
+      "database_identity": "synthetic:sport-logger:legacy:corrupt:v1",
+      "description": "Page-aligned SQLite database with a damaged GPS_POINTS b-tree page; integrity preflight must block migration.",
+      "expected": {
+        "canonical_output_logical_checksum": "fc4034eaf99b2fcdf74e33004a0ded8c4299d1b2cd4b2d50f2e5bbfc27bd1b4c",
+        "diagnostics": {
+          "data_state": "not_examined_due_to_blocked_preflight",
+          "preflight": {
+            "file_structure": {
+              "actual_bytes": 20480,
+              "declared_bytes": 20480,
+              "declared_pages": 5,
+              "page_size": 4096,
+              "status": "complete"
+            },
+            "integrity_check": {
+              "result_count": 0,
+              "status": "failed"
+            },
+            "schema_check": {
+              "schema_errors": [],
+              "state": null,
+              "status": "not_run"
+            }
+          }
+        },
+        "generation_seed_counts": {
+          "activity_rows": 1,
+          "track_point_rows": 1
+        },
+        "migration_expectations": {
+          "reason": "corrupt_sqlite",
+          "receipt_write_attempted": false,
+          "receipt_written": false,
+          "source_rows_read": 0,
+          "status": "blocked",
+          "target_rows_written": 0,
+          "target_write_attempted": false
+        }
+      },
+      "expected_output": "expected/corrupt.json",
+      "name": "corrupt",
+      "storage": "corrupt"
+    },
+    {
+      "artifacts": [
+        {
+          "bytes": 20480,
+          "exact_bytes_required": false,
+          "path": "fixtures/interrupted_idempotency.db"
+        }
+      ],
       "database": "fixtures/interrupted_idempotency.db",
       "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
       "description": "Three activity groups used by the reference simulator to commit a partial first pass and verify a duplicate-free deterministic rerun.",
@@ -840,9 +1500,15 @@
           "source_track_point_rows": 6,
           "track_points": 6
         },
-        "canonical_output_logical_checksum": "e3c81d020e6d738cb55f86213c63f16b171cd95b938562fb4d522ddb6d5e38ce",
+        "canonical_output_logical_checksum": "59bb2f8ed6f1e26b4d6e4b06f45453ac0d14d4440377a6fada8a26492fd90a0d",
         "diagnostics": {
           "data_state": "contains_business_rows",
+          "ordering": {
+            "activity_rows_ordered_by_64_bit_id": true,
+            "duplicate_track_point_timestamp_rows": 0,
+            "non_monotonic_track_point_timestamp_transitions": 0,
+            "track_point_rows_ordered_by_64_bit_id": true
+          },
           "schema": {
             "business_tables_present": [
               "ACTIVITY",
@@ -853,6 +1519,7 @@
             "platform_tables_present": [
               "android_metadata"
             ],
+            "schema_errors": [],
             "state": "complete",
             "unexpected_tables": []
           }
@@ -880,6 +1547,7 @@
                 "inserted_sessions": 1,
                 "inserted_track_points": 1,
                 "migration_complete": false,
+                "receipt_present": false,
                 "sessions": 1,
                 "track_points": 1
               },
@@ -898,6 +1566,8 @@
                 "inserted_sessions": 2,
                 "inserted_track_points": 5,
                 "migration_complete": true,
+                "receipt_completed": true,
+                "receipt_present": true,
                 "sessions": 3,
                 "track_points": 6
               },
@@ -920,6 +1590,7 @@
                 "inserted_sessions": 1,
                 "inserted_track_points": 0,
                 "migration_complete": false,
+                "receipt_present": false,
                 "sessions": 1,
                 "track_points": 0
               },
@@ -938,6 +1609,50 @@
                 "inserted_sessions": 2,
                 "inserted_track_points": 6,
                 "migration_complete": true,
+                "receipt_completed": true,
+                "receipt_present": true,
+                "sessions": 3,
+                "track_points": 6
+              },
+              "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
+            },
+            "receipt_gap_replay": {
+              "committed_rows": {
+                "attempted_rows": 9,
+                "attempted_sessions": 3,
+                "attempted_track_points": 6,
+                "attempts_fully_accounted": true,
+                "duplicate_attempts": 0,
+                "duplicate_rows": 0,
+                "duplicate_session_attempts": 0,
+                "duplicate_track_point_attempts": 0,
+                "inserted_rows": 9,
+                "inserted_sessions": 3,
+                "inserted_track_points": 6,
+                "migration_complete": false,
+                "receipt_completed": false,
+                "receipt_present": false,
+                "sessions": 3,
+                "track_points": 6
+              },
+              "duplicate_attempts_prevented": 9,
+              "exact_state_preserved": true,
+              "failure_point": "after_target_commit_before_receipt",
+              "replay": {
+                "attempted_rows": 9,
+                "attempted_sessions": 3,
+                "attempted_track_points": 6,
+                "attempts_fully_accounted": true,
+                "duplicate_attempts": 9,
+                "duplicate_rows": 0,
+                "duplicate_session_attempts": 3,
+                "duplicate_track_point_attempts": 6,
+                "inserted_rows": 0,
+                "inserted_sessions": 0,
+                "inserted_track_points": 0,
+                "migration_complete": true,
+                "receipt_completed": true,
+                "receipt_present": true,
                 "sessions": 3,
                 "track_points": 6
               },
@@ -957,6 +1672,8 @@
               "inserted_sessions": 3,
               "inserted_track_points": 6,
               "migration_complete": true,
+              "receipt_completed": true,
+              "receipt_present": true,
               "sessions": 3,
               "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de",
               "track_points": 6
@@ -1030,7 +1747,8 @@
         "track_point_rows": 6
       },
       "expected_output": "expected/interrupted_idempotency.json",
-      "name": "interrupted_idempotency"
+      "name": "interrupted_idempotency",
+      "storage": "standard"
     }
   ],
   "format_version": 1,

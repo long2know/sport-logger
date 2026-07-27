@@ -2,6 +2,12 @@
   "database_identity": "synthetic:sport-logger:legacy:startup_no_business_tables:v1",
   "diagnostics": {
     "data_state": "empty",
+    "ordering": {
+      "activity_rows_ordered_by_64_bit_id": true,
+      "duplicate_track_point_timestamp_rows": 0,
+      "non_monotonic_track_point_timestamp_transitions": 0,
+      "track_point_rows_ordered_by_64_bit_id": true
+    },
     "schema": {
       "business_tables_present": [],
       "migration_readiness": "blocked",
@@ -12,6 +18,7 @@
       "platform_tables_present": [
         "android_metadata"
       ],
+      "schema_errors": [],
       "state": "no_business_tables",
       "unexpected_tables": []
     }
@@ -19,7 +26,17 @@
   "fixture": "startup_no_business_tables",
   "format_version": 1,
   "idempotency": null,
+  "migration_expectations": {
+    "reason": "no_business_tables",
+    "receipt_write_attempted": false,
+    "receipt_written": false,
+    "source_rows_read": 0,
+    "status": "blocked",
+    "target_rows_written": 0,
+    "target_write_attempted": false
+  },
   "orphan_track_points": [],
+  "output_kind": "canonical",
   "rejected_rows": [],
   "sessions": [],
   "summary": {

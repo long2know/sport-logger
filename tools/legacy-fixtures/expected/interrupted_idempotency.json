@@ -2,6 +2,12 @@
   "database_identity": "synthetic:sport-logger:legacy:interrupted_idempotency:v1",
   "diagnostics": {
     "data_state": "contains_business_rows",
+    "ordering": {
+      "activity_rows_ordered_by_64_bit_id": true,
+      "duplicate_track_point_timestamp_rows": 0,
+      "non_monotonic_track_point_timestamp_transitions": 0,
+      "track_point_rows_ordered_by_64_bit_id": true
+    },
     "schema": {
       "business_tables_present": [
         "ACTIVITY",
@@ -12,6 +18,7 @@
       "platform_tables_present": [
         "android_metadata"
       ],
+      "schema_errors": [],
       "state": "complete",
       "unexpected_tables": []
     }
@@ -41,6 +48,7 @@
           "inserted_sessions": 1,
           "inserted_track_points": 1,
           "migration_complete": false,
+          "receipt_present": false,
           "sessions": 1,
           "track_points": 1
         },
@@ -59,6 +67,8 @@
           "inserted_sessions": 2,
           "inserted_track_points": 5,
           "migration_complete": true,
+          "receipt_completed": true,
+          "receipt_present": true,
           "sessions": 3,
           "track_points": 6
         },
@@ -81,6 +91,7 @@
           "inserted_sessions": 1,
           "inserted_track_points": 0,
           "migration_complete": false,
+          "receipt_present": false,
           "sessions": 1,
           "track_points": 0
         },
@@ -99,6 +110,50 @@
           "inserted_sessions": 2,
           "inserted_track_points": 6,
           "migration_complete": true,
+          "receipt_completed": true,
+          "receipt_present": true,
+          "sessions": 3,
+          "track_points": 6
+        },
+        "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de"
+      },
+      "receipt_gap_replay": {
+        "committed_rows": {
+          "attempted_rows": 9,
+          "attempted_sessions": 3,
+          "attempted_track_points": 6,
+          "attempts_fully_accounted": true,
+          "duplicate_attempts": 0,
+          "duplicate_rows": 0,
+          "duplicate_session_attempts": 0,
+          "duplicate_track_point_attempts": 0,
+          "inserted_rows": 9,
+          "inserted_sessions": 3,
+          "inserted_track_points": 6,
+          "migration_complete": false,
+          "receipt_completed": false,
+          "receipt_present": false,
+          "sessions": 3,
+          "track_points": 6
+        },
+        "duplicate_attempts_prevented": 9,
+        "exact_state_preserved": true,
+        "failure_point": "after_target_commit_before_receipt",
+        "replay": {
+          "attempted_rows": 9,
+          "attempted_sessions": 3,
+          "attempted_track_points": 6,
+          "attempts_fully_accounted": true,
+          "duplicate_attempts": 9,
+          "duplicate_rows": 0,
+          "duplicate_session_attempts": 3,
+          "duplicate_track_point_attempts": 6,
+          "inserted_rows": 0,
+          "inserted_sessions": 0,
+          "inserted_track_points": 0,
+          "migration_complete": true,
+          "receipt_completed": true,
+          "receipt_present": true,
           "sessions": 3,
           "track_points": 6
         },
@@ -118,13 +173,17 @@
         "inserted_sessions": 3,
         "inserted_track_points": 6,
         "migration_complete": true,
+        "receipt_completed": true,
+        "receipt_present": true,
         "sessions": 3,
         "state_logical_checksum": "51d03d6d560b752895fbd3163f054c27c2be78eb48055ccac2f78d32b83de4de",
         "track_points": 6
       }
     }
   },
+  "migration_expectations": null,
   "orphan_track_points": [],
+  "output_kind": "canonical",
   "rejected_rows": [],
   "sessions": [
     {

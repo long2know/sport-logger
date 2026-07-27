@@ -1,0 +1,36 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:corrupt:v1",
+  "diagnostics": {
+    "data_state": "not_examined_due_to_blocked_preflight",
+    "preflight": {
+      "file_structure": {
+        "actual_bytes": 20480,
+        "declared_bytes": 20480,
+        "declared_pages": 5,
+        "page_size": 4096,
+        "status": "complete"
+      },
+      "integrity_check": {
+        "result_count": 0,
+        "status": "failed"
+      },
+      "schema_check": {
+        "schema_errors": [],
+        "state": null,
+        "status": "not_run"
+      }
+    }
+  },
+  "fixture": "corrupt",
+  "format_version": 1,
+  "migration_expectations": {
+    "reason": "corrupt_sqlite",
+    "receipt_write_attempted": false,
+    "receipt_written": false,
+    "source_rows_read": 0,
+    "status": "blocked",
+    "target_rows_written": 0,
+    "target_write_attempted": false
+  },
+  "output_kind": "blocked_preflight"
+}

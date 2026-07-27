@@ -12,8 +12,11 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all nine fault-injection detectors.
+# all 23 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
+
+# Regenerate twice and compare every committed artifact byte-for-byte.
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 
 # Run the standard-library unit tests.
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
@@ -25,8 +28,10 @@ not required.
 
 ## Layout
 
-- `fixtures/*.db` — nine SQLite inputs using Android's platform metadata table
+- `fixtures/*.db` — 15 SQLite inputs using Android's platform metadata table
   plus the source-reachable application schema state.
+- `fixtures/active_wal_snapshot.db-{wal,shm}` — the required sidecars for the
+  active-WAL case. Its committed rows exist only in the WAL snapshot.
 - `expected/*.json` — canonical test outputs. These classify every source row
   as a session, attached point, orphan, or rejected row, and distinguish valid
   empty data from blocked missing/partial schema.
@@ -35,10 +40,14 @@ not required.
 - `test_legacy_fixtures.py` — regression and fault-injection tests.
 
 The JSON output is a test interchange format, not a production Room schema.
-Integer comparison is exact above `2^53`; epsilon comparison applies only to
-JSON floating-point values. The idempotency oracle counts every attempted,
-inserted, and prevented duplicate insert, computes final duplicate rows, and
-requires exact final-state equality.
+Integer comparison is exact above `2^53`. Canonical JSON floating-point values
+compare by their parsed IEEE-754 double bits, so alternate decimal spellings
+that round-trip to the same double are stable while `1.000000000000001` changed
+to `1.0` fails. Explicit epsilon probes remain available only where a test
+declares that weaker contract. The idempotency oracle counts every attempted,
+inserted, and prevented duplicate insert, computes final duplicate rows,
+requires exact final-state equality, and covers a target-commit/receipt-gap
+replay that inserts zero rows before completing the receipt.
 To validate an ETL test export, emit matching files named `<fixture>.json` and
 run:
 
@@ -46,6 +55,37 @@ run:
 python3 tools/legacy-fixtures/legacy_fixtures.py verify \
   --candidate-dir path/to/candidate-json
 ```
+
+## Active WAL snapshot
+
+`active_wal_snapshot.db`, `active_wal_snapshot.db-wal`, and
+`active_wal_snapshot.db-shm` are one captured Android-compatible SQLite WAL
+snapshot. The main file has a complete schema but zero business rows; one
+activity and two committed points are resident only in the WAL. The verifier
+proves that opening only the main file loses those rows, that omitting `-shm`
+is rejected as an incomplete file-copy snapshot, that a torn WAL is rejected,
+and that a SQLite backup taken from one read transaction contains the exact
+state.
+
+Production extraction must either read the live database through one
+consistent SQLite read transaction/backup connection, or quiesce/close the
+writer before copying the main file and both sidecars together. Never copy the
+three live files independently, ignore a sidecar, or use an immutable/main-only
+open as the migration source.
+
+## Blocked preflight fixtures
+
+`malformed_schema.db`, `truncated.db`, and `corrupt.db` exercise different
+preflight layers:
+
+- malformed schema: file structure and `PRAGMA integrity_check` pass, then
+  exact schema validation fails;
+- truncated file: declared page count exceeds file length, so integrity and
+  schema reads are not attempted;
+- corrupt file: file length/header pass, then `PRAGMA integrity_check` fails.
+
+Each expected output requires a blocked migration, zero source rows read, no
+target write attempt, zero target rows, and no receipt attempt or receipt.
 
 ## Large mode
 

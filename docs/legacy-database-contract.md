@@ -66,6 +66,37 @@ Preflight must report `no_business_tables` and `partial_business_schema` as
 blocked schema states. A complete schema with zero rows is instead valid empty
 data and must report ready.
 
+### Active WAL snapshot handling
+
+Android SQLite databases can be observed while using the standard WAL format,
+regardless of whether the current legacy code explicitly enabled it. A
+filesystem copier must therefore not assume the main database file is the
+complete committed state. The committed `active_wal_snapshot` fixture is a
+captured 4096-byte-page Android-compatible SQLite snapshot containing:
+
+- a complete, empty main database file;
+- one committed activity and two committed points resident only in
+  `active_wal_snapshot.db-wal`; and
+- the matching `active_wal_snapshot.db-shm` wal-index captured from the same
+  active state.
+
+Opening only the main file returns zero business rows. The fixture verifier
+also rejects a missing `-shm` artifact and a WAL truncated at a frame boundary.
+A SQLite backup performed from one established read transaction returns the
+exact activity/point state and passes `PRAGMA integrity_check`.
+
+Production migration must use one of these boundaries:
+
+1. query the source through one SQLite read transaction for the complete
+   extraction; or
+2. use the SQLite online-backup API through a connection; or
+3. quiesce/close the writer and then copy the main file plus `-wal` and `-shm`
+   as one snapshot.
+
+Copying the three live files independently, copying only the main file, or
+assuming `-shm` may always be reconstructed is not a supported migration
+boundary.
+
 ## Runtime application DDL
 
 Before application DDL, Android creates this platform table and maintains its
@@ -163,7 +194,11 @@ fixture.
 
 Legacy reads specify no `ORDER BY` (`SqlLogger.java:187,233,320`). Extraction
 must explicitly order activities and points by their 64-bit `ID`; timestamp
-order is not guaranteed and timestamps are not unique.
+order is not guaranteed and timestamps are not unique. The
+`timestamp_ordering` fixture stores point IDs
+`2147483648`, `9007199254740992`, and `9007199254740993` in ascending order
+with timestamps `...02`, `...01`, and `...02`. An extractor that sorts by
+timestamp or collapses equal timestamps fails the oracle.
 
 ## Timestamp rules
 
@@ -211,11 +246,13 @@ current offset again.
 `tools/legacy-fixtures/manifest.json` contains physical row counts, canonical
 counts, per-activity point counts, orphan counts, strict timestamp ranges,
 representative exact/epsilon values, schema checksums, and logical data
-checksums. Checksums do **not** hash SQLite file bytes. They hash tables in
+checksums. Logical checksums do **not** hash SQLite file bytes. They hash tables in
 `ACTIVITY`, `GPS_POINTS` order, rows by `ID`, and type-tagged column values;
 `REAL` values use exact IEEE-754 `float.hex()` representations. Platform
 metadata is verified separately and excluded from those business-data
-checksums.
+checksums. Exact artifact hashes are additionally recorded only where bytes are
+part of the test contract: the active WAL trio and the malformed, truncated,
+and corrupt negative files.
 
 The committed cases are:
 
@@ -225,10 +262,16 @@ The committed cases are:
 | `startup_no_business_tables.db` | Android metadata only, before either application table exists; migration is blocked. |
 | `startup_activity_only.db` | Snapshot between the two independent application `CREATE TABLE` statements; migration is blocked as partial schema. |
 | `startup_activity_id_zero.db` | Complete schema with a startup point owned by default `ACTIVITYID=0`; reported as an orphan. |
+| `start_only_zero_points.db` | Complete schema with one valid activity containing only `GMTSTART` and zero points; point-driven/inner-join ETL must preserve the session. |
+| `active_wal_snapshot.db` plus `-wal`/`-shm` | Committed rows exist only in the captured active WAL; main-only, missing-sidecar, and torn-copy handling is verified. |
 | `representative.db` | Multi-activity data, multiple points, optional nulls, zero/default coordinates, and a normal partial live row. |
+| `timestamp_ordering.db` | Duplicate and non-monotonic timestamps in required ascending 64-bit point-ID order. |
 | `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
+| `malformed_schema.db` | Integrity-valid file whose `ACTIVITY.TIME` declaration is incompatible; exact schema preflight blocks before row reads. |
+| `truncated.db` | File is one declared page short; structural preflight blocks before SQLite integrity/schema reads. |
+| `corrupt.db` | Header and file length are valid but the `GPS_POINTS` b-tree page is damaged; `PRAGMA integrity_check` blocks migration. |
 | `interrupted_idempotency.db` | Actual insert-attempt accounting for interruption after a session row and after a point prefix, full replay, same-run duplicates, prevented duplicate attempts, computed final duplicate-row counts, and exact final equality. |
 
 `expected/*.json` is a test interchange oracle, not a proposed production
@@ -236,8 +279,21 @@ schema. Every physical row is accounted for as a session, point, orphan, or
 rejected row. Fixture deterministic IDs are UUIDv5 values derived from the
 manifest's explicit database identity, table name, and 64-bit legacy ID.
 Canonical JSON compares integer fields as exact integers (including values above
-`2^53`); epsilon comparison applies only when the expected value is a JSON
-floating-point number.
+`2^53`). Floating-point fields compare by exact parsed IEEE-754 double bits.
+Equivalent decimal spellings that round-trip to the same double compare equal,
+while narrowing `1.000000000000001` to `1.0` fails. Explicit epsilon
+representative probes are used only when a probe declares that mode.
+
+Every blocked preflight output states `source_rows_read = 0`,
+`target_write_attempted = false`, `target_rows_written = 0`,
+`receipt_write_attempted = false`, and `receipt_written = false`. Preflight
+order is file structure, then `PRAGMA integrity_check`, then exact table
+metadata/schema validation. A failed layer prevents all later reads and writes.
+
+The idempotency oracle also models a receipt gap: all nine canonical target
+rows commit, the receipt is absent, and a replay attempts all nine rows,
+inserts zero, counts nine duplicates, preserves the exact target checksum, and
+then completes the receipt.
 
 The legacy file has no intrinsic database UUID. **Tank must define the stable
 production source-database/install identity before production ETL is frozen**;
@@ -250,12 +306,15 @@ Run from the repository root:
 ```bash
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 ```
 
-The verifier fault-injects integer truncation, one-unit integer drift above
-`2^53`, swapped/missing fields, timestamp drift, duplicate deterministic IDs,
-orphan mishandling, interrupted-rerun identity drift, and a missing replay row.
+The verifier runs 23 detectors covering integer and double narrowing,
+swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
+deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
+sidecar omission and torn snapshots, interrupted-rerun drift/loss, receipt-gap
+completion, and malformed/truncated/corrupt preflight side-effect prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

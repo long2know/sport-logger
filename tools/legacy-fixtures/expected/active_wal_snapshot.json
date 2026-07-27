@@ -1,0 +1,111 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:active_wal_snapshot:v1",
+  "diagnostics": {
+    "data_state": "contains_business_rows",
+    "ordering": {
+      "activity_rows_ordered_by_64_bit_id": true,
+      "duplicate_track_point_timestamp_rows": 0,
+      "non_monotonic_track_point_timestamp_transitions": 0,
+      "track_point_rows_ordered_by_64_bit_id": true
+    },
+    "schema": {
+      "business_tables_present": [
+        "ACTIVITY",
+        "GPS_POINTS"
+      ],
+      "migration_readiness": "ready",
+      "missing_business_tables": [],
+      "platform_tables_present": [
+        "android_metadata"
+      ],
+      "schema_errors": [],
+      "state": "complete",
+      "unexpected_tables": []
+    },
+    "snapshot": {
+      "consistent_read_transaction": {
+        "activity_rows": 1,
+        "integrity_check": "ok",
+        "track_point_rows": 2
+      },
+      "main_only_counts": {
+        "activity_rows": 0,
+        "track_point_rows": 0
+      },
+      "mode": "active_wal",
+      "page_size": 4096,
+      "required_artifacts": [
+        "active_wal_snapshot.db",
+        "active_wal_snapshot.db-wal",
+        "active_wal_snapshot.db-shm"
+      ],
+      "rows_resident_in_wal": true,
+      "shm_bytes": 32768,
+      "wal_frames": 3
+    }
+  },
+  "fixture": "active_wal_snapshot",
+  "format_version": 1,
+  "idempotency": null,
+  "migration_expectations": null,
+  "orphan_track_points": [],
+  "output_kind": "canonical",
+  "rejected_rows": [],
+  "sessions": [
+    {
+      "description": null,
+      "deterministic_id": "4781019c-293a-5b79-921b-cfe4d240f4df",
+      "distance": null,
+      "gmt_end": null,
+      "gmt_start": "20240101130000",
+      "legacy_id": 1,
+      "name": null,
+      "pace": null,
+      "partial": true,
+      "source_key": "synthetic:sport-logger:legacy:active_wal_snapshot:v1:ACTIVITY:1",
+      "time": null
+    }
+  ],
+  "summary": {
+    "orphan_track_points": 0,
+    "partial_sessions": 1,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 1,
+    "source_activity_rows": 1,
+    "source_track_point_rows": 2,
+    "track_points": 2
+  },
+  "track_points": [
+    {
+      "accuracy": 3.0,
+      "activity_legacy_id": 1,
+      "altitude": 10.0,
+      "bearing": 90.0,
+      "deterministic_id": "3540ff9a-f8c8-5b9e-8bf7-2e6507a5984f",
+      "gmt_timestamp": "20240101130000",
+      "heart_rate": 100.0,
+      "latitude": 47.0,
+      "legacy_id": 1,
+      "longitude": -122.0,
+      "session_id": "4781019c-293a-5b79-921b-cfe4d240f4df",
+      "source_key": "synthetic:sport-logger:legacy:active_wal_snapshot:v1:GPS_POINTS:1",
+      "speed": 1.5
+    },
+    {
+      "accuracy": 3.25,
+      "activity_legacy_id": 1,
+      "altitude": 10.25,
+      "bearing": 91.0,
+      "deterministic_id": "ee4b1f60-442e-5c20-a19d-0bb8901bca46",
+      "gmt_timestamp": "20240101130001",
+      "heart_rate": 101.0,
+      "latitude": 47.0001,
+      "legacy_id": 2,
+      "longitude": -122.0001,
+      "session_id": "4781019c-293a-5b79-921b-cfe4d240f4df",
+      "source_key": "synthetic:sport-logger:legacy:active_wal_snapshot:v1:GPS_POINTS:2",
+      "speed": 1.625
+    }
+  ]
+}
