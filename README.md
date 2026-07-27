@@ -23,8 +23,9 @@ Tagged v0.11
 `tools/legacy-fixtures/` contains the synthetic, executable contract for the
 watch SQLite database. Its 20 fixtures cover every digit block emitted by the
 pinned Temurin 17 formatter matrix, evidence-based calendar interpretation,
-database-wide ambiguity quarantine, WAL snapshots, exact modern/API-26 schema
-preflight, corruption, precision, ordering, and idempotent replay. Any
+database-wide ambiguity quarantine, WAL snapshots, capability-selected schema
+preflight down to Android API 26, corruption, precision, ordering, and
+idempotent replay. Any
 calendar-ambiguous row retains and quarantines the whole source migration with
 zero target writes and no receipt.
 

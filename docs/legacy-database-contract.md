@@ -175,21 +175,29 @@ affinity is not a constraint: for example, text can physically exist in a
 metadata, which is not application data. Neither `android_metadata` nor
 `sqlite_sequence` is a legacy business table.
 
-Exact preflight has two equivalent paths:
+Exact preflight probes and caches two independent, side-effect-free
+capabilities per connection: `PRAGMA table_xinfo` support and availability of
+the `sqlite_schema` catalog alias. It does not infer either capability from the
+other:
 
-1. SQLite versions that support `PRAGMA table_xinfo` use it plus canonicalized
-   `sqlite_schema` records.
-2. Android API 26's SQLite 3.18.2 uses `PRAGMA table_info` plus exact
-   `sqlite_master` object and SQL validation. This path never requires
-   `table_xinfo` or `sqlite_schema`.
+1. Android API 26's SQLite 3.18.2 uses `PRAGMA table_info` plus exact
+   `sqlite_master` object and SQL validation. It never requires `table_xinfo`
+   or `sqlite_schema`.
+2. SQLite 3.26–3.32 uses `PRAGMA table_xinfo` plus `sqlite_master`.
+3. SQLite 3.33+ uses that same preferred modern path. An explicitly probed
+   `sqlite_schema` alias path is beneficial only as an additional controlled
+   equivalence check; migration acceptance never depends on the alias.
 
-Both paths require each table to be a real table b-tree with the expected name,
-column order/types/defaults/constraints, no hidden/generated columns, no
-foreign keys or indexes, and no extra tables, views, triggers, indexes, virtual
-tables, or shadow tables. Exact SQL token comparison is what lets the API-26
-path reject generated columns and extra constraints that `table_info` cannot
-show. It tolerates only formatting differences such as whitespace, comments,
-keyword case, and identifier quoting.
+All-path and corpus verification execute only plans supported by the current
+connection. Corpus diagnostics omit runtime-specific path details, while
+guarded simulations compare the legacy, intermediate, and current decisions.
+Every supported path requires each table to be a real table b-tree with the
+expected name, column order/types/defaults/constraints, no hidden/generated
+columns, no foreign keys or indexes, and no extra tables, views, triggers,
+indexes, virtual tables, or shadow tables. Exact SQL token comparison is what
+lets the API-26 path reject generated columns and extra constraints that
+`table_info` cannot show. It tolerates only formatting differences such as
+whitespace, comments, keyword case, and identifier quoting.
 
 Schema enumeration filters only the literal, case-insensitive `sqlite_` prefix.
 The canonical schema explicitly permits only `sqlite_sequence`, justified by
@@ -500,7 +508,7 @@ deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
 sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
 committed-prefix omission), receipt-gap completion, Android metadata readiness,
 illegal page-size/read/write versions, mismatched header counters, logical
-database drift, modern/API-26 generated-column and virtual/shadow rejection,
+database drift, API-26/intermediate/current generated-column and virtual/shadow rejection,
 literal `sqlite_` filtering with `sqliteX...` table/index/trigger/view controls,
 Gregorian-only parsing, digit-shape and year-magnitude/fixed-offset calendar
 heuristics, migration of ambiguous or mixed-evidence rows, omission of any

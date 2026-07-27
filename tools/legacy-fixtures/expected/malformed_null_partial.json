@@ -56,8 +56,7 @@
       "state": "complete",
       "unexpected_schema_objects": [],
       "unexpected_sqlite_internal_schema_objects": [],
-      "unexpected_tables": [],
-      "validation_path": "modern_table_xinfo_sqlite_schema"
+      "unexpected_tables": []
     }
   },
   "fixture": "malformed_null_partial",

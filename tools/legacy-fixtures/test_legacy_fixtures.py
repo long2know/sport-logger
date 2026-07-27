@@ -422,7 +422,7 @@ class LegacyFixtureTests(unittest.TestCase):
             )
             diagnostics = legacy_fixtures.schema_diagnostics(constraint)
             self.assertIn(
-                "ACTIVITY:sqlite_schema_sql",
+                "ACTIVITY:sqlite_master_sql",
                 diagnostics["schema_errors"],
             )
         finally:
@@ -468,7 +468,7 @@ class LegacyFixtureTests(unittest.TestCase):
                     "NAME VARCHAR COLLATE NOCASE, DESCRIPTION VARCHAR, "
                     "DISTANCE REAL, TIME REAL, PACE REAL)"
                 ),
-                "ACTIVITY:sqlite_schema_sql",
+                "ACTIVITY:sqlite_master_sql",
             ),
         )
         for label, activity_sql, expected_error in schema_substitutions:
@@ -502,9 +502,18 @@ class LegacyFixtureTests(unittest.TestCase):
         finally:
             virtual.close()
 
-    def test_api26_schema_path_matches_modern_and_never_hides_sqliteX_objects(self):
+    def test_capability_paths_match_and_never_hide_sqliteX_objects(self):
         gate = legacy_fixtures.verify_legacy_schema_path(TOOL_ROOT)
         self.assertEqual(10, gate["schemas_checked"])
+        self.assertEqual(6, gate["capability_profiles_checked"])
+        self.assertEqual(
+            legacy_fixtures.SCHEMA_PATH_MODERN,
+            gate["modern_path"],
+        )
+        self.assertEqual(
+            legacy_fixtures.SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
+            gate["sqlite_schema_alias_path"],
+        )
         self.assertEqual(
             legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
             gate["legacy_path"],
@@ -604,6 +613,185 @@ class LegacyFixtureTests(unittest.TestCase):
             self.assertIn("sqlite_master", statements)
         finally:
             connection.close()
+
+        capability_profiles = (
+            (
+                "android_api_26_sqlite_3_18",
+                ("table_xinfo", "sqlite_schema"),
+                legacy_fixtures.SchemaCapabilities(False, False),
+                legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
+                (legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,),
+            ),
+            (
+                "sqlite_3_26_to_3_32",
+                ("sqlite_schema",),
+                legacy_fixtures.SchemaCapabilities(True, False),
+                legacy_fixtures.SCHEMA_PATH_MODERN,
+                (
+                    legacy_fixtures.SCHEMA_PATH_MODERN,
+                    legacy_fixtures.SCHEMA_PATH_ANDROID_API_26,
+                ),
+            ),
+            (
+                "sqlite_3_33_plus",
+                (),
+                legacy_fixtures.SchemaCapabilities(True, True),
+                legacy_fixtures.SCHEMA_PATH_MODERN,
+                legacy_fixtures.SCHEMA_PATHS,
+            ),
+        )
+        portable_diagnostics = {"canonical": [], "malformed": []}
+        for (
+            profile,
+            forbidden_tokens,
+            expected_capabilities,
+            expected_path,
+            expected_paths,
+        ) in capability_profiles:
+            for malformed in (False, True):
+                variant = "malformed" if malformed else "canonical"
+                with self.subTest(profile=profile, schema=variant):
+                    connection = sqlite3.connect(":memory:")
+                    try:
+                        if malformed:
+                            connection.execute(
+                                "CREATE TABLE android_metadata (locale TEXT)"
+                            )
+                            connection.execute(
+                                "INSERT INTO android_metadata (locale) "
+                                "VALUES ('en_US')"
+                            )
+                            connection.execute(
+                                "CREATE TABLE ACTIVITY "
+                                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, "
+                                "PACE REAL, HIDDEN_COPY TEXT GENERATED ALWAYS AS "
+                                "(GMTSTART) VIRTUAL)"
+                            )
+                            connection.execute(
+                                legacy_fixtures.CREATE_GPS_POINTS_SQL
+                            )
+                            connection.execute("PRAGMA user_version = 0")
+                        else:
+                            legacy_fixtures.create_schema(connection)
+
+                        guard = legacy_fixtures.SchemaSqlGuard(
+                            connection,
+                            forbidden_tokens=forbidden_tokens,
+                        )
+                        self.assertEqual(
+                            expected_capabilities,
+                            legacy_fixtures.schema_capabilities(guard),
+                        )
+                        self.assertEqual(
+                            len(forbidden_tokens),
+                            len(guard.rejected_statements),
+                        )
+                        probe_statement_count = len(
+                            guard.statements
+                        ) + len(guard.rejected_statements)
+                        self.assertEqual(
+                            expected_capabilities,
+                            legacy_fixtures.schema_capabilities(guard),
+                        )
+                        self.assertEqual(
+                            probe_statement_count,
+                            len(guard.statements)
+                            + len(guard.rejected_statements),
+                        )
+                        self.assertEqual(
+                            expected_paths,
+                            legacy_fixtures.supported_schema_paths(guard),
+                        )
+                        self.assertEqual(
+                            expected_path,
+                            legacy_fixtures.resolve_schema_path(guard),
+                        )
+
+                        guard.statements.clear()
+                        selected_outcome = legacy_fixtures.schema_path_outcome(
+                            guard,
+                            "{} {}".format(profile, variant),
+                        )
+                        self.assertEqual(
+                            not malformed,
+                            selected_outcome["exact_schema_valid"],
+                        )
+                        self.assertEqual(
+                            not malformed,
+                            selected_outcome["decision"]["accepted"],
+                        )
+                        selected_sql = "\n".join(guard.statements).lower()
+                        self.assertIn("sqlite_master", selected_sql)
+                        self.assertNotIn("sqlite_schema", selected_sql)
+                        if expected_capabilities.table_xinfo:
+                            self.assertIn("table_xinfo", selected_sql)
+                        else:
+                            self.assertIn("table_info", selected_sql)
+                            self.assertNotIn("table_xinfo", selected_sql)
+
+                        diagnostics = legacy_fixtures.schema_diagnostics(guard)
+                        self.assertEqual(
+                            expected_path,
+                            diagnostics["validation_path"],
+                        )
+                        self.assertEqual(
+                            "malformed_schema" if malformed else "complete",
+                            diagnostics["state"],
+                        )
+                        if malformed:
+                            expected_error = (
+                                "ACTIVITY:table_xinfo"
+                                if expected_capabilities.table_xinfo
+                                else "ACTIVITY:sqlite_master_sql"
+                            )
+                            self.assertIn(
+                                expected_error,
+                                diagnostics["schema_errors"],
+                            )
+                        else:
+                            legacy_fixtures.validate_schema_all_paths(
+                                guard,
+                                "{} canonical all paths".format(profile),
+                            )
+
+                        outcomes = [
+                            legacy_fixtures.schema_path_outcome(
+                                guard,
+                                "{} {} [{}]".format(
+                                    profile,
+                                    variant,
+                                    schema_path,
+                                ),
+                                schema_path=schema_path,
+                            )
+                            for schema_path in expected_paths
+                        ]
+                        self.assertTrue(
+                            all(
+                                outcome == outcomes[0]
+                                for outcome in outcomes[1:]
+                            )
+                        )
+                        snapshot = (
+                            legacy_fixtures.database_content_snapshot(guard)
+                        )
+                        self.assertNotIn(
+                            "validation_path",
+                            snapshot["schema_diagnostics"],
+                        )
+                        portable_diagnostics[variant].append(
+                            snapshot["schema_diagnostics"]
+                        )
+                    finally:
+                        connection.close()
+
+        for variant, diagnostics in portable_diagnostics.items():
+            with self.subTest(portable_schema=variant):
+                self.assertTrue(
+                    all(value == diagnostics[0] for value in diagnostics[1:])
+                )
 
     def test_unicode_decimal_timestamp_normalization_is_strict(self):
         ascii_timestamp = "20240708091011"

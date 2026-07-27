@@ -36,8 +36,7 @@
           "valid_locale_rows": 1
         },
         "schema_errors": [
-          "ACTIVITY:sqlite_schema_sql",
-          "ACTIVITY:table_xinfo"
+          "ACTIVITY:schema_sql"
         ],
         "state": "malformed_schema",
         "status": "failed"

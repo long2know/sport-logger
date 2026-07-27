@@ -18,7 +18,7 @@ python3 tools/legacy-fixtures/legacy_fixtures.py generate
 # all 56 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
-# Prove the modern and Android API-26 schema paths make equivalent decisions.
+# Prove all supported SQLite capability paths make equivalent decisions.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-legacy-schema-path
 
 # Regenerate twice. SQLite artifacts use their declared logical/canonical
@@ -81,15 +81,24 @@ non-TEXT, invalid-value, and multi-row metadata states are explicit
 `malformed_schema` diagnostics and block migration before source reads or
 target/receipt writes.
 
-Schema validation has two exact paths. Modern SQLite uses
-`PRAGMA table_xinfo` plus canonicalized `sqlite_schema` SQL. Android API 26's
-SQLite 3.18.2 path uses `PRAGMA table_info` plus the same exact object/SQL checks
-through `sqlite_master`; it never requires `table_xinfo` or `sqlite_schema`.
-Both reject hidden/generated columns, virtual or shadow substitutions, extra
-constraints/defaults/types/order, foreign keys, and unexpected tables, indexes,
-views, or triggers. Only the literal `sqlite_` prefix is internal, and the
-canonical schema explicitly permits only SQLite's AUTOINCREMENT-owned
-`sqlite_sequence`. User objects named `sqliteX...` remain visible and fail.
+Schema validation probes and caches `PRAGMA table_xinfo` support and the
+`sqlite_schema` catalog alias independently for each connection. Automatic
+validation prefers the universally compatible `sqlite_master` catalog:
+
+- Android API 26 / SQLite 3.18.2 uses `table_info` plus `sqlite_master` only.
+- SQLite 3.26–3.32 uses `table_xinfo` plus `sqlite_master`.
+- SQLite 3.33+ uses the same preferred modern path; the explicitly probed
+  `sqlite_schema` alias is exercised only as an additional equivalence check.
+
+The all-path validator and corpus verifier execute only paths supported by the
+connection. Corpus diagnostics are path-neutral, while guarded tests prove the
+legacy, intermediate, and current profiles make the same decision. Every
+supported path rejects hidden/generated columns, virtual or shadow
+substitutions, extra constraints/defaults/types/order, foreign keys, and
+unexpected tables, indexes, views, or triggers. Only the literal `sqlite_`
+prefix is internal, and the canonical schema explicitly permits only SQLite's
+AUTOINCREMENT-owned `sqlite_sequence`. User objects named `sqliteX...` remain
+visible and fail.
 
 ## Locale-sensitive timestamps
 

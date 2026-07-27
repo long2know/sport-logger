@@ -55,9 +55,14 @@ CALENDAR_EVIDENCE_SOURCE = "synthetic_fixture_generation_record"
 FORMATTER_MATRIX_EVIDENCE_SOURCE = "pinned_temurin_17_formatter_matrix"
 
 SCHEMA_PATH_AUTO = "auto"
-SCHEMA_PATH_MODERN = "modern_table_xinfo_sqlite_schema"
+SCHEMA_PATH_MODERN = "modern_table_xinfo_sqlite_master"
+SCHEMA_PATH_SQLITE_SCHEMA_ALIAS = "modern_table_xinfo_sqlite_schema"
 SCHEMA_PATH_ANDROID_API_26 = "android_api_26_table_info_sqlite_master"
-SCHEMA_PATHS = (SCHEMA_PATH_MODERN, SCHEMA_PATH_ANDROID_API_26)
+SCHEMA_PATHS = (
+    SCHEMA_PATH_MODERN,
+    SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
+    SCHEMA_PATH_ANDROID_API_26,
+)
 
 STORAGE_STANDARD = "standard"
 STORAGE_ACTIVE_WAL = "active_wal"
@@ -176,6 +181,18 @@ class FixtureValidationError(RuntimeError):
     """Raised when a fixture or expected output violates the contract."""
 
 
+@dataclass(frozen=True)
+class SchemaCapabilities:
+    table_xinfo: bool
+    sqlite_schema_alias: bool
+
+
+_SCHEMA_CAPABILITY_CACHE: Dict[
+    int,
+    Tuple[Any, SchemaCapabilities],
+] = {}
+
+
 class SchemaSqlGuard:
     def __init__(
         self,
@@ -187,6 +204,7 @@ class SchemaSqlGuard:
             token.casefold() for token in forbidden_tokens
         )
         self.statements: List[str] = []
+        self.rejected_statements: List[str] = []
 
     def execute(
         self,
@@ -195,8 +213,11 @@ class SchemaSqlGuard:
     ) -> sqlite3.Cursor:
         normalized = sql.casefold()
         if any(token in normalized for token in self.forbidden_tokens):
-            raise FixtureValidationError(
-                "Legacy schema path executed forbidden SQL {!r}".format(sql)
+            self.rejected_statements.append(sql)
+            raise sqlite3.OperationalError(
+                "Schema capability proxy rejected unsupported SQL {!r}".format(
+                    sql
+                )
             )
         self.statements.append(sql)
         return self.connection.execute(sql, parameters)
@@ -2477,12 +2498,62 @@ def table_xinfo(
     return tuple(rows)
 
 
-def table_xinfo_supported(connection: sqlite3.Connection) -> bool:
-    rows = tuple(
-        tuple(row)
-        for row in connection.execute('PRAGMA table_xinfo("sqlite_master")')
-    )
+def probe_table_xinfo_support(connection: sqlite3.Connection) -> bool:
+    try:
+        rows = tuple(
+            tuple(row)
+            for row in connection.execute('PRAGMA table_xinfo("sqlite_master")')
+        )
+    except Exception:
+        return False
     return bool(rows) and all(len(row) == 7 for row in rows)
+
+
+def probe_sqlite_schema_alias_support(connection: sqlite3.Connection) -> bool:
+    try:
+        tuple(
+            connection.execute(
+                "SELECT type, name, tbl_name, rootpage, sql "
+                "FROM sqlite_schema WHERE 0"
+            )
+        )
+    except Exception:
+        return False
+    return True
+
+
+def schema_capabilities(connection: sqlite3.Connection) -> SchemaCapabilities:
+    cache_key = id(connection)
+    cached = _SCHEMA_CAPABILITY_CACHE.get(cache_key)
+    if cached is not None and cached[0] is connection:
+        return cached[1]
+    capabilities = SchemaCapabilities(
+        table_xinfo=probe_table_xinfo_support(connection),
+        sqlite_schema_alias=probe_sqlite_schema_alias_support(connection),
+    )
+    _SCHEMA_CAPABILITY_CACHE[cache_key] = (connection, capabilities)
+    return capabilities
+
+
+def table_xinfo_supported(connection: sqlite3.Connection) -> bool:
+    return schema_capabilities(connection).table_xinfo
+
+
+def sqlite_schema_alias_supported(connection: sqlite3.Connection) -> bool:
+    return schema_capabilities(connection).sqlite_schema_alias
+
+
+def supported_schema_paths(
+    connection: sqlite3.Connection,
+) -> Tuple[str, ...]:
+    capabilities = schema_capabilities(connection)
+    paths: List[str] = []
+    if capabilities.table_xinfo:
+        paths.append(SCHEMA_PATH_MODERN)
+        if capabilities.sqlite_schema_alias:
+            paths.append(SCHEMA_PATH_SQLITE_SCHEMA_ALIAS)
+    paths.append(SCHEMA_PATH_ANDROID_API_26)
+    return tuple(paths)
 
 
 def resolve_schema_path(
@@ -2490,23 +2561,36 @@ def resolve_schema_path(
     schema_path: str = SCHEMA_PATH_AUTO,
 ) -> str:
     if schema_path == SCHEMA_PATH_AUTO:
-        return (
-            SCHEMA_PATH_MODERN
-            if table_xinfo_supported(connection)
-            else SCHEMA_PATH_ANDROID_API_26
-        )
+        return supported_schema_paths(connection)[0]
     if schema_path not in SCHEMA_PATHS:
         raise FixtureValidationError(
             "Unknown schema validation path {!r}".format(schema_path)
         )
+    if schema_path == SCHEMA_PATH_ANDROID_API_26:
+        return schema_path
+    if schema_path not in supported_schema_paths(connection):
+        raise FixtureValidationError(
+            "Schema validation path {!r} is unsupported by this SQLite "
+            "connection".format(schema_path)
+        )
     return schema_path
 
 
-def schema_catalog(schema_path: str) -> str:
-    if schema_path == SCHEMA_PATH_MODERN:
-        return "sqlite_schema"
+def schema_path_uses_table_xinfo(schema_path: str) -> bool:
+    if schema_path in (SCHEMA_PATH_MODERN, SCHEMA_PATH_SQLITE_SCHEMA_ALIAS):
+        return True
     if schema_path == SCHEMA_PATH_ANDROID_API_26:
+        return False
+    raise FixtureValidationError(
+        "Column metadata requested for unresolved path {!r}".format(schema_path)
+    )
+
+
+def schema_catalog(schema_path: str) -> str:
+    if schema_path in (SCHEMA_PATH_MODERN, SCHEMA_PATH_ANDROID_API_26):
         return "sqlite_master"
+    if schema_path == SCHEMA_PATH_SQLITE_SCHEMA_ALIAS:
+        return "sqlite_schema"
     raise FixtureValidationError(
         "Schema catalog requested for unresolved path {!r}".format(schema_path)
     )
@@ -2632,7 +2716,7 @@ def table_schema_errors(
 ) -> List[str]:
     resolved_path = resolve_schema_path(connection, schema_path)
     errors: List[str] = []
-    if resolved_path == SCHEMA_PATH_MODERN:
+    if schema_path_uses_table_xinfo(resolved_path):
         if table_xinfo(connection, table) != EXPECTED_TABLE_XINFO[table]:
             errors.append("{}:table_xinfo".format(table))
     elif table_info(connection, table) != EXPECTED_TABLE_INFO[table]:
@@ -2768,16 +2852,16 @@ def sqlite_internal_schema_errors(
 
 
 def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
-    present_tables = set(user_table_names(connection, SCHEMA_PATH_MODERN))
+    portable_path = SCHEMA_PATH_ANDROID_API_26
+    present_tables = set(user_table_names(connection, portable_path))
     table_payload: Dict[str, Any] = {}
     for table in PLATFORM_TABLES + BUSINESS_TABLES:
         if table not in present_tables:
             continue
-        record = sqlite_schema_record(connection, table, SCHEMA_PATH_MODERN)
+        record = sqlite_schema_record(connection, table, portable_path)
         table_payload[table] = {
             "table_info": [list(row) for row in table_info(connection, table)],
-            "table_xinfo": [list(row) for row in table_xinfo(connection, table)],
-            "sqlite_schema": (
+            "schema_record": (
                 None
                 if record is None
                 else {
@@ -2820,21 +2904,15 @@ def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
         },
         "user_schema_objects": [
             list(row)
-            for row in user_schema_objects(connection, SCHEMA_PATH_MODERN)
+            for row in user_schema_objects(connection, portable_path)
         ],
         "sqlite_internal_schema_objects": [
             list(row)
             for row in sqlite_internal_schema_objects(
                 connection,
-                SCHEMA_PATH_MODERN,
+                portable_path,
             )
         ],
-        "schema_path_decisions": {
-            schema_path: schema_decision_payload(
-                schema_diagnostics(connection, schema_path)
-            )
-            for schema_path in SCHEMA_PATHS
-        },
         "user_version": connection.execute("PRAGMA user_version").fetchone()[0],
     }
 
@@ -3045,6 +3123,52 @@ def schema_decision_payload(
     }
 
 
+def portable_schema_errors(errors: Iterable[str]) -> List[str]:
+    normalized = set()
+    for error in errors:
+        normalized_error = re.sub(
+            r":sqlite_(?:master|schema)_sql$",
+            ":schema_sql",
+            error,
+        )
+        normalized_error = re.sub(
+            r":table_(?:xinfo|info)$",
+            ":column_metadata",
+            normalized_error,
+        )
+        normalized.add(normalized_error)
+    schema_sql_tables = {
+        error.rsplit(":", 1)[0]
+        for error in normalized
+        if error.endswith(":schema_sql")
+    }
+    normalized = {
+        error
+        for error in normalized
+        if not (
+            error.endswith(":column_metadata")
+            and error.rsplit(":", 1)[0] in schema_sql_tables
+        )
+    }
+    return sorted(normalized)
+
+
+def corpus_schema_diagnostics(
+    diagnostics: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    portable = copy.deepcopy(dict(diagnostics))
+    portable.pop("validation_path", None)
+    portable["schema_errors"] = portable_schema_errors(
+        portable.get("schema_errors", ())
+    )
+    metadata = portable.get("android_metadata")
+    if isinstance(metadata, dict):
+        metadata["schema_errors"] = portable_schema_errors(
+            metadata.get("schema_errors", ())
+        )
+    return portable
+
+
 def validate_schema(
     connection: sqlite3.Connection,
     label: str,
@@ -3165,7 +3289,8 @@ def validate_schema_all_paths(
 ) -> str:
     checksums: Dict[str, str] = {}
     decisions: Dict[str, Mapping[str, Any]] = {}
-    for schema_path in SCHEMA_PATHS:
+    paths = supported_schema_paths(connection)
+    for schema_path in paths:
         checksums[schema_path] = validate_schema(
             connection,
             "{} [{}]".format(label, schema_path),
@@ -3179,16 +3304,12 @@ def validate_schema_all_paths(
         raise FixtureValidationError(
             "{} schema checksums differ between validation paths".format(label)
         )
-    if (
-        decisions[SCHEMA_PATH_MODERN]
-        != decisions[SCHEMA_PATH_ANDROID_API_26]
-    ):
+    first_decision = decisions[paths[0]]
+    if any(decision != first_decision for decision in decisions.values()):
         raise FixtureValidationError(
-            "{} schema decisions differ between modern and API-26 paths".format(
-                label
-            )
+            "{} schema decisions differ between supported paths".format(label)
         )
-    return checksums[SCHEMA_PATH_MODERN]
+    return checksums[resolve_schema_path(connection)]
 
 
 def schema_path_outcome(
@@ -3220,6 +3341,7 @@ def require_equivalent_schema_path_outcomes(
     label: str,
     expected_business_tables: Sequence[str] = BUSINESS_TABLES,
 ) -> Mapping[str, Any]:
+    paths = supported_schema_paths(connection)
     outcomes = {
         schema_path: schema_path_outcome(
             connection,
@@ -3227,16 +3349,14 @@ def require_equivalent_schema_path_outcomes(
             expected_business_tables,
             schema_path,
         )
-        for schema_path in SCHEMA_PATHS
+        for schema_path in paths
     }
-    if (
-        outcomes[SCHEMA_PATH_MODERN]
-        != outcomes[SCHEMA_PATH_ANDROID_API_26]
-    ):
+    first_outcome = outcomes[paths[0]]
+    if any(outcome != first_outcome for outcome in outcomes.values()):
         raise FixtureValidationError(
-            "{} has different modern and API-26 schema outcomes".format(label)
+            "{} has different supported schema outcomes".format(label)
         )
-    return outcomes[SCHEMA_PATH_MODERN]
+    return outcomes[resolve_schema_path(connection)]
 
 
 def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
@@ -3394,6 +3514,7 @@ def build_calendar_quarantine_output(
             )
         )
 
+    portable_schema = corpus_schema_diagnostics(source_schema_diagnostics)
     activity_rows = [
         row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
     ]
@@ -3474,7 +3595,7 @@ def build_calendar_quarantine_output(
         "fixture": case.key,
         "database_identity": case.database_identity,
         "diagnostics": {
-            "schema": dict(source_schema_diagnostics),
+            "schema": portable_schema,
             "data_state": "calendar_ambiguous",
             "calendar": {
                 "state": "calendar_ambiguous",
@@ -3547,6 +3668,7 @@ def build_blocked_preflight_output(
         else:
             with open_readonly(database) as connection:
                 diagnostics = schema_diagnostics(connection)
+            portable_diagnostics = corpus_schema_diagnostics(diagnostics)
             schema_check = {
                 "status": (
                     "passed"
@@ -3554,8 +3676,8 @@ def build_blocked_preflight_output(
                     else "failed"
                 ),
                 "state": diagnostics["state"],
-                "schema_errors": diagnostics["schema_errors"],
-                "android_metadata": diagnostics["android_metadata"],
+                "schema_errors": portable_diagnostics["schema_errors"],
+                "android_metadata": portable_diagnostics["android_metadata"],
             }
             if schema_check["status"] == "failed":
                 detected_reason = diagnostics["state"]
@@ -4211,6 +4333,7 @@ def build_canonical_output(
                 case.key
             )
         )
+    portable_schema = corpus_schema_diagnostics(source_schema_diagnostics)
     activity_rows = [
         row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
     ]
@@ -4309,7 +4432,7 @@ def build_canonical_output(
         "fixture": case.key,
         "database_identity": case.database_identity,
         "diagnostics": {
-            "schema": dict(source_schema_diagnostics),
+            "schema": portable_schema,
             "calendar": calendar_diagnostics(case, rows_by_table),
             "data_state": (
                 "empty"
@@ -5203,7 +5326,10 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             "foreign_keys_declared": False,
             "schema_validation_paths": list(SCHEMA_PATHS),
             "android_api_26_sqlite_version": "3.18.2",
-            "sqlite_catalog_fallback": "sqlite_master",
+            "table_xinfo_supported_from": "3.26.0",
+            "sqlite_schema_alias_supported_from": "3.33.0",
+            "schema_capabilities_probed_independently": True,
+            "sqlite_catalog_preferred": "sqlite_master",
         },
         "fixtures": entries,
     }
@@ -5363,8 +5489,7 @@ def validate_output_invariants(
             expectations = output.get("migration_expectations")
             if (
                 schema_diagnostic.get("migration_readiness") != "ready"
-                or schema_diagnostic.get("validation_path")
-                != SCHEMA_PATH_MODERN
+                or "validation_path" in schema_diagnostic
                 or schema_diagnostic.get(
                     "unexpected_sqlite_internal_schema_objects"
                 )
@@ -5550,11 +5675,10 @@ def validate_output_invariants(
             raise FixtureValidationError(
                 "{} must report verified android_metadata".format(fixture_name)
             )
-        if schema_diagnostic["validation_path"] != SCHEMA_PATH_MODERN:
+        if "validation_path" in schema_diagnostic:
             raise FixtureValidationError(
-                "{} committed oracle must use the modern schema path".format(
-                    fixture_name
-                )
+                "{} committed oracle must not encode a runtime-specific "
+                "schema path".format(fixture_name)
             )
         if schema_diagnostic["unexpected_tables"]:
             raise FixtureValidationError(
@@ -6899,7 +7023,7 @@ def run_storage_detection_tests(
         ) -> None:
             with open_readonly(database) as connection:
                 decisions = []
-                for schema_path in SCHEMA_PATHS:
+                for schema_path in supported_schema_paths(connection):
                     diagnostics = schema_diagnostics(
                         connection,
                         schema_path,
@@ -6933,7 +7057,7 @@ def run_storage_detection_tests(
                                 schema_path,
                             )
                         )
-                if decisions[0] != decisions[1]:
+                if any(decision != decisions[0] for decision in decisions[1:]):
                     raise FixtureValidationError(
                         "{} schema paths made different decisions".format(
                             detector_name
@@ -6991,7 +7115,7 @@ def run_storage_detection_tests(
                 connection.close()
             with open_readonly(database) as connection:
                 decisions = []
-                for schema_path in SCHEMA_PATHS:
+                for schema_path in supported_schema_paths(connection):
                     diagnostics = schema_diagnostics(connection, schema_path)
                     if (
                         diagnostics["state"] != "malformed_schema"
@@ -7021,7 +7145,7 @@ def run_storage_detection_tests(
                                 schema_path,
                             )
                         )
-                if decisions[0] != decisions[1]:
+                if any(decision != decisions[0] for decision in decisions[1:]):
                     raise FixtureValidationError(
                         "{} schema paths made different decisions".format(
                             detector_name
@@ -7062,6 +7186,7 @@ def run_storage_detection_tests(
             generated_column,
             {
                 SCHEMA_PATH_MODERN: "ACTIVITY:table_xinfo",
+                SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: "ACTIVITY:table_xinfo",
                 SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
             },
         )
@@ -7089,7 +7214,8 @@ def run_storage_detection_tests(
             "sqlite_schema_constraint_substitution",
             constraint_substitution,
             {
-                SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_sql",
+                SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_master_sql",
+                SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: "ACTIVITY:sqlite_schema_sql",
                 SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
             },
         )
@@ -7107,6 +7233,9 @@ def run_storage_detection_tests(
             virtual_substitution,
             {
                 SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_table_kind",
+                SCHEMA_PATH_SQLITE_SCHEMA_ALIAS: (
+                    "ACTIVITY:sqlite_schema_table_kind"
+                ),
                 SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_schema_table_kind",
             },
         )
@@ -7148,6 +7277,149 @@ def verify_legacy_schema_path(
     canonical_database = root / "fixtures" / "empty.db"
     malformed_database = root / "fixtures" / "malformed_schema.db"
     checked = 0
+    capability_profiles_checked = 0
+
+    def verify_capability_profiles(
+        database: Path,
+        label: str,
+        accepted: bool,
+    ) -> None:
+        nonlocal capability_profiles_checked
+        with open_readonly(database) as connection:
+            host_capabilities = schema_capabilities(connection)
+            profiles = [
+                (
+                    "android_api_26_sqlite_3_18",
+                    ("table_xinfo", "sqlite_schema"),
+                    SchemaCapabilities(False, False),
+                    SCHEMA_PATH_ANDROID_API_26,
+                    (SCHEMA_PATH_ANDROID_API_26,),
+                )
+            ]
+            if host_capabilities.table_xinfo:
+                profiles.append(
+                    (
+                        "sqlite_3_26_to_3_32",
+                        ("sqlite_schema",),
+                        SchemaCapabilities(True, False),
+                        SCHEMA_PATH_MODERN,
+                        (
+                            SCHEMA_PATH_MODERN,
+                            SCHEMA_PATH_ANDROID_API_26,
+                        ),
+                    )
+                )
+            if (
+                host_capabilities.table_xinfo
+                and host_capabilities.sqlite_schema_alias
+            ):
+                profiles.append(
+                    (
+                        "sqlite_3_33_plus",
+                        (),
+                        SchemaCapabilities(True, True),
+                        SCHEMA_PATH_MODERN,
+                        SCHEMA_PATHS,
+                    )
+                )
+
+            for (
+                profile,
+                forbidden_tokens,
+                expected_capabilities,
+                expected_path,
+                expected_paths,
+            ) in profiles:
+                guard = SchemaSqlGuard(
+                    connection,
+                    forbidden_tokens=forbidden_tokens,
+                )
+                actual_capabilities = schema_capabilities(guard)
+                if actual_capabilities != expected_capabilities:
+                    raise FixtureValidationError(
+                        "{} {} capability probe mismatch: expected {}, "
+                        "found {}".format(
+                            label,
+                            profile,
+                            expected_capabilities,
+                            actual_capabilities,
+                        )
+                    )
+                actual_paths = supported_schema_paths(guard)
+                if actual_paths != expected_paths:
+                    raise FixtureValidationError(
+                        "{} {} supported paths mismatch: expected {}, "
+                        "found {}".format(
+                            label,
+                            profile,
+                            expected_paths,
+                            actual_paths,
+                        )
+                    )
+                if resolve_schema_path(guard) != expected_path:
+                    raise FixtureValidationError(
+                        "{} {} selected the wrong schema path".format(
+                            label,
+                            profile,
+                        )
+                    )
+
+                guard.statements.clear()
+                outcome = schema_path_outcome(
+                    guard,
+                    "{} {}".format(label, profile),
+                )
+                if (
+                    outcome["exact_schema_valid"] is not accepted
+                    or outcome["decision"]["accepted"] is not accepted
+                ):
+                    raise FixtureValidationError(
+                        "{} {} made the wrong schema decision".format(
+                            label,
+                            profile,
+                        )
+                    )
+                selected_sql = "\n".join(guard.statements).casefold()
+                if "sqlite_master" not in selected_sql:
+                    raise FixtureValidationError(
+                        "{} {} did not use the preferred sqlite_master "
+                        "catalog".format(label, profile)
+                    )
+                if "sqlite_schema" in selected_sql:
+                    raise FixtureValidationError(
+                        "{} {} used sqlite_schema for automatic "
+                        "validation".format(label, profile)
+                    )
+                expected_pragma = (
+                    "table_xinfo"
+                    if expected_path == SCHEMA_PATH_MODERN
+                    else "table_info"
+                )
+                if expected_pragma not in selected_sql:
+                    raise FixtureValidationError(
+                        "{} {} did not use {}".format(
+                            label,
+                            profile,
+                            expected_pragma,
+                        )
+                    )
+
+                outcomes = [
+                    schema_path_outcome(
+                        guard,
+                        "{} {} [{}]".format(label, profile, schema_path),
+                        schema_path=schema_path,
+                    )
+                    for schema_path in actual_paths
+                ]
+                if any(candidate != outcomes[0] for candidate in outcomes[1:]):
+                    raise FixtureValidationError(
+                        "{} {} supported paths made different decisions".format(
+                            label,
+                            profile,
+                        )
+                    )
+                capability_profiles_checked += 1
 
     with open_readonly(canonical_database) as connection:
         outcome = require_equivalent_schema_path_outcomes(
@@ -7156,7 +7428,7 @@ def verify_legacy_schema_path(
         )
         if not outcome["exact_schema_valid"] or not outcome["decision"]["accepted"]:
             raise FixtureValidationError(
-                "Canonical schema was not accepted by both validation paths"
+                "Canonical schema was not accepted by all supported paths"
             )
         legacy_guard = SchemaSqlGuard(
             connection,
@@ -7177,21 +7449,43 @@ def verify_legacy_schema_path(
                 "API-26 schema path did not use table_info plus sqlite_master"
             )
 
-        modern_guard = SchemaSqlGuard(connection)
-        modern_outcome = schema_path_outcome(
-            modern_guard,
-            "canonical modern guard",
-            schema_path=SCHEMA_PATH_MODERN,
-        )
-        modern_sql = "\n".join(modern_guard.statements).casefold()
-        if (
-            modern_outcome != outcome
-            or "table_xinfo" not in modern_sql
-            or "sqlite_schema" not in modern_sql
-        ):
-            raise FixtureValidationError(
-                "Modern schema path did not use table_xinfo plus sqlite_schema"
+        if table_xinfo_supported(connection):
+            modern_guard = SchemaSqlGuard(
+                connection,
+                forbidden_tokens=("sqlite_schema",),
             )
+            modern_outcome = schema_path_outcome(
+                modern_guard,
+                "canonical modern guard",
+                schema_path=SCHEMA_PATH_MODERN,
+            )
+            modern_sql = "\n".join(modern_guard.statements).casefold()
+            if (
+                modern_outcome != outcome
+                or "table_xinfo" not in modern_sql
+                or "sqlite_master" not in modern_sql
+            ):
+                raise FixtureValidationError(
+                    "Modern schema path did not use table_xinfo plus "
+                    "sqlite_master"
+                )
+        if sqlite_schema_alias_supported(connection):
+            alias_guard = SchemaSqlGuard(connection)
+            alias_outcome = schema_path_outcome(
+                alias_guard,
+                "canonical sqlite_schema alias guard",
+                schema_path=SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
+            )
+            alias_sql = "\n".join(alias_guard.statements).casefold()
+            if (
+                alias_outcome != outcome
+                or "table_xinfo" not in alias_sql
+                or "sqlite_schema" not in alias_sql
+            ):
+                raise FixtureValidationError(
+                    "Explicit sqlite_schema alias path did not use "
+                    "table_xinfo plus sqlite_schema"
+                )
         checked += 1
 
     with open_readonly(malformed_database) as connection:
@@ -7204,6 +7498,17 @@ def verify_legacy_schema_path(
                 "Committed malformed schema was accepted by a validation path"
             )
         checked += 1
+
+    verify_capability_profiles(
+        canonical_database,
+        "canonical committed schema",
+        True,
+    )
+    verify_capability_profiles(
+        malformed_database,
+        "committed malformed schema",
+        False,
+    )
 
     variants = (
         (
@@ -7331,7 +7636,9 @@ def verify_legacy_schema_path(
             connection.close()
     return {
         "schemas_checked": checked,
+        "capability_profiles_checked": capability_profiles_checked,
         "modern_path": SCHEMA_PATH_MODERN,
+        "sqlite_schema_alias_path": SCHEMA_PATH_SQLITE_SCHEMA_ALIAS,
         "legacy_path": SCHEMA_PATH_ANDROID_API_26,
     }
 
@@ -7384,7 +7691,10 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
         "foreign_keys_declared": False,
         "schema_validation_paths": list(SCHEMA_PATHS),
         "android_api_26_sqlite_version": "3.18.2",
-        "sqlite_catalog_fallback": "sqlite_master",
+        "table_xinfo_supported_from": "3.26.0",
+        "sqlite_schema_alias_supported_from": "3.33.0",
+        "schema_capabilities_probed_independently": True,
+        "sqlite_catalog_preferred": "sqlite_master",
     }
     if source_schema != expected_schema:
         raise FixtureValidationError("Manifest source schema mismatch")
@@ -7562,7 +7872,9 @@ def database_content_snapshot(
     rows = rows_by_table if rows_by_table is not None else read_all_rows(connection)
     return {
         "schema": schema_payload(connection),
-        "schema_diagnostics": schema_diagnostics(connection),
+        "schema_diagnostics": corpus_schema_diagnostics(
+            schema_diagnostics(connection)
+        ),
         "platform_metadata": platform_metadata_payload(connection),
         "business_rows": {
             table: [
@@ -7747,16 +8059,22 @@ def malformed_schema_storage_snapshot(
     )
     with open_readonly(database) as connection:
         diagnostics = schema_diagnostics(connection)
-        if (
-            diagnostics["state"] != "malformed_schema"
-            or diagnostics["schema_errors"]
-            != [
-                "ACTIVITY:sqlite_schema_sql",
-                "ACTIVITY:table_xinfo",
-            ]
+        expected_catalog_error = "ACTIVITY:{}_sql".format(
+            schema_catalog(resolve_schema_path(connection))
+        )
+        if diagnostics["state"] != "malformed_schema" or (
+            expected_catalog_error not in diagnostics["schema_errors"]
         ):
             raise FixtureValidationError(
                 "{} no longer has the expected schema defect".format(case.key)
+            )
+        if (
+            table_xinfo_supported(connection)
+            and "ACTIVITY:table_xinfo" not in diagnostics["schema_errors"]
+        ):
+            raise FixtureValidationError(
+                "{} no longer exposes its hidden-column defect through "
+                "table_xinfo".format(case.key)
             )
         rows_by_table = read_all_rows(connection)
         compare_rows_to_case(case, rows_by_table)
@@ -8343,8 +8661,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     subparsers.add_parser(
         "verify-legacy-schema-path",
         help=(
-            "Prove modern table_xinfo/sqlite_schema and Android API-26 "
-            "table_info/sqlite_master paths make equivalent schema decisions."
+            "Prove capability-selected table_xinfo/table_info and "
+            "sqlite_master/sqlite_schema paths make equivalent schema decisions."
         ),
     ).add_argument("--root", type=Path, default=TOOL_ROOT)
 
@@ -8420,8 +8738,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "verify-legacy-schema-path":
             result = verify_legacy_schema_path(args.root)
             print(
-                "Verified {} schemas through modern and Android API-26 paths".format(
-                    result["schemas_checked"]
+                "Verified {} schemas and {} guarded capability-profile "
+                "decisions".format(
+                    result["schemas_checked"],
+                    result["capability_profiles_checked"],
                 )
             )
             return 0
