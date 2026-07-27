@@ -12,6 +12,7 @@ import org.robolectric.annotation.Config;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(RobolectricTestRunner.class)
@@ -107,6 +108,31 @@ public class RecordingPersistenceStoreTest {
         assertNotNull(durable.terminal.pending());
         assertEquals(operationId,
                 durable.terminal.pending().getOperationId());
+    }
+
+    @Test
+    public void processDeathPreservesStoppingBeforeTerminalHandoff() {
+        RecordingPersistenceBarrier firstProcess =
+                new RecordingPersistenceBarrier();
+        StatePair first = activate(
+                firstProcess, firstProcess.reserveEpoch());
+        assertTrue(first.recovery.reserveWriterGeneration(
+                61, 11L).isPersisted());
+        assertTrue(first.recovery.recordRecording(61, 11L).isPersisted());
+        assertTrue(first.recovery.recordPaused(61, 11L).isPersisted());
+        assertTrue(first.recovery.recordStopping(61, 11L).isPersisted());
+
+        RecordingPersistenceBarrier replacementProcess =
+                new RecordingPersistenceBarrier();
+        StatePair replacement = activate(
+                replacementProcess, replacementProcess.reserveEpoch());
+
+        assertEquals(
+                RecordingRecoveryState.Phase.STOPPING,
+                replacement.recovery.snapshot().getPhase());
+        assertEquals(61, replacement.recovery.snapshot().getActivityId());
+        assertEquals(11L, replacement.recovery.snapshot().getGeneration());
+        assertNull(replacement.terminal.pending());
     }
 
     private StatePair activate(

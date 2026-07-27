@@ -240,25 +240,38 @@ production stopped-activity query includes `GMTEND`, strictly rejects null, malf
 normalized, or trailing timestamp values, and closes its activity/track-point cursors and logger
 database on success or failure.
 
-Before a fenced stop clears active recording ownership or reports success, it synchronously persists a
-minimal record containing a monotonic terminal operation ID, activity ID, writer generation, result,
-and `STOP_EXPORT` type. This single-slot legacy terminal export handoff survives activity recreation,
-service destruction/restart, and unrelated permission loss. The service replays it until the activity
-reports a successful Data Layer handoff acknowledgment from `putDataItem`; task submission alone,
-failure, cancellation, a missing callback, or process death leaves it pending for retry. Duplicate
-delivery and acknowledgment are idempotent, and discard checks both submission and deletion paths so
-it cannot delete the protected stopped activity. A failed terminal-record commit leaves the source
-activity in explicit recovery instead of returning stop success. A failed or cancelled Data Layer
-attempt immediately enables a visible in-session retry action. Each retry has a distinct in-memory
-attempt token behind a process-wide attempt fence and executor that survive activity teardown. Only a
-task failure, cancellation, or completed acknowledgment releases the fence, so the non-cancellable
-Data Layer task cannot overlap a timeout- or recreation-triggered replacement. An attempt with no
-callback remains durably pending and in flight until process death reloads it; this deliberately
-prefers retained data and single delivery over an unsafe concurrent retry. Retries are explicit and
-bounded by one in-flight operation rather than a zero-delay or unbounded automatic loop. Successful
-handoff asks the service to acknowledge asynchronously on the serialized lifecycle executor. Recovery
-and terminal preference commits therefore never run on the UI thread, and a failed or stale
-acknowledgment releases the attempt while leaving the durable handoff replayable.
+After writer/listener quiescence, STOP first commits the exact activity/generation as durable
+`STOPPING` recovery state. Only then may SQLite set `GMTEND`. The terminal handoff record containing a
+monotonic operation ID, activity ID, writer generation, result, and `STOP_EXPORT` type is committed
+afterward. A crash or replacement before `GMTEND`, or after `GMTEND` but before the handoff, therefore
+reloads `STOPPING` and retries the idempotent boundary instead of presenting PAUSED/RESUME. A failed
+intent commit cannot mutate `GMTEND`; a failed handoff commit keeps the visible STOPPING retry screen
+and disables discard. Recovery also treats any pre-existing non-empty `GMTEND` as terminal, including
+rows left by an older process.
+
+SQLite is the final write fence as well as the recovery signal. Writer construction rejects missing or
+completed activities, every track-point insert is an atomic `INSERT … SELECT … WHERE` conditioned on
+an empty `GMTEND`, and resume/pause/discard paths recheck the row before acting. Once `GMTEND` exists,
+the service cannot construct or publish a replacement writer, append a point, return to resumable
+pause, delete the source as a discard, or replace the original end timestamp with a later STOP.
+
+The single-slot legacy terminal export handoff survives activity recreation, service
+destruction/restart, and unrelated permission loss. The service replays it until the activity reports
+a successful Data Layer handoff acknowledgment from `putDataItem`; task submission alone, failure,
+cancellation, a missing callback, or process death leaves it pending for retry. Duplicate delivery and
+acknowledgment are idempotent. A failed or cancelled Data Layer attempt immediately enables a visible
+in-session retry action. Each send has a distinct in-memory attempt token behind a process-wide
+attempt fence and executor that survive activity teardown.
+
+After Data Layer success, that coordinator enters explicit acknowledgment-pending/in-progress phases
+for the exact durable operation ID. Activity reconnection compares it with service state:
+pending acknowledgment is retried, in-progress work is awaited, completed work is released
+idempotently from the persisted last-operation ID, and stale IDs cannot clear a newer export. Service
+replacement, activity teardown, acknowledgment persistence failure, and lifecycle-executor rejection
+therefore leave a retryable acknowledgment rather than a permanently occupied process-wide fence.
+An export attempt with no callback still remains durably pending and in flight until process death;
+this deliberately prefers retained data and single delivery over an unsafe concurrent retry. All
+export reads, terminalization commits, and acknowledgment commits remain off the main thread.
 
 This compatibility bridge is intentionally not the future canonical Data Layer outbox. It stores only
 one pending stopped activity, blocks another recording/discard while that slot is occupied, retains the
@@ -345,8 +358,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Forty-eight unit-test
-reports contained 282 tests with zero failures, errors, or skips. Lint completed with zero errors and
+The final clean local run completed successfully with 202 actionable tasks. Fifty unit-test reports
+contained 314 tests with zero failures, errors, or skips. Lint completed with zero errors and
 82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:

@@ -39,7 +39,8 @@ public final class RecordingOperationResult {
         NONE,
         RETURN_TO_START,
         SHOW_PAUSED_CONTROLS,
-        SHOW_RECOVERY_RETRY
+        SHOW_RECOVERY_RETRY,
+        SHOW_TERMINAL_RETRY
     }
 
     public enum RecoveryRetention {

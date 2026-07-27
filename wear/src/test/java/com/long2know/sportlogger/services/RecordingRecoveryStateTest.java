@@ -217,6 +217,26 @@ public class RecordingRecoveryStateTest {
     }
 
     @Test
+    public void durableStoppingCannotRegressToPauseResumeOrDiscard() {
+        FakeStore store = new FakeStore();
+        RecordingRecoveryState recovery = createRecording(store, 136, 21L);
+
+        assertTrue(recovery.recordStopping(136, 21L).isPersisted());
+        assertFalse(recovery.recordPaused(136, 21L).isAccepted());
+        assertFalse(recovery.recordRecording(136, 21L).isAccepted());
+        assertFalse(recovery.reserveWriterGeneration(136, 22L).isAccepted());
+        assertFalse(recovery.requireRecovery(136, 21L).isAccepted());
+        assertFalse(recovery.clearAfterDiscard(136).isAccepted());
+
+        RecordingRecoveryState replacement =
+                new RecordingRecoveryState(store);
+        assertTrue(replacement.prepareForServiceReplacement(true).isPersisted());
+        assertEquals(
+                RecordingRecoveryState.Phase.STOPPING,
+                replacement.snapshot().getPhase());
+    }
+
+    @Test
     public void failedDiscardClearRetainsMetadataForExplicitCleanupRetry() {
         FakeStore store = new FakeStore();
         RecordingRecoveryState recovery = createRecording(store, 141, 23L);

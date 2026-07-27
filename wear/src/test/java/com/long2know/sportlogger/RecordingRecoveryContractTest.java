@@ -28,13 +28,13 @@ public class RecordingRecoveryContractTest {
 
         assertTrue(service.contains("initializeRetainedMirror()"));
         assertTrue(service.contains("private void runStartup("));
-        assertTrue(service.contains("SqlLogger.activityExists("));
+        assertTrue(service.contains("SqlLogger.getActivityState("));
         assertTrue(service.contains("WRITERS.restoreGenerationFloor("));
         assertTrue(service.contains("WRITERS.fenceGeneration("));
         assertTrue(store.contains(".commit()"));
         assertFalse(store.contains("static RecordingRecoveryState"));
         assertTrue(coordinator.contains("generationFor("));
-        assertTrue(logger.contains("public static boolean activityExists("));
+        assertTrue(logger.contains("public static ActivityState getActivityState("));
     }
 
     @Test
@@ -297,6 +297,64 @@ public class RecordingRecoveryContractTest {
                 "postDelayed(_scheduledCallback, 0"));
         assertTrue(stopwatch.contains(
                 "removeCallbacks(_scheduledCallback)"));
+    }
+
+    @Test
+    public void terminalIntentPrecedesEndAndCompletedRowsCannotResume()
+            throws Exception {
+        String terminalization = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingTerminalization.java");
+        String recovery = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingRecoveryState.java");
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String logger = read(
+                "utilities/src/main/java/com/long2know/utilities/data_access/"
+                        + "SqlLogger.java");
+
+        assertTrue(
+                terminalization.indexOf("recovery.recordStopping(")
+                        < terminalization.indexOf("activities.complete("));
+        assertTrue(
+                terminalization.indexOf("activities.complete(")
+                        < terminalization.indexOf(
+                                "terminal.recordSuccessfulStop("));
+        assertTrue(recovery.contains("STOPPING"));
+        assertTrue(recovery.contains("current.isStopping()"));
+        assertTrue(service.contains(
+                "activityState == SqlLogger.ActivityState.COMPLETED"));
+        assertTrue(service.contains("runRecoveredTerminalization("));
+        assertTrue(logger.contains("WHERE EXISTS (SELECT 1 FROM"));
+        assertTrue(logger.contains(
+                "getActivityState(_db, activityId) != ActivityState.OPEN"));
+    }
+
+    @Test
+    public void reconnectReconcilesExactAcknowledgmentOperation()
+            throws Exception {
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/"
+                        + "MainActivity.java");
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String terminalState = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingTerminalCompletionState.java");
+
+        assertTrue(activity.contains("reconcileTerminalHandoff(false)"));
+        assertTrue(activity.contains("acknowledgmentOperationId()"));
+        assertTrue(activity.contains("acknowledgmentRetryRequired("));
+        assertTrue(activity.contains("abandonAcknowledgment("));
+        assertTrue(service.contains(
+                "getTerminalAcknowledgmentStatus(long operationId)"));
+        assertTrue(service.contains(
+                "TerminalAcknowledgmentStatus.IN_PROGRESS"));
+        assertTrue(terminalState.contains(
+                "OperationStatus.COMPLETED"));
     }
 
     @Test

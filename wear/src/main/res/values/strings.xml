@@ -19,6 +19,9 @@
     <string name="terminal_export_in_progress">Your stopped activity is saved. Exporting it to the phone…</string>
     <string name="terminal_export_retry_required">Your stopped activity is saved, but export did not finish. Retry export before starting or discarding another activity.</string>
     <string name="retry_terminal_export">Retry export</string>
+    <string name="recording_stop_in_progress">Stopping and saving this activity…</string>
+    <string name="recording_stop_retry_required">Stopping did not finish. Retry to preserve and export this activity.</string>
+    <string name="retry_recording_stop">Retry stop</string>
     <string name="recording_startup_failed">Recording did not start. No activity is in progress.</string>
     <string name="recording_operation_failed">The recording action could not be completed.</string>
     <!--

@@ -3,6 +3,7 @@ package com.long2know.utilities.data_access;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
+import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteDatabase;
 
 import java.text.DateFormat;
@@ -24,6 +25,17 @@ import com.long2know.utilities.tcxzpot.Trackpoint;
 
 
 public class SqlLogger implements Runnable, AutoCloseable {
+    public enum ActivityState {
+        MISSING,
+        OPEN,
+        COMPLETED
+    }
+
+    public enum CompletionResult {
+        COMPLETED,
+        ALREADY_COMPLETED,
+        MISSING
+    }
 
     public static final String TAG = "SqlLogger";
     public static final String DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW";
@@ -65,6 +77,13 @@ public class SqlLogger implements Runnable, AutoCloseable {
         _activityId = activityId;
         _db = Config.context.openOrCreateDatabase(DATABASE_NAME,
                 Context.MODE_PRIVATE, null);
+        if (activityId != null
+                && getActivityState(_db, activityId) != ActivityState.OPEN) {
+            close();
+            throw new IllegalStateException(
+                    "Activity " + activityId
+                            + " is missing or already completed.");
+        }
     }
 
     @Override
@@ -80,7 +99,7 @@ public class SqlLogger implements Runnable, AutoCloseable {
         }
     }
 
-    private void writeData() {
+    private synchronized void writeData() {
         if (Thread.currentThread().isInterrupted()) {
             return;
         }
@@ -109,31 +128,47 @@ public class SqlLogger implements Runnable, AutoCloseable {
 
         queryBuf.append("INSERT INTO "
                 + GPS_TABLE_NAME
-                + " (GMTTIMESTAMP, ACTIVITYID, LATITUDE,LONGITUDE,ALTITUDE,ACCURACY,SPEED,BEARING,HEARTRATE) VALUES ("
+                + " (GMTTIMESTAMP, ACTIVITYID, LATITUDE,LONGITUDE,ALTITUDE,ACCURACY,SPEED,BEARING,HEARTRATE) SELECT "
                 + "'"
                 + gmtTime
-                + "',"
+                + "', "
                 + activityId
-                + ","
+                + ", "
                 + locationData.Latitude
-                + ","
+                + ", "
                 + locationData.Longitude
-                + ","
+                + ", "
                 + (locationData.HasAltitude ? locationData.Altitude : "NULL")
-                + ","
+                + ", "
                 + (locationData.HasAccuracy ? locationData.Accuracy : "NULL")
-                + ","
+                + ", "
                 + (locationData.HasSpeed ? locationData.Speed : "NULL")
-                + ","
+                + ", "
                 + (locationData.HasBearing ? locationData.Bearing : "NULL")
-                + ","
+                + ", "
                 + locationData.HeartRate
-                + ");");
+                + " WHERE EXISTS (SELECT 1 FROM "
+                + ACTIVITY_TABLE_NAME
+                + " WHERE "
+                + A_ROWID
+                + "="
+                + activityId
+                + " AND ("
+                + A_END_TIME_UTC
+                + " IS NULL OR "
+                + A_END_TIME_UTC
+                + "=''));");
         Log.i(TAG, queryBuf.toString());
         if (Thread.currentThread().isInterrupted()) {
             return;
         }
         _db.execSQL(queryBuf.toString());
+        if (DatabaseUtils.longForQuery(
+                _db, "SELECT changes()", null) != 1L) {
+            throw new IllegalStateException(
+                    "Activity " + activityId
+                            + " was completed before the track point write.");
+        }
     }
 
 
@@ -177,8 +212,32 @@ public class SqlLogger implements Runnable, AutoCloseable {
     }
 
     public static boolean completeActivity(int activityId) {
-        if (activityId <= 0) {
+        CompletionResult result = completeActivityWithResult(activityId);
+        if (result == CompletionResult.COMPLETED) {
+            return true;
+        }
+        if (result != CompletionResult.ALREADY_COMPLETED) {
             return false;
+        }
+        try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
+                DATABASE_NAME, Context.MODE_PRIVATE, null);
+             Cursor cursor = db.query(
+                     ACTIVITY_TABLE_NAME,
+                     new String[]{A_END_TIME_UTC},
+                     A_ROWID + "=?",
+                     new String[]{Integer.toString(activityId)},
+                     null,
+                     null,
+                     null,
+                     "1")) {
+            return cursor.moveToFirst()
+                    && parseOptionalTimestamp(cursor, 0) != null;
+        }
+    }
+
+    public static CompletionResult completeActivityWithResult(int activityId) {
+        if (activityId <= 0) {
+            return CompletionResult.MISSING;
         }
         try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
                 DATABASE_NAME, Context.MODE_PRIVATE, null)) {
@@ -191,39 +250,26 @@ public class SqlLogger implements Runnable, AutoCloseable {
                             + " IS NULL OR " + A_END_TIME_UTC + "='')",
                     new String[]{Integer.toString(activityId)});
             if (updated == 1) {
-                return true;
+                return CompletionResult.COMPLETED;
             }
-            try (Cursor cursor = db.query(
-                    ACTIVITY_TABLE_NAME,
-                    new String[]{A_END_TIME_UTC},
-                    A_ROWID + "=?",
-                    new String[]{Integer.toString(activityId)},
-                    null,
-                    null,
-                    null,
-                    "1")) {
-                return cursor.moveToFirst()
-                        && parseOptionalTimestamp(cursor, 0) != null;
-            }
+            ActivityState state = getActivityState(db, activityId);
+            return state == ActivityState.COMPLETED
+                    ? CompletionResult.ALREADY_COMPLETED
+                    : CompletionResult.MISSING;
         }
     }
 
     public static boolean activityExists(int activityId) {
+        return getActivityState(activityId) != ActivityState.MISSING;
+    }
+
+    public static ActivityState getActivityState(int activityId) {
         if (activityId <= 0) {
-            return false;
+            return ActivityState.MISSING;
         }
         try (SQLiteDatabase db = Config.context.openOrCreateDatabase(
-                DATABASE_NAME, Context.MODE_PRIVATE, null);
-             Cursor cursor = db.query(
-                     ACTIVITY_TABLE_NAME,
-                     new String[]{A_ROWID},
-                     A_ROWID + "=?",
-                     new String[]{Integer.toString(activityId)},
-                     null,
-                     null,
-                     null,
-                     "1")) {
-            return cursor.moveToFirst();
+                DATABASE_NAME, Context.MODE_PRIVATE, null)) {
+            return getActivityState(db, activityId);
         }
     }
 
@@ -486,6 +532,28 @@ public class SqlLogger implements Runnable, AutoCloseable {
             throw new IllegalStateException("SqlLogger is closed.");
         }
         return _db;
+    }
+
+    private static ActivityState getActivityState(
+            SQLiteDatabase database, int activityId) {
+        try (Cursor cursor = database.query(
+                ACTIVITY_TABLE_NAME,
+                new String[]{A_END_TIME_UTC},
+                A_ROWID + "=?",
+                new String[]{Integer.toString(activityId)},
+                null,
+                null,
+                null,
+                "1")) {
+            if (!cursor.moveToFirst()) {
+                return ActivityState.MISSING;
+            }
+            return cursor.isNull(0)
+                            || cursor.getString(0) == null
+                            || cursor.getString(0).isEmpty()
+                    ? ActivityState.OPEN
+                    : ActivityState.COMPLETED;
+        }
     }
 
     private static String currentUtcTimestamp() {

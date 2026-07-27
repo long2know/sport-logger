@@ -33,8 +33,17 @@ public class SportLoggerService extends Service {
         IDLE,
         RECORDING,
         PAUSED,
+        STOPPING,
         RECOVERY_REQUIRED,
         TERMINAL_PENDING
+    }
+
+    public enum TerminalAcknowledgmentStatus {
+        UNAVAILABLE,
+        PENDING,
+        IN_PROGRESS,
+        COMPLETED,
+        STALE
     }
 
     private static final String NOTIFICATION_CHANNEL_ID = "long2know_sport_logger";
@@ -49,6 +58,35 @@ public class SportLoggerService extends Service {
             new OwnedListenerRegistry<>();
     private static final RecordingPersistenceBarrier PERSISTENCE =
             new RecordingPersistenceBarrier();
+    private static final RecordingTerminalization.ActivityStore
+            TERMINAL_ACTIVITIES =
+            new RecordingTerminalization.ActivityStore() {
+                @Override
+                public State getState(int activityId) {
+                    SqlLogger.ActivityState state =
+                            SqlLogger.getActivityState(activityId);
+                    if (state == SqlLogger.ActivityState.OPEN) {
+                        return State.OPEN;
+                    }
+                    return state == SqlLogger.ActivityState.COMPLETED
+                            ? State.COMPLETED
+                            : State.MISSING;
+                }
+
+                @Override
+                public Completion complete(int activityId) {
+                    SqlLogger.CompletionResult result =
+                            SqlLogger.completeActivityWithResult(activityId);
+                    if (result == SqlLogger.CompletionResult.COMPLETED) {
+                        return Completion.COMPLETED;
+                    }
+                    return result
+                                    == SqlLogger.CompletionResult
+                                            .ALREADY_COMPLETED
+                            ? Completion.ALREADY_COMPLETED
+                            : Completion.MISSING;
+                }
+            };
 
     private static final class WriterStart {
         final RecordingWriterCoordinator.StartStatus status;
@@ -275,7 +313,6 @@ public class SportLoggerService extends Service {
                     || operationId <= 0L
                     || pending == null
                     || pending.getOperationId() != operationId
-                    || _terminalDeliveryInFlightId != operationId
                     || _terminalAcknowledgmentInFlightId != 0L) {
                 return false;
             }
@@ -302,6 +339,29 @@ public class SportLoggerService extends Service {
             }
         }
         return false;
+    }
+
+    public synchronized TerminalAcknowledgmentStatus
+            getTerminalAcknowledgmentStatus(long operationId) {
+        if (_closing
+                || !_persistenceReady
+                || _terminalCompletions == null) {
+            return TerminalAcknowledgmentStatus.UNAVAILABLE;
+        }
+        RecordingTerminalCompletionState.OperationStatus status =
+                _terminalCompletions.operationStatus(operationId);
+        if (status
+                == RecordingTerminalCompletionState.OperationStatus
+                        .COMPLETED) {
+            return TerminalAcknowledgmentStatus.COMPLETED;
+        }
+        if (status
+                == RecordingTerminalCompletionState.OperationStatus.STALE) {
+            return TerminalAcknowledgmentStatus.STALE;
+        }
+        return _terminalAcknowledgmentInFlightId == operationId
+                ? TerminalAcknowledgmentStatus.IN_PROGRESS
+                : TerminalAcknowledgmentStatus.PENDING;
     }
 
     public void releaseTerminalCompletion(long operationId) {
@@ -408,6 +468,10 @@ public class SportLoggerService extends Service {
         if (_terminalCompletions != null
                 && _terminalCompletions.pending() != null) {
             return RecordingStatus.TERMINAL_PENDING;
+        }
+        if (_recoveryState != null
+                && _recoveryState.snapshot().isStopping()) {
+            return RecordingStatus.STOPPING;
         }
         RecordingOperationDispatcher.Token active = _operations.getActive();
         if (active != null) {
@@ -627,6 +691,22 @@ public class SportLoggerService extends Service {
                         publicOperation,
                         0L,
                         _terminalCompletions.pending().getActivityId());
+            }
+            RecordingRecoveryState.Snapshot recovery =
+                    _recoveryState == null
+                            ? RecordingRecoveryState.Snapshot.idle()
+                            : _recoveryState.snapshot();
+            if (recovery.isStopping()
+                    && publicOperation
+                            != RecordingOperationResult.Operation.STOP
+                    && publicOperation
+                            != RecordingOperationResult.Operation.RECOVER) {
+                return operationResult(
+                        RecordingOperationResult.Status
+                                .TERMINAL_COMPLETION_PENDING,
+                        publicOperation,
+                        0L,
+                        recovery.getActivityId());
             }
             RecordingOperationResult pending =
                     _pendingOperationCompletion != null
@@ -942,6 +1022,25 @@ public class SportLoggerService extends Service {
         if (!operationOwns(token)) {
             return;
         }
+        try {
+            if (SqlLogger.getActivityState(token.getActivityId())
+                    == SqlLogger.ActivityState.COMPLETED) {
+                runRecoveredTerminalization(token);
+                return;
+            }
+        } catch (RuntimeException exception) {
+            Log.e(
+                    TAG,
+                    "Could not validate activity while pausing.",
+                    exception);
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
 
         RecordingRecoveryState.Transition pausedTransition =
                 _recoveryState.recordPaused(
@@ -974,6 +1073,33 @@ public class SportLoggerService extends Service {
         if (_permissionLossHandled
                 || !RecordingPermissions.allRequiredForRecordingGranted(this)) {
             handleRecordingPermissionLoss(token.getServiceGeneration());
+            return;
+        }
+        final SqlLogger.ActivityState activityState;
+        try {
+            activityState = SqlLogger.getActivityState(
+                    token.getActivityId());
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Could not validate the paused activity.", exception);
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (activityState == SqlLogger.ActivityState.COMPLETED) {
+            runRecoveredTerminalization(token);
+            return;
+        }
+        if (activityState == SqlLogger.ActivityState.MISSING) {
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
             return;
         }
         if (!listenersReady()) {
@@ -1025,6 +1151,22 @@ public class SportLoggerService extends Service {
                 token);
         if (writer.status != RecordingWriterCoordinator.StartStatus.STARTED
                 || writer.generation == null) {
+            try {
+                if (SqlLogger.getActivityState(token.getActivityId())
+                        == SqlLogger.ActivityState.COMPLETED) {
+                    runRecoveredTerminalization(
+                            token,
+                            token.getActivityId(),
+                            reservedWriterGeneration);
+                    return;
+                }
+            } catch (RuntimeException exception) {
+                Log.e(
+                        TAG,
+                        "Could not recheck activity completion after "
+                                + "resume writer startup failed.",
+                        exception);
+            }
             failWithRecovery(
                     token,
                     writer.status
@@ -1136,48 +1278,31 @@ public class SportLoggerService extends Service {
             return;
         }
 
-        try {
-            if (!SqlLogger.completeActivity(token.getActivityId())) {
-                failWithRecovery(
-                        token,
-                        RecordingOperationResult.Status.DATABASE_FAILED,
+        RecordingTerminalization.Result terminalization =
+                RecordingTerminalization.finish(
+                        _recoveryState,
+                        _terminalCompletions,
+                        TERMINAL_ACTIVITIES,
                         token.getActivityId(),
-                        token.getWriterGeneration(),
-                        null);
-                _stopWatch.pauseTimer();
-                return;
-            }
-        } catch (RuntimeException exception) {
-            Log.e(TAG, "Could not persist the activity stop time.", exception);
+                        token.getWriterGeneration());
+        if (!terminalization.isCommitted()) {
+            Log.e(
+                    TAG,
+                    "Activity stop remains terminalizing after "
+                            + terminalization.getStatus()
+                            + ".");
             failWithRecovery(
                     token,
-                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    terminalizationFailureStatus(
+                            terminalization.getStatus()),
                     token.getActivityId(),
                     token.getWriterGeneration(),
-                    null);
-            _stopWatch.pauseTimer();
-            return;
-        }
-
-        RecordingTerminalCompletionState.RecordResult terminalRecord =
-                _terminalCompletions.recordSuccessfulStop(
-                        token.getActivityId(), token.getWriterGeneration());
-        if (!terminalRecord.isPersisted()) {
-            failWithRecovery(
-                    token,
-                    terminalRecord.isOccupied()
-                            ? RecordingOperationResult.Status
-                                    .TERMINAL_COMPLETION_PENDING
-                            : RecordingOperationResult.Status
-                                    .TERMINAL_PERSISTENCE_FAILED,
-                    token.getActivityId(),
-                    token.getWriterGeneration(),
-                    null);
+                    terminalization.getIntent());
             _stopWatch.pauseTimer();
             return;
         }
         RecordingTerminalCompletion terminalCompletion =
-                terminalRecord.getCompletion();
+                terminalization.getCompletion();
         RecordingTerminalTransition.Outcome terminalOutcome;
         synchronized (this) {
             if (!operationOwnsLocked(token)) {
@@ -1248,6 +1373,25 @@ public class SportLoggerService extends Service {
             return;
         }
         _stopWatch.pauseTimer();
+        try {
+            if (SqlLogger.getActivityState(token.getActivityId())
+                    == SqlLogger.ActivityState.COMPLETED) {
+                runRecoveredTerminalization(token);
+                return;
+            }
+        } catch (RuntimeException exception) {
+            Log.e(
+                    TAG,
+                    "Could not validate activity before discard.",
+                    exception);
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
         if (_terminalCompletions.protectsActivity(token.getActivityId())) {
             synchronized (this) {
                 if (!operationOwnsLocked(token)) {
@@ -1397,9 +1541,12 @@ public class SportLoggerService extends Service {
             return;
         }
 
+        final SqlLogger.ActivityState activityState;
         try {
             SqlLogger.initDatabase();
-            if (!SqlLogger.activityExists(retained.getActivityId())) {
+            activityState = SqlLogger.getActivityState(
+                    retained.getActivityId());
+            if (activityState == SqlLogger.ActivityState.MISSING) {
                 if (!operationOwns(token)) {
                     return;
                 }
@@ -1438,6 +1585,15 @@ public class SportLoggerService extends Service {
                     retained.getActivityId(),
                     retained.getGeneration(),
                     null);
+            return;
+        }
+
+        if (retained.isStopping()
+                || activityState == SqlLogger.ActivityState.COMPLETED) {
+            runRecoveredTerminalization(
+                    token,
+                    retained.getActivityId(),
+                    retained.getGeneration());
             return;
         }
 
@@ -1506,6 +1662,125 @@ public class SportLoggerService extends Service {
                 token, RecordingOperationResult.success(retained.getActivityId()));
     }
 
+    private void runRecoveredTerminalization(
+            RecordingOperationDispatcher.Token token) {
+        runRecoveredTerminalization(
+                token,
+                token.getActivityId(),
+                token.getWriterGeneration());
+    }
+
+    private void runRecoveredTerminalization(
+            RecordingOperationDispatcher.Token token,
+            int activityId,
+            long writerGeneration) {
+        RecordingRecoveryState.Transition stopping =
+                _recoveryState.recordStopping(activityId, writerGeneration);
+        if (!stopping.isPersisted()) {
+            markStartupReady(token);
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status
+                            .TERMINAL_PERSISTENCE_FAILED,
+                    activityId,
+                    writerGeneration,
+                    stopping);
+            return;
+        }
+
+        LifecycleTermination writerTermination =
+                WRITERS.fenceGeneration(
+                        activityId,
+                        writerGeneration,
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!writerTermination.succeeded()) {
+            markStartupReady(token);
+            failWithRecovery(
+                    token,
+                    writerStatus(writerTermination),
+                    activityId,
+                    writerGeneration,
+                    stopping);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+        LifecycleTermination listenerTermination = releaseOwnedListeners();
+        if (!listenerTermination.succeeded()) {
+            markStartupReady(token);
+            failWithRecovery(
+                    token,
+                    listenerStatus(listenerTermination),
+                    activityId,
+                    writerGeneration,
+                    stopping);
+            return;
+        }
+        _stopWatch.pauseTimer();
+        if (!operationOwns(token)) {
+            return;
+        }
+
+        RecordingTerminalization.Result terminalization =
+                RecordingTerminalization.finish(
+                        _recoveryState,
+                        _terminalCompletions,
+                        TERMINAL_ACTIVITIES,
+                        activityId,
+                        writerGeneration);
+        if (!terminalization.isCommitted()) {
+            markStartupReady(token);
+            failWithRecovery(
+                    token,
+                    terminalizationFailureStatus(
+                            terminalization.getStatus()),
+                    activityId,
+                    writerGeneration,
+                    terminalization.getIntent());
+            return;
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            _startupReady = true;
+            _permissionLossHandled = false;
+            _activityId = 0;
+            _writerGeneration = 0L;
+            _listenerEventsActive.set(false);
+            _stateMachine.restoreIdle();
+            _terminalDeliveryOperationToken =
+                    token.getOperationToken();
+            showIdle();
+        }
+        RecordingRecoveryState.Transition cleared =
+                _recoveryState.clearAfterStop(activityId);
+        if (!cleared.isPersisted()) {
+            Log.e(
+                    TAG,
+                    "Recovered terminal activity kept stale recovery "
+                            + "metadata behind its durable handoff.");
+        }
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        postTerminalCompletion(token, terminalization.getCompletion());
+    }
+
+    private void markStartupReady(
+            RecordingOperationDispatcher.Token token) {
+        if (token.getOperation()
+                != RecordingOperationResult.Operation.STARTUP) {
+            return;
+        }
+        synchronized (this) {
+            if (operationOwnsLocked(token)) {
+                _startupReady = true;
+            }
+        }
+    }
+
     private void scheduleStartup() {
         final RecordingOperationDispatcher.Token token;
         synchronized (this) {
@@ -1558,10 +1833,15 @@ public class SportLoggerService extends Service {
         }
         RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
         boolean activityExists = retained.ownsActivity();
+        SqlLogger.ActivityState activityState =
+                SqlLogger.ActivityState.MISSING;
         if (activityExists) {
             try {
                 SqlLogger.initDatabase();
-                activityExists = SqlLogger.activityExists(retained.getActivityId());
+                activityState = SqlLogger.getActivityState(
+                        retained.getActivityId());
+                activityExists =
+                        activityState != SqlLogger.ActivityState.MISSING;
             } catch (RuntimeException exception) {
                 Log.e(TAG, "Could not validate retained recording metadata.", exception);
                 failStartupWithRecovery(
@@ -1571,6 +1851,16 @@ public class SportLoggerService extends Service {
                         null);
                 return;
             }
+        }
+        if (retained.ownsActivity()
+                && (retained.isStopping()
+                        || activityState
+                                == SqlLogger.ActivityState.COMPLETED)) {
+            runRecoveredTerminalization(
+                    token,
+                    retained.getActivityId(),
+                    retained.getGeneration());
+            return;
         }
 
         if (!operationOwns(token)) {
@@ -1835,8 +2125,13 @@ public class SportLoggerService extends Service {
         if (retained.ownsActivity()
                 && (recoveryTransition == null
                         || !recoveryTransition.isAccepted())) {
-            recoveryTransition = _recoveryState.requireRecovery(
-                    retained.getActivityId(), retained.getGeneration());
+            recoveryTransition = retained.isStopping()
+                    ? _recoveryState.recordStopping(
+                            retained.getActivityId(),
+                            retained.getGeneration())
+                    : _recoveryState.requireRecovery(
+                            retained.getActivityId(),
+                            retained.getGeneration());
         }
         synchronized (this) {
             if (!operationOwnsLocked(token)) {
@@ -1847,10 +2142,17 @@ public class SportLoggerService extends Service {
                 _activityId = retained.getActivityId();
                 _writerGeneration = retained.getGeneration();
                 _stateMachine.restoreOwnedActivity();
-                showRecoveryRequired(
-                        _activityId,
-                        recoveryTransition != null
-                                && recoveryTransition.isPersisted());
+                if (retained.isStopping()) {
+                    showTerminalizing(
+                            _activityId,
+                            recoveryTransition != null
+                                    && recoveryTransition.isPersisted());
+                } else {
+                    showRecoveryRequired(
+                            _activityId,
+                            recoveryTransition != null
+                                    && recoveryTransition.isPersisted());
+                }
             } else {
                 _activityId = 0;
                 _writerGeneration = 0L;
@@ -1866,8 +2168,13 @@ public class SportLoggerService extends Service {
                         ? recoveryFailure(
                                 status,
                                 retained.getActivityId(),
-                                RecordingOperationResult.RecoveryAction
-                                        .SHOW_RECOVERY_RETRY,
+                                retained.isStopping()
+                                        ? RecordingOperationResult
+                                                .RecoveryAction
+                                                .SHOW_TERMINAL_RETRY
+                                        : RecordingOperationResult
+                                                .RecoveryAction
+                                                .SHOW_RECOVERY_RETRY,
                                 recoveryTransition)
                         : RecordingOperationResult.recovery(
                                 status,
@@ -2056,6 +2363,21 @@ public class SportLoggerService extends Service {
         if (!operationOwns(cleanupToken)) {
             return;
         }
+        try {
+            if (SqlLogger.getActivityState(generation.getActivityId())
+                    == SqlLogger.ActivityState.COMPLETED) {
+                runRecoveredTerminalization(
+                        cleanupToken,
+                        generation.getActivityId(),
+                        generation.getGeneration());
+                return;
+            }
+        } catch (RuntimeException exception) {
+            Log.e(
+                    TAG,
+                    "Could not inspect activity after writer failure.",
+                    exception);
+        }
         RecordingRecoveryState.Transition recoveryTransition =
                 _recoveryState.requireRecovery(
                         generation.getActivityId(), generation.getGeneration());
@@ -2234,9 +2556,13 @@ public class SportLoggerService extends Service {
                 || !listenerTermination.succeeded()) {
             RecordingRecoveryState.Transition recoveryTransition =
                     retained.ownsActivity()
-                            ? _recoveryState.requireRecovery(
-                                    retained.getActivityId(),
-                                    retained.getGeneration())
+                            ? (retained.isStopping()
+                                    ? _recoveryState.recordStopping(
+                                            retained.getActivityId(),
+                                            retained.getGeneration())
+                                    : _recoveryState.requireRecovery(
+                                            retained.getActivityId(),
+                                            retained.getGeneration()))
                             : RecordingRecoveryState.Transition.rejected(
                                     retained);
             synchronized (this) {
@@ -2245,9 +2571,15 @@ public class SportLoggerService extends Service {
                 }
                 if (retained.ownsActivity()) {
                     _stateMachine.restoreOwnedActivity();
-                    showRecoveryRequired(
-                            retained.getActivityId(),
-                            recoveryTransition.isPersisted());
+                    if (retained.isStopping()) {
+                        showTerminalizing(
+                                retained.getActivityId(),
+                                recoveryTransition.isPersisted());
+                    } else {
+                        showRecoveryRequired(
+                                retained.getActivityId(),
+                                recoveryTransition.isPersisted());
+                    }
                 } else {
                     _stateMachine.restoreIdle();
                     showIdle();
@@ -2260,9 +2592,13 @@ public class SportLoggerService extends Service {
                                     writerStatus(writerTermination),
                                     retained.getActivityId(),
                                     retained.ownsActivity()
-                                            ? RecordingOperationResult
-                                                    .RecoveryAction
-                                                    .SHOW_RECOVERY_RETRY
+                                            ? (retained.isStopping()
+                                                    ? RecordingOperationResult
+                                                            .RecoveryAction
+                                                            .SHOW_TERMINAL_RETRY
+                                                    : RecordingOperationResult
+                                                            .RecoveryAction
+                                                            .SHOW_RECOVERY_RETRY)
                                             : RecordingOperationResult
                                                     .RecoveryAction
                                                     .RETURN_TO_START,
@@ -2271,13 +2607,41 @@ public class SportLoggerService extends Service {
                                     listenerStatus(listenerTermination),
                                     retained.getActivityId(),
                                     retained.ownsActivity()
-                                            ? RecordingOperationResult
-                                                    .RecoveryAction
-                                                    .SHOW_RECOVERY_RETRY
+                                            ? (retained.isStopping()
+                                                    ? RecordingOperationResult
+                                                            .RecoveryAction
+                                                            .SHOW_TERMINAL_RETRY
+                                                    : RecordingOperationResult
+                                                            .RecoveryAction
+                                                            .SHOW_RECOVERY_RETRY)
                                             : RecordingOperationResult
                                                     .RecoveryAction
                                                     .RETURN_TO_START,
                                     recoveryTransition));
+            return;
+        }
+
+        if (retained.isStopping()) {
+            RecordingRecoveryState.Transition stopping =
+                    _recoveryState.recordStopping(
+                            retained.getActivityId(),
+                            retained.getGeneration());
+            synchronized (this) {
+                if (!operationOwnsLocked(permissionToken)) {
+                    return;
+                }
+                _stateMachine.restoreOwnedActivity();
+                showTerminalizing(
+                        retained.getActivityId(), stopping.isPersisted());
+            }
+            postLifecycleFailure(
+                    permissionToken,
+                    recoveryFailure(
+                            RecordingOperationResult.Status.PERMISSION_DENIED,
+                            retained.getActivityId(),
+                            RecordingOperationResult.RecoveryAction
+                                    .SHOW_TERMINAL_RETRY,
+                            stopping));
             return;
         }
 
@@ -2368,12 +2732,23 @@ public class SportLoggerService extends Service {
 
         RecordingRecoveryState.Transition recoveryTransition =
                 existingTransition;
+        RecordingRecoveryState.Snapshot recoverySnapshot =
+                _recoveryState.snapshot();
+        boolean terminalizing = recoverySnapshot.isStopping()
+                && recoverySnapshot.getActivityId() == activityId
+                && recoverySnapshot.getGeneration() == writerGeneration;
         if (recoveryTransition == null
-                || !recoveryTransition.isAccepted()
-                || _recoveryState.snapshot().getPhase()
+                || !recoveryTransition.isAccepted()) {
+            recoveryTransition = terminalizing
+                    ? _recoveryState.recordStopping(
+                            activityId, writerGeneration)
+                    : _recoveryState.requireRecovery(
+                            activityId, writerGeneration);
+        } else if (!terminalizing
+                && recoverySnapshot.getPhase()
                         != RecordingRecoveryState.Phase.RECOVERY_REQUIRED) {
-            recoveryTransition =
-                    _recoveryState.requireRecovery(activityId, writerGeneration);
+            recoveryTransition = _recoveryState.requireRecovery(
+                    activityId, writerGeneration);
         }
         synchronized (this) {
             if (!operationOwnsLocked(token)) {
@@ -2389,8 +2764,13 @@ public class SportLoggerService extends Service {
             _writerGeneration = writerGeneration;
             _listenerEventsActive.set(false);
             _listenersReady = false;
-            showRecoveryRequired(
-                    activityId, recoveryTransition.isPersisted());
+            if (terminalizing) {
+                showTerminalizing(
+                        activityId, recoveryTransition.isPersisted());
+            } else {
+                showRecoveryRequired(
+                        activityId, recoveryTransition.isPersisted());
+            }
         }
         _stopWatch.pauseTimer();
         if (recoveryTransition.isCurrentProcessOnly()) {
@@ -2408,8 +2788,11 @@ public class SportLoggerService extends Service {
                 recoveryFailure(
                         status,
                         activityId,
-                        RecordingOperationResult.RecoveryAction
-                                .SHOW_RECOVERY_RETRY,
+                        terminalizing
+                                ? RecordingOperationResult.RecoveryAction
+                                        .SHOW_TERMINAL_RETRY
+                                : RecordingOperationResult.RecoveryAction
+                                        .SHOW_RECOVERY_RETRY,
                         recoveryTransition));
     }
 
@@ -2621,7 +3004,11 @@ public class SportLoggerService extends Service {
                 _activityId = retained.getActivityId();
                 _writerGeneration = retained.getGeneration();
                 _stateMachine.restoreOwnedActivity();
-                showRecoveryRequired(_activityId);
+                if (retained.isStopping()) {
+                    showTerminalizing(_activityId, true);
+                } else {
+                    showRecoveryRequired(_activityId);
+                }
             } else {
                 _stateMachine.restoreIdle();
                 showIdle();
@@ -2869,6 +3256,8 @@ public class SportLoggerService extends Service {
             if (client == null
                     || _closing
                     || _terminalDeliveryInFlightId
+                            == pending.getOperationId()
+                    || _terminalAcknowledgmentInFlightId
                             == pending.getOperationId()) {
                 return;
             }
@@ -2921,9 +3310,10 @@ public class SportLoggerService extends Service {
             case PAUSE:
                 return RecordingStatus.RECORDING;
             case RESUME:
-            case STOP:
             case DISCARD:
                 return RecordingStatus.PAUSED;
+            case STOP:
+                return RecordingStatus.STOPPING;
             case RECOVER:
             case NONE:
                 return activityId > 0
@@ -2961,6 +3351,23 @@ public class SportLoggerService extends Service {
             return RecordingOperationResult.Status.WRITER_TIMED_OUT;
         }
         return RecordingOperationResult.Status.WRITER_FAILED;
+    }
+
+    private static RecordingOperationResult.Status
+            terminalizationFailureStatus(
+                    RecordingTerminalization.Status status) {
+        if (status == RecordingTerminalization.Status.DATABASE_FAILED) {
+            return RecordingOperationResult.Status.DATABASE_FAILED;
+        }
+        if (status == RecordingTerminalization.Status.HANDOFF_OCCUPIED) {
+            return RecordingOperationResult.Status
+                    .TERMINAL_COMPLETION_PENDING;
+        }
+        if (status == RecordingTerminalization.Status.STATE_CHANGED) {
+            return RecordingOperationResult.Status.STALE_OPERATION;
+        }
+        return RecordingOperationResult.Status
+                .TERMINAL_PERSISTENCE_FAILED;
     }
 
     private static RecordingOperationResult.Status listenerStatus(
@@ -3002,6 +3409,7 @@ public class SportLoggerService extends Service {
         shared.ActivityId = activityId;
         shared.IsRecording = true;
         shared.IsPaused = false;
+        shared.IsStopping = false;
         shared.RequiresRecovery = false;
         shared.RecoveryCurrentProcessOnly = false;
     }
@@ -3011,6 +3419,7 @@ public class SportLoggerService extends Service {
         shared.ActivityId = activityId;
         shared.IsRecording = true;
         shared.IsPaused = true;
+        shared.IsStopping = false;
         shared.RequiresRecovery = false;
         shared.RecoveryCurrentProcessOnly = false;
     }
@@ -3025,6 +3434,18 @@ public class SportLoggerService extends Service {
         shared.ActivityId = activityId;
         shared.IsRecording = true;
         shared.IsPaused = true;
+        shared.IsStopping = false;
+        shared.RequiresRecovery = true;
+        shared.RecoveryCurrentProcessOnly = !recoveryPersisted;
+    }
+
+    private static void showTerminalizing(
+            int activityId, boolean recoveryPersisted) {
+        SharedData shared = SharedData.getInstance();
+        shared.ActivityId = activityId;
+        shared.IsRecording = true;
+        shared.IsPaused = true;
+        shared.IsStopping = true;
         shared.RequiresRecovery = true;
         shared.RecoveryCurrentProcessOnly = !recoveryPersisted;
     }
@@ -3034,6 +3455,7 @@ public class SportLoggerService extends Service {
         shared.ActivityId = 0;
         shared.IsRecording = false;
         shared.IsPaused = false;
+        shared.IsStopping = false;
         shared.RequiresRecovery = true;
         shared.RecoveryCurrentProcessOnly = false;
     }
@@ -3043,6 +3465,7 @@ public class SportLoggerService extends Service {
         shared.ActivityId = 0;
         shared.IsRecording = false;
         shared.IsPaused = false;
+        shared.IsStopping = false;
         shared.RequiresRecovery = false;
         shared.RecoveryCurrentProcessOnly = false;
     }

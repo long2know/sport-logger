@@ -85,6 +85,7 @@ public class MainActivity extends FragmentActivity implements
     private boolean _recoveryRetryPending;
     private boolean _terminalReplayPending;
     private volatile boolean _terminalExportPending;
+    private volatile boolean _terminalizingPending;
     private volatile boolean _terminalRetryEnabled;
     private long _pendingOperationToken;
     private RecordingOperationResult.Operation _pendingOperation =
@@ -178,7 +179,11 @@ public class MainActivity extends FragmentActivity implements
                 Session.setBoundToService(false);
                 clearPendingOperation();
                 if (_terminalExportPending) {
-                    showTerminalExportPending(true);
+                    if (_terminalizingPending) {
+                        showTerminalizingPending(true);
+                    } else {
+                        showTerminalExportPending(true);
+                    }
                 }
                 reconcileRecordingUi();
             }
@@ -197,6 +202,7 @@ public class MainActivity extends FragmentActivity implements
                     return;
                 }
                 reconcileRecordingUi();
+                reconcileTerminalHandoff(false);
             }
         };
     }
@@ -213,10 +219,7 @@ public class MainActivity extends FragmentActivity implements
         super.onResume();
         reconcileRecordingPermissions();
         reconcileRecordingUi();
-        if (_loggingService != null
-                && !TERMINAL_EXPORT_COORDINATOR.isInFlight()) {
-            _loggingService.requestPendingTerminalCompletionReplay();
-        }
+        reconcileTerminalHandoff(false);
     }
 
     @Override
@@ -301,6 +304,7 @@ public class MainActivity extends FragmentActivity implements
             case STOP:
                 _sensorFragment.pauseTimer();
                 _sensorFragment.resetTimer();
+                _terminalizingPending = false;
                 showTerminalExportPending(false);
                 exportActivityAsync(result);
                 break;
@@ -425,11 +429,19 @@ public class MainActivity extends FragmentActivity implements
     }
 
     public void retryPendingTerminalExport() {
-        showTerminalExportPending(false);
+        if (_terminalizingPending) {
+            showTerminalizingPending(false);
+        } else {
+            showTerminalExportPending(false);
+        }
         if (_loggingService == null) {
             if (!hasRequiredRecordingPermissions()) {
                 _terminalReplayPending = false;
-                showTerminalExportPending(true);
+                if (_terminalizingPending) {
+                    showTerminalizingPending(true);
+                } else {
+                    showTerminalExportPending(true);
+                }
                 requestMissingPermissions();
                 return;
             }
@@ -439,9 +451,7 @@ public class MainActivity extends FragmentActivity implements
                 return;
             }
         }
-        if (!_loggingService.requestPendingTerminalCompletionReplay()) {
-            showTerminalExportPending(true);
-        }
+        reconcileTerminalHandoff(true);
     }
 
     private void handleOperationRequest(RecordingOperationResult result) {
@@ -449,6 +459,10 @@ public class MainActivity extends FragmentActivity implements
             _pendingOperation = result.getOperation();
             _pendingOperationToken = result.getOperationToken();
             setRecordingControlsPending(true);
+            if (result.getOperation()
+                    == RecordingOperationResult.Operation.STOP) {
+                showTerminalizingPending(false);
+            }
             return;
         }
         if (result.isNoOp()) {
@@ -492,6 +506,7 @@ public class MainActivity extends FragmentActivity implements
                 TERMINAL_EXPORT_COORDINATOR.begin(
                         terminalResult.getTerminalCompletionId());
         if (attempt == null) {
+            reconcileTerminalHandoff(false);
             return;
         }
         final int activityId = terminalResult.getActivityId();
@@ -560,24 +575,34 @@ public class MainActivity extends FragmentActivity implements
         }
         long terminalCompletionId = attempt.getOperationId();
         MainActivity activity = activeTerminalExportActivity();
-        SportLoggerService service =
-                activity == null ? null : activity._loggingService;
-        if (service != null
-                && service.requestTerminalCompletionAcknowledgment(
-                        terminalCompletionId)) {
-            return;
-        }
-        TERMINAL_EXPORT_COORDINATOR.acknowledgmentStartFailed(attempt);
-        if (service != null) {
-            service.releaseTerminalCompletion(terminalCompletionId);
-        }
         if (activity != null) {
-            activity.showTerminalExportPending(true);
+            activity.beginTerminalAcknowledgment(terminalCompletionId);
+            return;
         }
         Log.e(
                 TAG,
                 "Data Layer handoff succeeded but its durable terminal "
-                        + "acknowledgment remains pending.");
+                        + "acknowledgment is waiting for an activity reconnect.");
+    }
+
+    private void beginTerminalAcknowledgment(long operationId) {
+        if (!TERMINAL_EXPORT_COORDINATOR.acknowledgmentStarted(
+                operationId)) {
+            return;
+        }
+        SportLoggerService service = _loggingService;
+        if (service != null
+                && service.requestTerminalCompletionAcknowledgment(
+                        operationId)) {
+            showTerminalExportPending(false);
+            return;
+        }
+        TERMINAL_EXPORT_COORDINATOR.acknowledgmentStartFailed(operationId);
+        showTerminalExportPending(true);
+        Log.e(
+                TAG,
+                "Data Layer handoff succeeded but its durable terminal "
+                        + "acknowledgment could not be scheduled.");
     }
 
     private static void handleTerminalExportFailure(
@@ -609,15 +634,87 @@ public class MainActivity extends FragmentActivity implements
     public void onTerminalCompletionAcknowledged(
             long operationId, boolean acknowledged) {
         if (!TERMINAL_EXPORT_COORDINATOR.acknowledgmentFinished(
-                operationId)) {
+                operationId, acknowledged)) {
             return;
         }
         if (acknowledged) {
             _terminalExportPending = false;
+            _terminalizingPending = false;
             _terminalRetryEnabled = false;
             showStartScreenIfPossible();
         } else {
             showTerminalExportPending(true);
+        }
+    }
+
+    private void reconcileTerminalHandoff(
+            boolean retryTerminalization) {
+        SportLoggerService service = _loggingService;
+        if (service == null) {
+            return;
+        }
+
+        long acknowledgmentOperationId =
+                TERMINAL_EXPORT_COORDINATOR.acknowledgmentOperationId();
+        if (acknowledgmentOperationId > 0L) {
+            SportLoggerService.TerminalAcknowledgmentStatus status =
+                    service.getTerminalAcknowledgmentStatus(
+                            acknowledgmentOperationId);
+            if (status
+                    == SportLoggerService.TerminalAcknowledgmentStatus
+                            .COMPLETED) {
+                if (TERMINAL_EXPORT_COORDINATOR.acknowledgmentFinished(
+                        acknowledgmentOperationId, true)) {
+                    _terminalExportPending = false;
+                    _terminalizingPending = false;
+                    _terminalRetryEnabled = false;
+                    showStartScreenIfPossible();
+                }
+            } else if (status
+                    == SportLoggerService.TerminalAcknowledgmentStatus
+                            .IN_PROGRESS) {
+                showTerminalExportPending(false);
+                return;
+            } else if (status
+                    == SportLoggerService.TerminalAcknowledgmentStatus
+                            .PENDING) {
+                TERMINAL_EXPORT_COORDINATOR
+                        .acknowledgmentRetryRequired(
+                                acknowledgmentOperationId);
+                beginTerminalAcknowledgment(acknowledgmentOperationId);
+                return;
+            } else if (status
+                    == SportLoggerService.TerminalAcknowledgmentStatus
+                            .UNAVAILABLE) {
+                showTerminalExportPending(true);
+                return;
+            } else {
+                TERMINAL_EXPORT_COORDINATOR.abandonAcknowledgment(
+                        acknowledgmentOperationId);
+            }
+        }
+
+        if (TERMINAL_EXPORT_COORDINATOR.isInFlight()) {
+            return;
+        }
+
+        SportLoggerService.RecordingStatus recordingStatus =
+                service.getRecordingStatus();
+        if (recordingStatus
+                == SportLoggerService.RecordingStatus.STOPPING) {
+            showTerminalizingPending(true);
+            if (retryTerminalization) {
+                handleOperationRequest(service.retryRecovery());
+            }
+            return;
+        }
+        if (recordingStatus
+                == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+            _terminalizingPending = false;
+            showTerminalExportPending(false);
+            if (!service.requestPendingTerminalCompletionReplay()) {
+                showTerminalExportPending(true);
+            }
         }
     }
 
@@ -767,7 +864,11 @@ public class MainActivity extends FragmentActivity implements
             handleRecordingFailure(RecordingOperationResult.recovery(
                     RecordingOperationResult.Status.LISTENER_FAILED,
                     shared.ActivityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
+                    shared.IsStopping
+                            ? RecordingOperationResult.RecoveryAction
+                                    .SHOW_TERMINAL_RETRY
+                            : RecordingOperationResult.RecoveryAction
+                                    .SHOW_RECOVERY_RETRY,
                     shared.RecoveryCurrentProcessOnly
                             ? RecordingOperationResult.RecoveryRetention
                                     .CURRENT_PROCESS_ONLY
@@ -777,6 +878,7 @@ public class MainActivity extends FragmentActivity implements
 
         shared.IsRecording = false;
         shared.IsPaused = false;
+        shared.IsStopping = false;
         shared.RequiresRecovery = false;
         shared.RecoveryCurrentProcessOnly = false;
 
@@ -838,6 +940,26 @@ public class MainActivity extends FragmentActivity implements
 
     private void showTerminalExportPending(boolean retryEnabled) {
         _terminalExportPending = true;
+        _terminalizingPending = false;
+        _terminalRetryEnabled = retryEnabled;
+        Runnable render = new Runnable() {
+            @Override
+            public void run() {
+                _recordingUiState.requestStatus(
+                        RecordingUiState.Screen.TERMINAL_PENDING);
+                applyPendingRecordingRenderIfSafe();
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            render.run();
+        } else if (_activityHandler != null) {
+            _activityHandler.post(render);
+        }
+    }
+
+    private void showTerminalizingPending(boolean retryEnabled) {
+        _terminalExportPending = true;
+        _terminalizingPending = true;
         _terminalRetryEnabled = retryEnabled;
         Runnable render = new Runnable() {
             @Override
@@ -855,25 +977,37 @@ public class MainActivity extends FragmentActivity implements
     }
 
     private void renderRecordingStatus(SportLoggerService.RecordingStatus status) {
-        if (status == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+        if (status == SportLoggerService.RecordingStatus.STOPPING) {
             _terminalExportPending = true;
+            _terminalizingPending = true;
+            _terminalRetryEnabled = true;
+            _recordingUiState.requestStatus(
+                    RecordingUiState.Screen.TERMINAL_PENDING);
+        } else if (status
+                == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+            _terminalExportPending = true;
+            _terminalizingPending = false;
             _recordingUiState.requestStatus(
                     RecordingUiState.Screen.TERMINAL_PENDING);
         } else if (status
                 == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
             _terminalExportPending = false;
+            _terminalizingPending = false;
             _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.RECOVERY);
         } else if (status == SportLoggerService.RecordingStatus.PAUSED) {
             _terminalExportPending = false;
+            _terminalizingPending = false;
             _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.PAUSED);
         } else if (status == SportLoggerService.RecordingStatus.RECORDING) {
             _terminalExportPending = false;
+            _terminalizingPending = false;
             _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.RECORDING);
         } else {
             _terminalExportPending = false;
+            _terminalizingPending = false;
             _terminalRetryEnabled = false;
             _recordingUiState.requestStatus(RecordingUiState.Screen.START);
         }
@@ -891,6 +1025,7 @@ public class MainActivity extends FragmentActivity implements
             shared.ActivityId = 0;
             shared.IsRecording = false;
             shared.IsPaused = false;
+            shared.IsStopping = false;
             shared.RequiresRecovery = false;
             shared.RecoveryCurrentProcessOnly = false;
             screen = RecordingUiState.Screen.START;
@@ -899,6 +1034,7 @@ public class MainActivity extends FragmentActivity implements
             shared.ActivityId = result.getActivityId();
             shared.IsRecording = true;
             shared.IsPaused = true;
+            shared.IsStopping = false;
             shared.RequiresRecovery = false;
             shared.RecoveryCurrentProcessOnly = false;
             screen = RecordingUiState.Screen.PAUSED;
@@ -914,11 +1050,28 @@ public class MainActivity extends FragmentActivity implements
                 shared.IsPaused = false;
             }
             shared.RequiresRecovery = true;
+            shared.IsStopping = false;
             shared.RecoveryCurrentProcessOnly =
                     result.getRecoveryRetention()
                             == RecordingOperationResult.RecoveryRetention
                                     .CURRENT_PROCESS_ONLY;
             screen = RecordingUiState.Screen.RECOVERY;
+        } else if (recoveryAction
+                == RecordingOperationResult.RecoveryAction
+                        .SHOW_TERMINAL_RETRY) {
+            shared.ActivityId = result.getActivityId();
+            shared.IsRecording = result.getActivityId() > 0;
+            shared.IsPaused = result.getActivityId() > 0;
+            shared.IsStopping = result.getActivityId() > 0;
+            shared.RequiresRecovery = true;
+            shared.RecoveryCurrentProcessOnly =
+                    result.getRecoveryRetention()
+                            == RecordingOperationResult.RecoveryRetention
+                                    .CURRENT_PROCESS_ONLY;
+            _terminalExportPending = true;
+            _terminalizingPending = true;
+            _terminalRetryEnabled = true;
+            screen = RecordingUiState.Screen.TERMINAL_PENDING;
         }
 
         _recordingUiState.requestFailure(screen, result);
@@ -948,6 +1101,9 @@ public class MainActivity extends FragmentActivity implements
 
     private SportLoggerService.RecordingStatus recordingStatusFromSharedData() {
         SharedData shared = SharedData.getInstance();
+        if (_terminalizingPending || shared.IsStopping) {
+            return SportLoggerService.RecordingStatus.STOPPING;
+        }
         if (_terminalExportPending) {
             return SportLoggerService.RecordingStatus.TERMINAL_PENDING;
         }
@@ -965,7 +1121,10 @@ public class MainActivity extends FragmentActivity implements
 
     private RecordingUiState.Screen recordingScreenFromSharedData() {
         SportLoggerService.RecordingStatus status = recordingStatusFromSharedData();
-        if (status == SportLoggerService.RecordingStatus.TERMINAL_PENDING) {
+        if (status == SportLoggerService.RecordingStatus.STOPPING
+                || status
+                        == SportLoggerService.RecordingStatus
+                                .TERMINAL_PENDING) {
             return RecordingUiState.Screen.TERMINAL_PENDING;
         }
         if (status == SportLoggerService.RecordingStatus.RECOVERY_REQUIRED) {
@@ -993,8 +1152,13 @@ public class MainActivity extends FragmentActivity implements
     private void renderRecordingUiNow(
             RecordingUiState.Screen screen, RecordingOperationResult failure) {
         if (screen == RecordingUiState.Screen.TERMINAL_PENDING) {
-            _recoveryFragment.showTerminalExportPending(
-                    _terminalRetryEnabled);
+            if (_terminalizingPending) {
+                _recoveryFragment.showTerminalizing(
+                        _terminalRetryEnabled);
+            } else {
+                _recoveryFragment.showTerminalExportPending(
+                        _terminalRetryEnabled);
+            }
             _fragmentManager.beginTransaction()
                     .replace(R.id.content_frame, _recoveryFragment)
                     .commit();
@@ -1048,6 +1212,10 @@ public class MainActivity extends FragmentActivity implements
         } else if (failure.getRecoveryAction()
                 == RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY) {
             message = R.string.recording_recovery_required;
+        } else if (failure.getRecoveryAction()
+                == RecordingOperationResult.RecoveryAction
+                        .SHOW_TERMINAL_RETRY) {
+            message = R.string.recording_stop_retry_required;
         } else {
             message = R.string.recording_operation_failed;
             duration = Toast.LENGTH_SHORT;

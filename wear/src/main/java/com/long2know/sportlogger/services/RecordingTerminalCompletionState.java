@@ -103,6 +103,12 @@ final class RecordingTerminalCompletionState {
         STALE
     }
 
+    enum OperationStatus {
+        PENDING,
+        COMPLETED,
+        STALE
+    }
+
     private final Store _store;
     private Snapshot _snapshot;
     private boolean _mutationInProgress;
@@ -120,6 +126,19 @@ final class RecordingTerminalCompletionState {
     synchronized boolean protectsActivity(int activityId) {
         RecordingTerminalCompletion pending = _snapshot.getPending();
         return pending != null && pending.getActivityId() == activityId;
+    }
+
+    synchronized OperationStatus operationStatus(long operationId) {
+        if (operationId <= 0L) {
+            return OperationStatus.STALE;
+        }
+        RecordingTerminalCompletion pending = _snapshot.getPending();
+        if (pending != null && pending.getOperationId() == operationId) {
+            return OperationStatus.PENDING;
+        }
+        return operationId <= _snapshot.getLastOperationId()
+                ? OperationStatus.COMPLETED
+                : OperationStatus.STALE;
     }
 
     RecordResult recordSuccessfulStop(int activityId, long generation) {

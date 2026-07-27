@@ -101,4 +101,50 @@ public class SqlLoggerStoppedActivityTest {
         }
         assertTrue(_context.deleteDatabase(SqlLogger.DATABASE_NAME));
     }
+
+    @Test
+    public void completedActivityCannotConstructOrRunATrackPointWriter() {
+        int activityId = SqlLogger.createActivity();
+        SqlLogger preparedWriter = new SqlLogger(activityId);
+        assertEquals(
+                SqlLogger.CompletionResult.COMPLETED,
+                SqlLogger.completeActivityWithResult(activityId));
+        assertEquals(
+                SqlLogger.CompletionResult.ALREADY_COMPLETED,
+                SqlLogger.completeActivityWithResult(activityId));
+
+        assertThrows(IllegalStateException.class, preparedWriter::run);
+        preparedWriter.close();
+        assertThrows(
+                IllegalStateException.class,
+                () -> new SqlLogger(activityId));
+
+        try (SqlLogger logger = new SqlLogger()) {
+            assertTrue(logger.getTrackPointsByActivity(activityId).isEmpty());
+        }
+    }
+
+    @Test
+    public void anyExistingEndValueIsATerminalWriteFence() {
+        int activityId = SqlLogger.createActivity();
+        try (SQLiteDatabase database = _context.openOrCreateDatabase(
+                SqlLogger.DATABASE_NAME, Context.MODE_PRIVATE, null)) {
+            ContentValues values = new ContentValues();
+            values.put(SqlLogger.A_END_TIME_UTC, "invalid-but-terminal");
+            assertEquals(
+                    1,
+                    database.update(
+                            SqlLogger.ACTIVITY_TABLE_NAME,
+                            values,
+                            SqlLogger.A_ROWID + "=?",
+                            new String[]{Integer.toString(activityId)}));
+        }
+
+        assertEquals(
+                SqlLogger.ActivityState.COMPLETED,
+                SqlLogger.getActivityState(activityId));
+        assertThrows(
+                IllegalStateException.class,
+                () -> new SqlLogger(activityId));
+    }
 }

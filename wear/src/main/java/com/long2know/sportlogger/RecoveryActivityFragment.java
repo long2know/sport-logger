@@ -20,6 +20,7 @@ public class RecoveryActivityFragment extends Fragment {
     private ImageButton _discard;
     private boolean _operationPending;
     private boolean _terminalExportPending;
+    private boolean _terminalizing;
     private boolean _terminalRetryEnabled;
 
     @Override
@@ -115,6 +116,7 @@ public class RecoveryActivityFragment extends Fragment {
 
     void showRecordingRecovery() {
         _terminalExportPending = false;
+        _terminalizing = false;
         _terminalRetryEnabled = false;
         refreshStatus();
         applyOperationPending();
@@ -122,6 +124,15 @@ public class RecoveryActivityFragment extends Fragment {
 
     void showTerminalExportPending(boolean retryEnabled) {
         _terminalExportPending = true;
+        _terminalizing = false;
+        _terminalRetryEnabled = retryEnabled;
+        refreshStatus();
+        applyOperationPending();
+    }
+
+    void showTerminalizing(boolean retryEnabled) {
+        _terminalExportPending = true;
+        _terminalizing = true;
         _terminalRetryEnabled = retryEnabled;
         refreshStatus();
         applyOperationPending();
@@ -133,15 +144,25 @@ public class RecoveryActivityFragment extends Fragment {
         }
         if (_terminalExportPending) {
             _status.setText(
-                    _terminalRetryEnabled
-                            ? R.string.terminal_export_retry_required
-                            : R.string.terminal_export_in_progress);
+                    _terminalizing
+                            ? (_terminalRetryEnabled
+                                    ? R.string.recording_stop_retry_required
+                                    : R.string.recording_stop_in_progress)
+                            : (_terminalRetryEnabled
+                                    ? R.string.terminal_export_retry_required
+                                    : R.string.terminal_export_in_progress));
             if (_retry != null) {
                 _retry.setContentDescription(
-                        getString(R.string.retry_terminal_export));
+                        getString(
+                                _terminalizing
+                                        ? R.string.retry_recording_stop
+                                        : R.string.retry_terminal_export));
             }
             if (_retryLabel != null) {
-                _retryLabel.setText(R.string.retry_terminal_export);
+                _retryLabel.setText(
+                        _terminalizing
+                                ? R.string.retry_recording_stop
+                                : R.string.retry_terminal_export);
             }
         } else {
             SharedData shared = SharedData.getInstance();

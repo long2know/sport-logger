@@ -129,11 +129,11 @@ public class RecordingLifecycleContractTest {
                 stop.indexOf("RecordingTerminalTransition.finish(")
                         < stop.indexOf("_recoveryState.clearAfterStop("));
         assertTrue(
-                stop.indexOf("_terminalCompletions.recordSuccessfulStop(")
+                stop.indexOf("RecordingTerminalization.finish(")
                         < stop.indexOf(
                                 "RecordingTerminalTransition.finish("));
         int terminalRecord = stop.indexOf(
-                "_terminalCompletions.recordSuccessfulStop(");
+                "RecordingTerminalization.finish(");
         int finalOwnershipCheck = stop.lastIndexOf(
                 "if (!operationOwns(token))", terminalRecord);
         assertTrue(finalOwnershipCheck >= 0);
@@ -249,7 +249,7 @@ public class RecordingLifecycleContractTest {
                 service, "public void onDestroy()", "public void setServiceClient(");
 
         assertTrue(
-                stop.indexOf("_terminalCompletions.recordSuccessfulStop(")
+                stop.indexOf("RecordingTerminalization.finish(")
                         < stop.indexOf("_recoveryState.clearAfterStop("));
         assertTrue(service.contains(
                 "SharedPreferencesRecordingTerminalCompletionStore"));
@@ -312,11 +312,6 @@ public class RecordingLifecycleContractTest {
                 activity,
                 "private static void handleTerminalExportFailure(",
                 "public void onTerminalCompletionAcknowledged(");
-        String retry = method(
-                activity,
-                "public void retryPendingTerminalExport()",
-                "private void handleOperationRequest(");
-
         assertTrue(activity.contains("addOnCanceledListener"));
         assertTrue(activity.contains(
                 "private static final ExecutorService "
@@ -337,7 +332,7 @@ public class RecordingLifecycleContractTest {
                 "showTerminalExportPending(true)"));
         assertTrue(exportFailure.contains(
                 "releaseTerminalCompletion(terminalCompletionId)"));
-        assertTrue(retry.contains(
+        assertTrue(activity.contains(
                 "requestPendingTerminalCompletionReplay()"));
         assertTrue(acknowledgmentRequest.contains(
                 "_operations.tryExecute(serviceGeneration"));
@@ -349,6 +344,10 @@ public class RecordingLifecycleContractTest {
                 "_terminalCompletions.acknowledge("));
         assertTrue(acknowledgmentWorker.contains(
                 "onTerminalCompletionAcknowledged("));
+        assertTrue(activity.contains(
+                "getTerminalAcknowledgmentStatus("));
+        assertTrue(activity.contains(
+                "acknowledgmentRetryRequired("));
     }
 
     @Test

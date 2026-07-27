@@ -145,6 +145,32 @@ public class RecordingTerminalCompletionStateTest {
         assertNotNull(replacement.pending());
     }
 
+    @Test
+    public void durableOperationStatusReconcilesAckAcrossRecreation() {
+        FakeStore store = new FakeStore();
+        RecordingTerminalCompletionState first =
+                new RecordingTerminalCompletionState(store);
+        long operationId = first.recordSuccessfulStop(111, 19L)
+                .getCompletion()
+                .getOperationId();
+
+        assertEquals(
+                RecordingTerminalCompletionState.OperationStatus.PENDING,
+                new RecordingTerminalCompletionState(store)
+                        .operationStatus(operationId));
+        assertEquals(
+                RecordingTerminalCompletionState.AcknowledgeStatus.CLEARED,
+                first.acknowledge(operationId, true));
+        assertEquals(
+                RecordingTerminalCompletionState.OperationStatus.COMPLETED,
+                new RecordingTerminalCompletionState(store)
+                        .operationStatus(operationId));
+        assertEquals(
+                RecordingTerminalCompletionState.OperationStatus.STALE,
+                new RecordingTerminalCompletionState(store)
+                        .operationStatus(operationId + 1L));
+    }
+
     private static final class FakeStore
             implements RecordingTerminalCompletionState.Store {
         RecordingTerminalCompletionState.Snapshot snapshot =

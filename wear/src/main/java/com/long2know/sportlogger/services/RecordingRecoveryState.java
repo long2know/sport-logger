@@ -5,6 +5,7 @@ final class RecordingRecoveryState {
         IDLE,
         RECORDING,
         PAUSED,
+        STOPPING,
         RECOVERY_REQUIRED
     }
 
@@ -58,6 +59,10 @@ final class RecordingRecoveryState {
 
         boolean ownsActivity() {
             return _activityId > 0 && _phase != Phase.IDLE;
+        }
+
+        boolean isStopping() {
+            return _phase == Phase.STOPPING;
         }
     }
 
@@ -114,6 +119,9 @@ final class RecordingRecoveryState {
         if (!current.ownsActivity()) {
             return clearIdle();
         }
+        if (current.isStopping()) {
+            return update(current, current);
+        }
         if (!activityExists) {
             return clearOwnedActivity(current.getActivityId());
         }
@@ -127,6 +135,7 @@ final class RecordingRecoveryState {
         Snapshot current = snapshot();
         if (activityId <= 0
                 || generation <= 0L
+                || current.isStopping()
                 || (current.ownsActivity()
                         && (current.getActivityId() != activityId
                                 || generation <= current.getGeneration()))) {
@@ -139,6 +148,7 @@ final class RecordingRecoveryState {
     Transition recordRecording(int activityId, long generation) {
         Snapshot current = snapshot();
         if (!matches(current, activityId, generation)
+                || current.isStopping()
                 || current.getPhase() == Phase.RECORDING) {
             return Transition.rejected(current);
         }
@@ -148,7 +158,8 @@ final class RecordingRecoveryState {
 
     Transition recordPaused(int activityId, long generation) {
         Snapshot current = snapshot();
-        if (!matches(current, activityId, generation)) {
+        if (!matches(current, activityId, generation)
+                || current.isStopping()) {
             return Transition.rejected(current);
         }
         return update(current, Snapshot.owned(
@@ -157,11 +168,21 @@ final class RecordingRecoveryState {
 
     Transition requireRecovery(int activityId, long generation) {
         Snapshot current = snapshot();
-        if (!matches(current, activityId, generation)) {
+        if (!matches(current, activityId, generation)
+                || current.isStopping()) {
             return Transition.rejected(current);
         }
         return update(current, Snapshot.owned(
                 Phase.RECOVERY_REQUIRED, activityId, generation));
+    }
+
+    Transition recordStopping(int activityId, long generation) {
+        Snapshot current = snapshot();
+        if (!matches(current, activityId, generation)) {
+            return Transition.rejected(current);
+        }
+        return update(current, Snapshot.owned(
+                Phase.STOPPING, activityId, generation));
     }
 
     Transition clearAfterStop(int activityId) {
@@ -170,7 +191,8 @@ final class RecordingRecoveryState {
 
     Transition clearAfterDiscard(int activityId) {
         Snapshot current = snapshot();
-        if (!matchesActivity(current, activityId)) {
+        if (!matchesActivity(current, activityId)
+                || current.isStopping()) {
             return Transition.rejected(current);
         }
         return clear(current);
