@@ -29,6 +29,14 @@ final class RecordingWriterCoordinator {
         void onFailure(GenerationToken generation, RuntimeException exception);
     }
 
+    interface GenerationClaim {
+        boolean claim(GenerationToken generation);
+    }
+
+    interface FenceClaim {
+        boolean claim();
+    }
+
     enum StartStatus {
         STARTED,
         ALREADY_RUNNING,
@@ -128,13 +136,32 @@ final class RecordingWriterCoordinator {
     }
 
     synchronized StartStatus start(Object owner, int activityId, TaskFactory taskFactory) {
-        return start(owner, activityId, taskFactory, (generation, exception) -> { });
+        return start(
+                owner,
+                activityId,
+                taskFactory,
+                generation -> true,
+                (generation, exception) -> { });
     }
 
     synchronized StartStatus start(
             Object owner,
             int activityId,
             TaskFactory taskFactory,
+            FailureListener failureListener) {
+        return start(
+                owner,
+                activityId,
+                taskFactory,
+                generation -> true,
+                failureListener);
+    }
+
+    synchronized StartStatus start(
+            Object owner,
+            int activityId,
+            TaskFactory taskFactory,
+            GenerationClaim generationClaim,
             FailureListener failureListener) {
         if (_current != null && _current.scheduler.isTerminated()) {
             boolean failed = _current.token.failed();
@@ -161,6 +188,12 @@ final class RecordingWriterCoordinator {
         Generation generation = new Generation(token, scheduler);
         _current = generation;
         try {
+            if (!generationClaim.claim(token)) {
+                token.deactivate();
+                scheduler.shutdownNow();
+                _current = null;
+                return StartStatus.START_FAILED;
+            }
             Runnable task = taskFactory.create(token);
             scheduler.scheduleAtFixedRate(new Runnable() {
                 @Override
@@ -207,11 +240,23 @@ final class RecordingWriterCoordinator {
     }
 
     LifecycleTermination fenceOwned(Object owner, long timeoutMillis) {
-        return fence(owner, false, 0, 0L, false, timeoutMillis);
+        return fence(owner, false, 0, 0L, false, null, timeoutMillis);
     }
 
     LifecycleTermination fenceAny(long timeoutMillis) {
-        return fence(null, true, 0, 0L, false, timeoutMillis);
+        return fence(null, true, 0, 0L, false, null, timeoutMillis);
+    }
+
+    LifecycleTermination fenceAny(
+            FenceClaim fenceClaim, long timeoutMillis) {
+        return fence(
+                null,
+                true,
+                0,
+                0L,
+                false,
+                fenceClaim,
+                timeoutMillis);
     }
 
     LifecycleTermination fenceGeneration(
@@ -222,7 +267,17 @@ final class RecordingWriterCoordinator {
                 activityId,
                 generation,
                 true,
+                null,
                 timeoutMillis);
+    }
+
+    boolean requestFenceOwned(Object owner) {
+        return requestFence(owner, false, 0, 0L, false);
+    }
+
+    boolean requestFenceGeneration(int activityId, long generation) {
+        return requestFence(
+                null, false, activityId, generation, true);
     }
 
     synchronized boolean isActive(GenerationToken token) {
@@ -231,15 +286,51 @@ final class RecordingWriterCoordinator {
                 && token.isActive();
     }
 
+    private boolean requestFence(
+            Object owner,
+            boolean anyOwner,
+            int activityId,
+            long generationNumber,
+            boolean exactGeneration) {
+        synchronized (this) {
+            Generation generation = _current;
+            if (generation == null) {
+                return true;
+            }
+            if (exactGeneration
+                    && (generation.token.getActivityId() != activityId
+                    || generation.token.getGeneration()
+                            != generationNumber)) {
+                return false;
+            }
+            if (!exactGeneration
+                    && !anyOwner
+                    && !generation.token.belongsTo(owner)) {
+                return true;
+            }
+            generation.token.deactivate();
+            try {
+                generation.scheduler.shutdownNow();
+                return true;
+            } catch (RuntimeException exception) {
+                return false;
+            }
+        }
+    }
+
     private LifecycleTermination fence(
             Object owner,
             boolean anyOwner,
             int activityId,
             long generationNumber,
             boolean exactGeneration,
+            FenceClaim fenceClaim,
             long timeoutMillis) {
         Generation generation;
         synchronized (this) {
+            if (fenceClaim != null && !fenceClaim.claim()) {
+                return LifecycleTermination.TERMINATED;
+            }
             generation = _current;
             if (generation == null) {
                 return LifecycleTermination.TERMINATED;

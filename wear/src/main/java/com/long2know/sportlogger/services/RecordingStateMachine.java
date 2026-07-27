@@ -138,6 +138,20 @@ final class RecordingStateMachine {
         return _state;
     }
 
+    synchronized State getStableState() {
+        switch (_state) {
+            case STARTING:
+            case PAUSING:
+            case RESUMING:
+            case STOPPING:
+            case DISCARDING:
+            case RECOVERING:
+                return _rollbackState;
+            default:
+                return _state;
+        }
+    }
+
     synchronized void failGeneration() {
         _activeOperation = null;
         _rollbackState = _state;

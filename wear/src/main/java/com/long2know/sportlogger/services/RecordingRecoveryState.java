@@ -95,6 +95,7 @@ final class RecordingRecoveryState {
 
     private final Store _store;
     private Snapshot _snapshot;
+    private long _version;
 
     RecordingRecoveryState(Store store) {
         _store = store;
@@ -102,119 +103,150 @@ final class RecordingRecoveryState {
         _snapshot = loaded == null ? Snapshot.idle() : loaded;
     }
 
-    synchronized Snapshot snapshot() {
-        return _snapshot;
+    Snapshot snapshot() {
+        synchronized (this) {
+            return _snapshot;
+        }
     }
 
-    synchronized Transition prepareForServiceReplacement(boolean activityExists) {
-        if (!_snapshot.ownsActivity()) {
+    Transition prepareForServiceReplacement(boolean activityExists) {
+        Snapshot current = snapshot();
+        if (!current.ownsActivity()) {
             return clearIdle();
         }
         if (!activityExists) {
-            return clearOwnedActivity(_snapshot.getActivityId());
+            return clearOwnedActivity(current.getActivityId());
         }
-        return update(Snapshot.owned(
+        return update(current, Snapshot.owned(
                 Phase.RECOVERY_REQUIRED,
-                _snapshot.getActivityId(),
-                _snapshot.getGeneration()));
+                current.getActivityId(),
+                current.getGeneration()));
     }
 
-    synchronized Transition recordActivityCreated(int activityId) {
-        if (_snapshot.ownsActivity() || activityId <= 0) {
-            return Transition.rejected(_snapshot);
+    Transition recordActivityCreated(int activityId) {
+        Snapshot current = snapshot();
+        if (current.ownsActivity() || activityId <= 0) {
+            return Transition.rejected(current);
         }
-        return update(Snapshot.owned(
+        return update(current, Snapshot.owned(
                 Phase.RECOVERY_REQUIRED, activityId, 0L));
     }
 
-    synchronized Transition recordRecording(int activityId, long generation) {
-        if (!matchesActivity(activityId)
-                || generation <= _snapshot.getGeneration()) {
-            return Transition.rejected(_snapshot);
+    Transition recordRecording(int activityId, long generation) {
+        Snapshot current = snapshot();
+        if (!matchesActivity(current, activityId)
+                || generation <= current.getGeneration()) {
+            return Transition.rejected(current);
         }
-        return update(Snapshot.owned(
+        return update(current, Snapshot.owned(
                 Phase.RECORDING, activityId, generation));
     }
 
-    synchronized Transition recordPaused(int activityId, long generation) {
-        if (!matches(activityId, generation)) {
-            return Transition.rejected(_snapshot);
+    Transition recordPaused(int activityId, long generation) {
+        Snapshot current = snapshot();
+        if (!matches(current, activityId, generation)) {
+            return Transition.rejected(current);
         }
-        return update(Snapshot.owned(
+        return update(current, Snapshot.owned(
                 Phase.PAUSED, activityId, generation));
     }
 
-    synchronized Transition requireRecovery(int activityId, long generation) {
-        if (!matches(activityId, generation)) {
-            return Transition.rejected(_snapshot);
+    Transition requireRecovery(int activityId, long generation) {
+        Snapshot current = snapshot();
+        if (!matches(current, activityId, generation)) {
+            return Transition.rejected(current);
         }
-        return update(Snapshot.owned(
+        return update(current, Snapshot.owned(
                 Phase.RECOVERY_REQUIRED, activityId, generation));
     }
 
-    synchronized Transition clearAfterStop(int activityId) {
+    Transition clearAfterStop(int activityId) {
         return clearOwnedActivity(activityId);
     }
 
-    synchronized Transition clearAfterDiscard(int activityId) {
-        if (!matchesActivity(activityId)) {
-            return Transition.rejected(_snapshot);
+    Transition clearAfterDiscard(int activityId) {
+        Snapshot current = snapshot();
+        if (!matchesActivity(current, activityId)) {
+            return Transition.rejected(current);
         }
-        _snapshot = Snapshot.idle();
-        boolean persisted;
-        try {
-            persisted = _store.clear();
-        } catch (RuntimeException exception) {
-            persisted = false;
-        }
-        return Transition.accepted(_snapshot, persisted);
+        return clear(current);
     }
 
-    synchronized Transition clearAfterPreRecordingFailure() {
-        return !_snapshot.ownsActivity()
+    Transition clearAfterPreRecordingFailure() {
+        Snapshot current = snapshot();
+        return !current.ownsActivity()
                 ? clearIdle()
-                : Transition.rejected(_snapshot);
+                : Transition.rejected(current);
     }
 
-    private boolean matchesActivity(int activityId) {
-        return _snapshot.ownsActivity()
-                && _snapshot.getActivityId() == activityId;
+    private static boolean matchesActivity(Snapshot snapshot, int activityId) {
+        return snapshot.ownsActivity()
+                && snapshot.getActivityId() == activityId;
     }
 
-    private boolean matches(int activityId, long generation) {
-        return matchesActivity(activityId)
-                && _snapshot.getGeneration() == generation;
+    private static boolean matches(
+            Snapshot snapshot, int activityId, long generation) {
+        return matchesActivity(snapshot, activityId)
+                && snapshot.getGeneration() == generation;
     }
 
     private Transition clearOwnedActivity(int activityId) {
-        if (!matchesActivity(activityId)) {
-            return Transition.rejected(_snapshot);
+        Snapshot current = snapshot();
+        if (!matchesActivity(current, activityId)) {
+            return Transition.rejected(current);
         }
-        return clearIdle();
+        return clear(current);
     }
 
     private Transition clearIdle() {
+        return clear(snapshot());
+    }
+
+    private Transition clear(Snapshot expected) {
+        final long version;
+        synchronized (this) {
+            if (_snapshot != expected) {
+                return Transition.rejected(_snapshot);
+            }
+            version = ++_version;
+        }
         boolean persisted;
         try {
             persisted = _store.clear();
         } catch (RuntimeException exception) {
             persisted = false;
         }
-        if (!persisted) {
-            return Transition.accepted(_snapshot, false);
+        synchronized (this) {
+            if (_version != version || _snapshot != expected) {
+                return Transition.rejected(_snapshot);
+            }
+            if (persisted) {
+                _snapshot = Snapshot.idle();
+            }
+            return Transition.accepted(_snapshot, persisted);
         }
-        _snapshot = Snapshot.idle();
-        return Transition.accepted(_snapshot, true);
     }
 
-    private Transition update(Snapshot snapshot) {
-        _snapshot = snapshot;
+    private Transition update(Snapshot expected, Snapshot snapshot) {
+        final long version;
+        synchronized (this) {
+            if (_snapshot != expected) {
+                return Transition.rejected(_snapshot);
+            }
+            _snapshot = snapshot;
+            version = ++_version;
+        }
         boolean persisted;
         try {
             persisted = _store.save(snapshot);
         } catch (RuntimeException exception) {
             persisted = false;
         }
-        return Transition.accepted(_snapshot, persisted);
+        synchronized (this) {
+            if (_version != version || _snapshot != snapshot) {
+                return Transition.rejected(_snapshot);
+            }
+            return Transition.accepted(_snapshot, persisted);
+        }
     }
 }

@@ -8,5 +8,7 @@ public interface ISportLoggerServiceClient {
 
     void onRecordingPermissionLost();
 
+    void onRecordingOperationCompleted(RecordingOperationResult result);
+
     void onRecordingLifecycleFailure(RecordingOperationResult result);
 }

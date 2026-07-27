@@ -60,6 +60,38 @@ public class ListenerGroupTest {
         assertFalse(active.get());
     }
 
+    @Test
+    public void nonblockingShutdownRequestClosesListenerGenerationImmediately() {
+        AtomicBoolean active = new AtomicBoolean();
+        FakeListener sensors = new FakeListener(false);
+        FakeListener location = new FakeListener(false);
+        ListenerGroup group =
+                new ListenerGroup(active, sensors, location, "test");
+        assertEquals(LifecycleTermination.TERMINATED, group.start(100));
+
+        group.requestShutdown();
+
+        assertFalse(active.get());
+        assertTrue(sensors.shutdownRequested);
+        assertTrue(location.shutdownRequested);
+    }
+
+    @Test
+    public void shutdownRequestedBeforeStartupNeverReopensTheListenerGate() {
+        AtomicBoolean active = new AtomicBoolean();
+        FakeListener sensors = new FakeListener(true);
+        FakeListener location = new FakeListener(true);
+        ListenerGroup group =
+                new ListenerGroup(active, sensors, location, "test");
+
+        group.requestShutdown();
+
+        assertEquals(LifecycleTermination.TERMINATED, group.start(100));
+        assertFalse(active.get());
+        assertTrue(sensors.shutdownRequested);
+        assertTrue(location.shutdownRequested);
+    }
+
     private static final class FakeListener implements ManagedListener {
         private final boolean _acknowledgeShutdown;
         private final boolean _acknowledgeReady;

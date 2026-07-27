@@ -97,6 +97,46 @@ public class RecordingWriterCoordinatorTest {
     }
 
     @Test
+    public void nonblockingFenceRequestInvalidatesWriterBeforeAwait() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        AtomicInteger writes = new AtomicInteger();
+        Object owner = new Object();
+        coordinator.start(owner, 13, token -> writes::incrementAndGet);
+        long generation = coordinator.generationFor(owner, 13);
+
+        assertTrue(coordinator.requestFenceGeneration(13, generation));
+        schedulers.schedulers.get(0).runTask();
+
+        assertEquals(0, writes.get());
+        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
+    }
+
+    @Test
+    public void staleOperationCannotPublishOrScheduleANewWriterGeneration() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object owner = new Object();
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                coordinator.start(
+                        owner,
+                        17,
+                        token -> () -> { },
+                        token -> false,
+                        (token, exception) -> { }));
+
+        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
+        assertEquals(null, schedulers.schedulers.get(0).task);
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(owner, 18, token -> () -> { }));
+    }
+
+    @Test
     public void staleOwnerCannotFenceAReplacementGeneration() {
         FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
         RecordingWriterCoordinator coordinator =
@@ -117,6 +157,22 @@ public class RecordingWriterCoordinatorTest {
         assertEquals(
                 LifecycleTermination.TERMINATED,
                 coordinator.fenceOwned(replacementOwner, 50));
+    }
+
+    @Test
+    public void staleOperationCannotFenceWhateverWriterAReplacementOwns() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object replacementOwner = new Object();
+        coordinator.start(replacementOwner, 3, token -> () -> { });
+
+        assertEquals(
+                LifecycleTermination.TERMINATED,
+                coordinator.fenceAny(() -> false, 50));
+
+        assertEquals(0, schedulers.schedulers.get(0).shutdownCalls);
+        assertTrue(coordinator.generationFor(replacementOwner, 3) > 0L);
     }
 
     @Test
@@ -171,6 +227,55 @@ public class RecordingWriterCoordinatorTest {
         assertEquals(
                 LifecycleTermination.TERMINATED_WITH_FAILURE,
                 coordinator.fenceOwned(owner, 50));
+    }
+
+    @Test
+    public void writerFailureReleasedDuringServiceDestroyCannotSubmitLateCleanup() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        RecordingOperationDispatcher dispatcher =
+                new RecordingOperationDispatcher(
+                        new RecordingOperationDispatcher.Executor() {
+                            boolean shutdown;
+
+                            @Override
+                            public void execute(Runnable task) {
+                                if (shutdown) {
+                                    throw new java.util.concurrent
+                                            .RejectedExecutionException();
+                                }
+                                task.run();
+                            }
+
+                            @Override
+                            public void shutdownNow() {
+                                shutdown = true;
+                            }
+                        });
+        long serviceGeneration = dispatcher.getServiceGeneration();
+        AtomicReference<RecordingOperationDispatcher.DispatchStatus> dispatch =
+                new AtomicReference<>();
+        AtomicInteger staleUiNotifications = new AtomicInteger();
+
+        coordinator.start(
+                new Object(),
+                19,
+                token -> () -> {
+                    throw new RuntimeException("write failed during destroy");
+                },
+                (token, exception) -> dispatch.set(
+                        dispatcher.tryExecute(
+                                serviceGeneration,
+                                staleUiNotifications::incrementAndGet)));
+
+        dispatcher.close();
+        schedulers.schedulers.get(0).runTask();
+
+        assertEquals(
+                RecordingOperationDispatcher.DispatchStatus.STALE,
+                dispatch.get());
+        assertEquals(0, staleUiNotifications.get());
     }
 
     @Test

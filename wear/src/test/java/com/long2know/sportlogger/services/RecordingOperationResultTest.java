@@ -30,4 +30,17 @@ public class RecordingOperationResultTest {
                 RecordingOperationResult.RecoveryRetention.CURRENT_PROCESS_ONLY,
                 result.getRecoveryRetention());
     }
+
+    @Test
+    public void acceptedAsyncRequestCarriesOperationAndToken() {
+        RecordingOperationResult result = RecordingOperationResult.accepted(
+                RecordingOperationResult.Operation.STOP, 19L, 24);
+
+        assertEquals(RecordingOperationResult.Status.ACCEPTED, result.getStatus());
+        assertEquals(
+                RecordingOperationResult.Operation.STOP,
+                result.getOperation());
+        assertEquals(19L, result.getOperationToken());
+        assertEquals(24, result.getActivityId());
+    }
 }

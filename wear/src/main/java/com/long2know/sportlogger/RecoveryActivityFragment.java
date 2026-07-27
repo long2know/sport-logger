@@ -13,6 +13,8 @@ import com.long2know.utilities.models.SharedData;
 
 public class RecoveryActivityFragment extends Fragment {
     private TextView _status;
+    private ImageButton _retry;
+    private boolean _operationPending;
 
     @Override
     public View onCreateView(
@@ -21,9 +23,9 @@ public class RecoveryActivityFragment extends Fragment {
                 R.layout.fragment_recovery_activity, container, false);
         _status = rootView.findViewById(R.id.recording_recovery_status);
         refreshStatus();
-        ImageButton retry = rootView.findViewById(
+        _retry = rootView.findViewById(
                 R.id.btn_retry_recording_recovery);
-        retry.setOnClickListener(new View.OnClickListener() {
+        _retry.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 MainActivity activity = (MainActivity) getActivity();
@@ -32,13 +34,27 @@ public class RecoveryActivityFragment extends Fragment {
                 }
             }
         });
+        applyOperationPending();
         return rootView;
     }
 
     @Override
     public void onDestroyView() {
         _status = null;
+        _retry = null;
         super.onDestroyView();
+    }
+
+    void setOperationPending(boolean operationPending) {
+        _operationPending = operationPending;
+        applyOperationPending();
+    }
+
+    private void applyOperationPending() {
+        if (_retry != null) {
+            _retry.setEnabled(!_operationPending);
+            _retry.setAlpha(_operationPending ? 0.45F : 1.0F);
+        }
     }
 
     void refreshStatus() {

@@ -20,6 +20,7 @@ public class EndActivityFragment extends Fragment {
     private ImageButton _resume;
     private ImageButton _stop;
     private ImageButton _discard;
+    private boolean _operationPending;
 
     public EndActivityFragment() {
         // Empty constructor required for fragment subclasses
@@ -33,7 +34,16 @@ public class EndActivityFragment extends Fragment {
         _stop = rootView.findViewById(R.id.btn_end_activity);
         _discard = rootView.findViewById(R.id.btn_discard_activity);
         attachEventHandlers();
+        applyOperationPending();
         return rootView;
+    }
+
+    @Override
+    public void onDestroyView() {
+        _resume = null;
+        _stop = null;
+        _discard = null;
+        super.onDestroyView();
     }
 
     private void attachEventHandlers() {
@@ -57,6 +67,24 @@ public class EndActivityFragment extends Fragment {
                 ((MainActivity) getActivity()).discardActivity();
             }
         });
+    }
+
+    void setOperationPending(boolean operationPending) {
+        _operationPending = operationPending;
+        applyOperationPending();
+    }
+
+    private void applyOperationPending() {
+        setPending(_resume);
+        setPending(_stop);
+        setPending(_discard);
+    }
+
+    private void setPending(ImageButton button) {
+        if (button != null) {
+            button.setEnabled(!_operationPending);
+            button.setAlpha(_operationPending ? 0.45F : 1.0F);
+        }
     }
 
     public void onEnterAmbientInFragment(Bundle ambientDetails) {

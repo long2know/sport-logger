@@ -46,6 +46,9 @@ import com.long2know.utilities.models.SportActivity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class MainActivity extends FragmentActivity implements
         AmbientModeSupport.AmbientCallbackProvider,
         MenuItem.OnMenuItemClickListener,
@@ -71,6 +74,11 @@ public class MainActivity extends FragmentActivity implements
     private boolean _permissionRequestInFlight;
     private boolean _permissionLossMessagePending;
     private boolean _recoveryRetryPending;
+    private long _pendingOperationToken;
+    private RecordingOperationResult.Operation _pendingOperation =
+            RecordingOperationResult.Operation.NONE;
+    private final ExecutorService _exportExecutor =
+            Executors.newSingleThreadExecutor();
     private final RecordingUiState _recordingUiState = new RecordingUiState();
 
     @Override
@@ -155,11 +163,13 @@ public class MainActivity extends FragmentActivity implements
             public void onServiceDisconnected(ComponentName name)            {
                 _loggingService = null;
                 Session.setBoundToService(false);
+                clearPendingOperation();
                 reconcileRecordingUi();
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
                 _loggingService = ((SportLoggerService.LocalBinder) service).getService();
                 _loggingService.setServiceClient(MainActivity.this);
+                syncPendingOperationFromService();
                 if (_recoveryRetryPending) {
                     _recoveryRetryPending = false;
                     retryRecordingRecovery();
@@ -204,6 +214,7 @@ public class MainActivity extends FragmentActivity implements
         if (Config.activityContext == this) {
             Config.activityContext = null;
         }
+        _exportExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -213,6 +224,7 @@ public class MainActivity extends FragmentActivity implements
 
     @Override
     public void onRecordingPermissionLost() {
+        clearPendingOperation();
         boolean canPresentPermissionUi = canPresentPermissionUi();
         _permissionLossMessagePending = !canPresentPermissionUi;
         handleMissingRecordingPermissions(canPresentPermissionUi);
@@ -222,7 +234,78 @@ public class MainActivity extends FragmentActivity implements
     }
 
     @Override
+    public void onRecordingOperationCompleted(RecordingOperationResult result) {
+        if (_pendingOperationToken != 0L
+                && result.getOperationToken() != 0L
+                && result.getOperationToken() != _pendingOperationToken) {
+            Log.w(
+                    TAG,
+                    "Ignored stale operation completion "
+                            + result.getOperation()
+                            + "/"
+                            + result.getOperationToken());
+            return;
+        }
+        clearPendingOperation();
+        if (!result.isSuccess()) {
+            if (result.isNoOp()) {
+                reconcileRecordingUi();
+            } else {
+                handleRecordingFailure(result);
+            }
+            return;
+        }
+
+        switch (result.getOperation()) {
+            case START:
+                _sensorFragment.startTImer();
+                showRecordingScreenIfPossible();
+                break;
+            case PAUSE:
+                _sensorFragment.pauseTimer();
+                showPausedScreenIfPossible();
+                break;
+            case RESUME:
+                _sensorFragment.startTImer();
+                showRecordingScreenIfPossible();
+                break;
+            case STOP:
+                _sensorFragment.pauseTimer();
+                _sensorFragment.resetTimer();
+                exportActivityAsync(result.getActivityId());
+                showStartScreenIfPossible();
+                break;
+            case DISCARD:
+                _sensorFragment.pauseTimer();
+                _sensorFragment.resetTimer();
+                showStartScreenIfPossible();
+                break;
+            case RECOVER:
+                renderRecordingStatus(_loggingService == null
+                        ? recordingStatusFromSharedData()
+                        : _loggingService.getRecordingStatus());
+                Toast.makeText(
+                        this,
+                        R.string.recording_recovery_ready,
+                        Toast.LENGTH_SHORT)
+                        .show();
+                break;
+            case STARTUP:
+                if (_recoveryRetryPending) {
+                    _recoveryRetryPending = false;
+                    retryRecordingRecovery();
+                    break;
+                }
+                reconcileRecordingUi();
+                break;
+            default:
+                reconcileRecordingUi();
+        }
+    }
+
+    @Override
     public void onRecordingLifecycleFailure(RecordingOperationResult result) {
+        clearPendingOperation();
         handleRecordingFailure(result);
         if (result.getRecoveryAction()
                 == RecordingOperationResult.RecoveryAction.RETURN_TO_START) {
@@ -268,103 +351,35 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        RecordingOperationResult result = _loggingService.startNewActivity();
-        if (!result.isSuccess() && !result.isNoOp()) {
-            handleRecordingFailure(result);
-            return;
-        }
-        if (result.isNoOp()) {
-            return;
-        }
-        _sensorFragment.startTImer();
-        showRecordingScreenIfPossible();
+        handleOperationRequest(_loggingService.startNewActivity());
     }
 
     public void stopActivity() {
         if (!ensureLoggingService()) {
             return;
         }
-        RecordingOperationResult result = _loggingService.stopActivity();
-        if (!result.isSuccess()) {
-            if (!result.isNoOp()) {
-                handleRecordingFailure(result);
-            }
-            return;
-        }
-        _sensorFragment.pauseTimer();
-        _sensorFragment.resetTimer();
-
-        // Send the activity to the phone
-        SqlLogger sqlLogger = new SqlLogger();
-        int activityId = result.getActivityId();
-        SportActivity activity = sqlLogger.getSportActivity(activityId);
-        activity.SportTrackPoints = sqlLogger.getTrackPointsByActivity(activityId);
-
-        try {
-            // Transmit the activity to the phone
-            // TODO: mark the transmission as complete
-            byte[] bytes = SportActivity.serialize(activity);
-            Asset asset = Asset.createFromBytes(bytes);
-            PutDataMapRequest dataMap = PutDataMapRequest.create(getString(R.string.wear_path));
-            dataMap.getDataMap().putAsset("sportActivity", asset);
-            PutDataRequest request = dataMap.asPutDataRequest();
-            Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
-
-//            PutDataRequest request = PutDataRequest.create(getString(R.string.wear_path));
-//            request.putAsset("sportActivity", asset);
-//            Task<DataItem> putTask = Wearable.getDataClient(this).putDataItem(request);
-        }
-        catch (Exception e) {
-            Log.e(TAG,"Could not serialize activity");
-        }
-
-        showStartScreenIfPossible();
+        handleOperationRequest(_loggingService.stopActivity());
     }
 
     public void pauseActivity() {
         if (!ensureLoggingService()) {
             return;
         }
-        RecordingOperationResult result = _loggingService.pauseActivity();
-        if (!result.isSuccess()) {
-            if (!result.isNoOp()) {
-                handleRecordingFailure(result);
-            }
-            return;
-        }
-        _sensorFragment.pauseTimer();
-        showPausedScreenIfPossible();
+        handleOperationRequest(_loggingService.pauseActivity());
     }
 
     public void resumeActivity() {
         if (!ensureLoggingService()) {
             return;
         }
-        RecordingOperationResult result = _loggingService.resumeActivity();
-        if (!result.isSuccess()) {
-            if (!result.isNoOp()) {
-                handleRecordingFailure(result);
-            }
-            return;
-        }
-        _sensorFragment.startTImer();
-        showRecordingScreenIfPossible();
+        handleOperationRequest(_loggingService.resumeActivity());
     }
 
     public void discardActivity() {
         if (!ensureLoggingService()) {
             return;
         }
-        RecordingOperationResult result = _loggingService.discardActivity();
-        if (!result.isSuccess()) {
-            if (!result.isNoOp()) {
-                handleRecordingFailure(result);
-            }
-            return;
-        }
-        _sensorFragment.pauseTimer();
-        _sensorFragment.resetTimer();
-        showStartScreenIfPossible();
+        handleOperationRequest(_loggingService.discardActivity());
     }
 
     public void retryRecordingRecovery() {
@@ -372,18 +387,99 @@ public class MainActivity extends FragmentActivity implements
             _recoveryRetryPending = true;
             return;
         }
-        _recoveryRetryPending = false;
         RecordingOperationResult result = _loggingService.retryRecovery();
-        if (!result.isSuccess() && !result.isNoOp()) {
-            handleRecordingFailure(result);
+        _recoveryRetryPending =
+                result.isPending()
+                        && result.getOperation()
+                                == RecordingOperationResult.Operation.STARTUP;
+        handleOperationRequest(result);
+    }
+
+    private void handleOperationRequest(RecordingOperationResult result) {
+        if (result.isAccepted() || result.isPending()) {
+            _pendingOperation = result.getOperation();
+            _pendingOperationToken = result.getOperationToken();
+            setRecordingControlsPending(true);
             return;
         }
-        renderRecordingStatus(_loggingService.getRecordingStatus());
-        Toast.makeText(
-                this,
-                R.string.recording_recovery_ready,
-                Toast.LENGTH_SHORT)
-                .show();
+        if (result.isNoOp()) {
+            reconcileRecordingUi();
+            return;
+        }
+        handleRecordingFailure(result);
+    }
+
+    private void clearPendingOperation() {
+        _pendingOperation = RecordingOperationResult.Operation.NONE;
+        _pendingOperationToken = 0L;
+        setRecordingControlsPending(false);
+    }
+
+    private void setRecordingControlsPending(boolean pending) {
+        if (_startFragment != null) {
+            _startFragment.setOperationPending(pending);
+        }
+        if (_endFragment != null) {
+            _endFragment.setOperationPending(pending);
+        }
+        if (_recoveryFragment != null) {
+            _recoveryFragment.setOperationPending(pending);
+        }
+        if (_wearableActionDrawer != null) {
+            _wearableActionDrawer.setIsLocked(
+                    pending
+                            || recordingStatusFromSharedData()
+                                    != SportLoggerService.RecordingStatus
+                                            .RECORDING);
+        }
+    }
+
+    private void exportActivityAsync(final int activityId) {
+        try {
+            _exportExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        SqlLogger sqlLogger = new SqlLogger();
+                        SportActivity activity =
+                                sqlLogger.getSportActivity(activityId);
+                        activity.SportTrackPoints =
+                                sqlLogger.getTrackPointsByActivity(activityId);
+                        byte[] bytes = SportActivity.serialize(activity);
+                        Asset asset = Asset.createFromBytes(bytes);
+                        PutDataMapRequest dataMap =
+                                PutDataMapRequest.create(
+                                        getString(R.string.wear_path));
+                        dataMap.getDataMap().putAsset("sportActivity", asset);
+                        PutDataRequest request = dataMap.asPutDataRequest();
+                        Task<DataItem> putTask =
+                                Wearable.getDataClient(MainActivity.this)
+                                        .putDataItem(request);
+                        putTask.addOnFailureListener(exception ->
+                                Log.e(
+                                        TAG,
+                                        "Could not transmit retained activity "
+                                                + activityId
+                                                + ".",
+                                        exception));
+                    } catch (Exception exception) {
+                        Log.e(
+                                TAG,
+                                "Could not export retained activity "
+                                        + activityId
+                                        + ".",
+                                exception);
+                    }
+                }
+            });
+        } catch (RuntimeException exception) {
+            Log.e(
+                    TAG,
+                    "Activity export was not scheduled; database data remains retained for "
+                            + activityId
+                            + ".",
+                    exception);
+        }
     }
 
     @Override
@@ -650,10 +746,24 @@ public class MainActivity extends FragmentActivity implements
     }
 
     private void reconcileRecordingUi() {
+        syncPendingOperationFromService();
         renderRecordingStatus(
                 _loggingService == null
                         ? recordingStatusFromSharedData()
                         : _loggingService.getRecordingStatus());
+    }
+
+    private void syncPendingOperationFromService() {
+        if (_loggingService == null) {
+            return;
+        }
+        RecordingOperationResult pending =
+                _loggingService.getPendingOperation();
+        if (pending != null) {
+            _pendingOperation = pending.getOperation();
+            _pendingOperationToken = pending.getOperationToken();
+            setRecordingControlsPending(true);
+        }
     }
 
     private SportLoggerService.RecordingStatus recordingStatusFromSharedData() {
@@ -701,21 +811,27 @@ public class MainActivity extends FragmentActivity implements
                     .replace(R.id.content_frame, _recoveryFragment)
                     .commit();
             _recoveryFragment.refreshStatus();
+            _wearableActionDrawer.setIsLocked(true);
             _wearableActionDrawer.getController().closeDrawer();
         } else if (screen == RecordingUiState.Screen.PAUSED) {
             _fragmentManager.beginTransaction()
                     .replace(R.id.content_frame, _endFragment)
                     .commit();
+            _wearableActionDrawer.setIsLocked(true);
             _wearableActionDrawer.getController().closeDrawer();
         } else if (screen == RecordingUiState.Screen.RECORDING) {
             _fragmentManager.beginTransaction()
                     .replace(R.id.content_frame, _sensorFragment)
                     .commit();
+            _wearableActionDrawer.setIsLocked(
+                    _pendingOperation
+                            != RecordingOperationResult.Operation.NONE);
             _wearableActionDrawer.getController().peekDrawer();
         } else {
             _fragmentManager.beginTransaction()
                     .replace(R.id.content_frame, _startFragment)
                     .commit();
+            _wearableActionDrawer.setIsLocked(true);
             _wearableActionDrawer.getController().closeDrawer();
         }
 

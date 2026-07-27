@@ -95,7 +95,9 @@ final class GpsListener implements ManagedListener {
 
     @Override
     public void requestShutdown() {
-        _ownerActive.set(false);
+        synchronized (_ownerActive) {
+            _ownerActive.set(false);
+        }
         Handler handler;
         synchronized (_lifecycleLock) {
             _shutdownRequested = true;
@@ -168,8 +170,12 @@ final class GpsListener implements ManagedListener {
 
     private void notifyPermissionFailure() {
         stopListeners();
-        if (_ownerActive.compareAndSet(true, false)
-                && _permissionFailureCallback != null) {
+        boolean notify;
+        synchronized (_ownerActive) {
+            notify = _ownerActive.get();
+            _ownerActive.set(false);
+        }
+        if (notify && _permissionFailureCallback != null) {
             _permissionFailureCallback.run();
         }
     }
@@ -183,9 +189,6 @@ final class GpsListener implements ManagedListener {
             }
         }
         _locationListener = null;
-        if (!_ownerActive.get()) {
-            SharedData.getInstance().setLocation(new LocationData());
-        }
     }
 
     static synchronized String getUniqueId(Context context) {
@@ -209,26 +212,24 @@ final class GpsListener implements ManagedListener {
 
             @Override
             public void onLocationChanged(Location location) {
-                if (!_ownerActive.get()
-                        || _shutdownRequested
-                        || location == null
-                        || !location.hasAccuracy()
-                        || location.getAccuracy() > MIN_ACCURACY_METERS) {
-                    return;
-                }
+                synchronized (_ownerActive) {
+                    if (!_ownerActive.get()
+                            || _shutdownRequested
+                            || location == null
+                            || !location.hasAccuracy()
+                            || location.getAccuracy() > MIN_ACCURACY_METERS) {
+                        return;
+                    }
 
-                double distance = calculateDistance(_lastLocation, location);
-                _totalDistance += distance;
-                LocationData data =
-                        new LocationData(location, _totalDistance, distance);
-
-                if (!_ownerActive.get()) {
-                    return;
+                    double distance = calculateDistance(_lastLocation, location);
+                    _totalDistance += distance;
+                    LocationData data =
+                            new LocationData(location, _totalDistance, distance);
+                    SharedData.getInstance().setLocation(data);
+                    Message message = _uiHandler.obtainMessage(0, 1, 1, data);
+                    message.sendToTarget();
+                    _lastLocation = location;
                 }
-                SharedData.getInstance().setLocation(data);
-                Message message = _uiHandler.obtainMessage(0, 1, 1, data);
-                message.sendToTarget();
-                _lastLocation = location;
             }
 
             @Override

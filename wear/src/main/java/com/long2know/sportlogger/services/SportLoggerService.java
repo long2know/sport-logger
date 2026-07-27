@@ -12,7 +12,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
-import android.widget.Toast;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
@@ -27,6 +26,7 @@ import com.long2know.utilities.models.SharedData;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SportLoggerService extends Service {
     public enum RecordingStatus {
@@ -47,24 +47,44 @@ public class SportLoggerService extends Service {
     private static final OwnedListenerRegistry<ListenerGroup> LISTENERS =
             new OwnedListenerRegistry<>();
 
+    private static final class WriterStart {
+        final RecordingWriterCoordinator.StartStatus status;
+        final RecordingWriterCoordinator.GenerationToken generation;
+
+        WriterStart(
+                RecordingWriterCoordinator.StartStatus status,
+                RecordingWriterCoordinator.GenerationToken generation) {
+            this.status = status;
+            this.generation = generation;
+        }
+    }
+
     private final IBinder _binder = new LocalBinder();
     private final Handler _mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService _lifecycleExecutor =
+            Executors.newSingleThreadExecutor();
+    private final RecordingOperationDispatcher _operations =
+            new RecordingOperationDispatcher(_lifecycleExecutor);
+    private final ExecutorService _destroyExecutor =
             Executors.newSingleThreadExecutor();
     private final RecordingStateMachine _stateMachine = new RecordingStateMachine();
     private final StopWatch _stopWatch = new StopWatch();
     private final AtomicBoolean _listenerEventsActive = new AtomicBoolean(false);
 
     private NotificationManager _notificationManager;
-    private Handler _uiForwardingHandler;
     private ListenerGroup _listenerGroup;
-    private volatile ISportLoggerServiceClient _serviceClient;
-    private volatile RecordingOperationResult _pendingLifecycleFailure;
+    private ListenerGroup _startingListenerGroup;
+    private ISportLoggerServiceClient _serviceClient;
+    private RecordingOperationResult _pendingLifecycleFailure;
+    private RecordingOperationResult _pendingOperationCompletion;
     private volatile boolean _permissionLossHandled;
-    private volatile boolean _listenersReady;
-    private volatile boolean _recoveryCleanupInProgress;
-    private volatile int _activityId;
-    private volatile long _writerGeneration;
+    private boolean _listenersReady;
+    private boolean _startupReady;
+    private volatile boolean _closing;
+    private int _activityId;
+    private long _writerGeneration;
+    private long _nextListenerGeneration;
+    private long _listenerGeneration;
     private RecordingRecoveryState _recoveryState;
 
     @Override
@@ -73,69 +93,33 @@ public class SportLoggerService extends Service {
         Config.context = getApplicationContext();
         _recoveryState = new RecordingRecoveryState(
                 new SharedPreferencesRecordingRecoveryStore(this));
-        restoreRetainedRecording();
-        _uiForwardingHandler = new Handler(Looper.getMainLooper()) {
-            @Override
-            public void handleMessage(Message message) {
-                if (!_listenerEventsActive.get()) {
-                    return;
-                }
-                Handler activityHandler = Config.activityHandler;
-                if (activityHandler != null) {
-                    Message forwarded = activityHandler.obtainMessage(
-                            message.what,
-                            message.arg1,
-                            message.arg2,
-                            message.obj);
-                    forwarded.sendToTarget();
-                }
-            }
-        };
+        initializeRetainedMirror();
 
         _notificationManager =
                 (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            handleRecordingPermissionLoss();
+            handleRecordingPermissionLoss(_operations.getServiceGeneration());
             return;
         }
 
         try {
             showNotification();
         } catch (SecurityException exception) {
-            Log.e(TAG, "Recording permissions were revoked before foreground startup.", exception);
-            handleRecordingPermissionLoss();
-            return;
-        }
-
-        if (_pendingLifecycleFailure != null
-                && _pendingLifecycleFailure.getRecoveryRetention()
-                == RecordingOperationResult.RecoveryRetention
-                        .CURRENT_PROCESS_ONLY) {
-            return;
-        }
-
-        LifecycleTermination listenerStartup = replaceOwnedListeners();
-        if (!listenerStartup.succeeded()) {
             Log.e(
                     TAG,
-                    "Could not replace the previous listener generation: "
-                            + listenerStartup);
-            handleListenerLifecycleFailure(listenerStartup);
+                    "Recording permissions were revoked before foreground startup.",
+                    exception);
+            handleRecordingPermissionLoss(_operations.getServiceGeneration());
             return;
         }
-        if (_recoveryState.snapshot().ownsActivity()
-                && _pendingLifecycleFailure == null) {
-            RecordingOperationResult recovery = retryRecovery();
-            if (!recovery.isSuccess() && !recovery.isNoOp()) {
-                postLifecycleFailure(recovery);
-            }
-        }
+
+        scheduleStartup();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            handleRecordingPermissionLoss();
+            handleRecordingPermissionLoss(_operations.getServiceGeneration());
             return START_NOT_STICKY;
         }
         return START_STICKY;
@@ -148,58 +132,91 @@ public class SportLoggerService extends Service {
 
     @Override
     public void onDestroy() {
-        _serviceClient = null;
-        _permissionLossHandled = true;
-        _listenerEventsActive.set(false);
-        _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
-        RecordingRecoveryState.Snapshot recovery =
-                _recoveryState == null
-                        ? RecordingRecoveryState.Snapshot.idle()
-                        : _recoveryState.snapshot();
-        LifecycleTermination writerTermination = recovery.ownsActivity()
-                ? WRITERS.fenceGeneration(
-                        recovery.getActivityId(),
-                        recovery.getGeneration(),
-                        WRITER_FENCE_TIMEOUT_MILLIS)
-                : WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-        LifecycleTermination listenerTermination = releaseOwnedListeners();
-        _stopWatch.pauseTimer();
-        if (recovery.ownsActivity()) {
-            if (writerTermination.succeeded() && listenerTermination.succeeded()) {
-                RecordingRecoveryState.Transition pausedTransition =
-                        _recoveryState.recordPaused(
-                                recovery.getActivityId(),
-                                recovery.getGeneration());
-                if (!pausedTransition.isPersisted()) {
-                    _recoveryState.requireRecovery(
-                            recovery.getActivityId(), recovery.getGeneration());
-                }
-            } else {
-                _recoveryState.requireRecovery(
-                        recovery.getActivityId(), recovery.getGeneration());
-            }
-        } else if (writerTermination.succeeded()
-                && listenerTermination.succeeded()) {
-            _stopWatch.resetTimer();
+        final RecordingRecoveryState.Snapshot retained;
+        final ListenerGroup listenerGroup;
+        final ListenerGroup startingListenerGroup;
+        final int writerActivityId;
+        final long writerGeneration;
+        final boolean recoveryCurrentProcessOnly;
+        synchronized (this) {
+            _closing = true;
+            _serviceClient = null;
+            _pendingLifecycleFailure = null;
+            _pendingOperationCompletion = null;
+            _permissionLossHandled = true;
+            _listenerEventsActive.set(false);
+            _listenersReady = false;
+            _listenerGeneration = ++_nextListenerGeneration;
+            _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
+            retained = _recoveryState == null
+                    ? RecordingRecoveryState.Snapshot.idle()
+                    : _recoveryState.snapshot();
+            writerActivityId = _activityId > 0
+                    ? _activityId
+                    : retained.getActivityId();
+            writerGeneration = _writerGeneration > 0L
+                    ? _writerGeneration
+                    : retained.getGeneration();
+            recoveryCurrentProcessOnly =
+                    SharedData.getInstance().RecoveryCurrentProcessOnly;
+            listenerGroup = _listenerGroup;
+            startingListenerGroup = _startingListenerGroup;
+            _listenerGroup = null;
+            _startingListenerGroup = null;
         }
-        if (!writerTermination.succeeded() || !listenerTermination.succeeded()) {
+        _stopWatch.pauseTimer();
+        if (listenerGroup != null) {
+            listenerGroup.requestShutdown();
+        }
+        if (startingListenerGroup != null
+                && startingListenerGroup != listenerGroup) {
+            startingListenerGroup.requestShutdown();
+        }
+        boolean writerCancellationRequested =
+                writerActivityId > 0
+                        ? WRITERS.requestFenceGeneration(
+                                writerActivityId, writerGeneration)
+                        : WRITERS.requestFenceOwned(this);
+        if (!writerCancellationRequested) {
             Log.e(
                     TAG,
-                    "Service destroyed before bounded lifecycle termination: writer="
-                            + writerTermination
-                            + ", listeners="
-                            + listenerTermination);
+                    "Destroyed service could not invalidate its exact writer immediately; "
+                            + "durable recovery remains retained.");
         }
-        _lifecycleExecutor.shutdownNow();
+
+        boolean executorClosed = _operations.close();
+        if (!executorClosed) {
+            Log.e(TAG, "Lifecycle executor rejected shutdown after generation invalidation.");
+        }
+        if (recoveryCurrentProcessOnly) {
+            Log.e(
+                    TAG,
+                    "Service was destroyed with current-process-only recovery metadata. "
+                            + "Database rows remain retained, but process/service replacement "
+                            + "cannot be promised.");
+        }
+        scheduleDestroyCleanup(
+                writerActivityId,
+                writerGeneration,
+                listenerGroup,
+                startingListenerGroup);
         super.onDestroy();
     }
 
-    public synchronized void setServiceClient(ISportLoggerServiceClient client) {
-        _serviceClient = client;
-        if (client != null && _pendingLifecycleFailure != null) {
-            _mainHandler.post(new Runnable() {
+    public void setServiceClient(ISportLoggerServiceClient client) {
+        final long serviceGeneration;
+        synchronized (this) {
+            if (_closing) {
+                return;
+            }
+            _serviceClient = client;
+            serviceGeneration = _operations.getServiceGeneration();
+        }
+        if (client != null) {
+            postMainForGeneration(serviceGeneration, new Runnable() {
                 @Override
                 public void run() {
+                    deliverPendingOperationCompletion();
                     deliverPendingLifecycleFailure();
                 }
             });
@@ -213,26 +230,59 @@ public class SportLoggerService extends Service {
     }
 
     public void recordingPermissionsRevoked() {
-        handleRecordingPermissionLoss();
+        handleRecordingPermissionLoss(_operations.getServiceGeneration());
     }
 
     public synchronized RecordingStatus getRecordingStatus() {
-        switch (_stateMachine.getState()) {
+        RecordingOperationDispatcher.Token active = _operations.getActive();
+        if (active != null) {
+            RecordingStatus pendingStatus = pendingStatus(
+                    active.getOperation(), active.getActivityId());
+            if (pendingStatus != null) {
+                return pendingStatus;
+            }
+        } else if (_pendingOperationCompletion != null) {
+            RecordingStatus pendingStatus = pendingStatus(
+                    _pendingOperationCompletion.getOperation(),
+                    _pendingOperationCompletion.getActivityId());
+            if (pendingStatus != null) {
+                return pendingStatus;
+            }
+        }
+        switch (_stateMachine.getStableState()) {
             case RECORDING:
-            case STARTING:
-            case RESUMING:
                 return RecordingStatus.RECORDING;
             case PAUSED:
-            case PAUSING:
-            case STOPPING:
-            case DISCARDING:
                 return RecordingStatus.PAUSED;
-            case RECOVERING:
             case RECOVERY_REQUIRED:
                 return RecordingStatus.RECOVERY_REQUIRED;
+            case SHUTTING_DOWN:
+                return _activityId > 0
+                        ? RecordingStatus.RECOVERY_REQUIRED
+                        : RecordingStatus.IDLE;
             default:
                 return RecordingStatus.IDLE;
         }
+    }
+
+    public synchronized RecordingOperationResult getPendingOperation() {
+        RecordingOperationDispatcher.Token active = _operations.getActive();
+        if (active != null) {
+            return RecordingOperationResult.pending(
+                        active.getOperation(),
+                        active.getOperationToken(),
+                        active.getActivityId());
+        }
+        RecordingOperationResult pending =
+                _pendingOperationCompletion != null
+                        ? _pendingOperationCompletion
+                        : _pendingLifecycleFailure;
+        return pending == null
+                ? null
+                : RecordingOperationResult.pending(
+                        pending.getOperation(),
+                        pending.getOperationToken(),
+                        pending.getActivityId());
     }
 
     public class LocalBinder extends Binder {
@@ -241,523 +291,690 @@ public class SportLoggerService extends Service {
         }
     }
 
-    public synchronized RecordingOperationResult startNewActivity() {
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.START);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-        if (_permissionLossHandled) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
-            handleRecordingPermissionLoss();
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.PERMISSION_DENIED, _activityId);
+    public RecordingOperationResult startNewActivity() {
+        return submitOperation(
+                RecordingOperationResult.Operation.START,
+                RecordingStateMachine.Operation.START);
+    }
+
+    public RecordingOperationResult pauseActivity() {
+        return submitOperation(
+                RecordingOperationResult.Operation.PAUSE,
+                RecordingStateMachine.Operation.PAUSE);
+    }
+
+    public RecordingOperationResult resumeActivity() {
+        return submitOperation(
+                RecordingOperationResult.Operation.RESUME,
+                RecordingStateMachine.Operation.RESUME);
+    }
+
+    public RecordingOperationResult stopActivity() {
+        return submitOperation(
+                RecordingOperationResult.Operation.STOP,
+                RecordingStateMachine.Operation.STOP);
+    }
+
+    public RecordingOperationResult discardActivity() {
+        return submitOperation(
+                RecordingOperationResult.Operation.DISCARD,
+                RecordingStateMachine.Operation.DISCARD);
+    }
+
+    public RecordingOperationResult retryRecovery() {
+        return submitOperation(
+                RecordingOperationResult.Operation.RECOVER,
+                RecordingStateMachine.Operation.RECOVER);
+    }
+
+    private RecordingOperationResult submitOperation(
+            RecordingOperationResult.Operation publicOperation,
+            RecordingStateMachine.Operation stateOperation) {
+        final RecordingOperationDispatcher.Token token;
+        synchronized (this) {
+            if (_closing) {
+                return operationResult(
+                        RecordingOperationResult.Status.SERVICE_CLOSED,
+                        publicOperation,
+                        0L,
+                        _activityId);
+            }
+            RecordingOperationResult pending =
+                    _pendingOperationCompletion != null
+                            ? _pendingOperationCompletion
+                            : _pendingLifecycleFailure;
+            if (pending != null) {
+                return RecordingOperationResult.pending(
+                        pending.getOperation(),
+                        pending.getOperationToken(),
+                        pending.getActivityId());
+            }
+            RecordingOperationDispatcher.BeginResult begin =
+                    _operations.begin(
+                            publicOperation, _activityId, _writerGeneration);
+            if (begin.getStatus()
+                    == RecordingOperationDispatcher.BeginStatus.PENDING) {
+                RecordingOperationDispatcher.Token active = begin.getToken();
+                return RecordingOperationResult.pending(
+                        active.getOperation(),
+                        active.getOperationToken(),
+                        active.getActivityId());
+            }
+            if (begin.getStatus()
+                    == RecordingOperationDispatcher.BeginStatus.CLOSED) {
+                return operationResult(
+                        RecordingOperationResult.Status.SERVICE_CLOSED,
+                        publicOperation,
+                        0L,
+                        _activityId);
+            }
+            token = begin.getToken();
+
+            RecordingStateMachine.Decision decision =
+                    _stateMachine.begin(stateOperation);
+            if (decision != RecordingStateMachine.Decision.ACCEPTED) {
+                _operations.finish(token);
+                RecordingOperationResult.Status status =
+                        decision == RecordingStateMachine.Decision.NO_OP
+                                ? RecordingOperationResult.Status.NO_OP
+                                : RecordingOperationResult.Status.INVALID_STATE;
+                return operationResult(
+                        status,
+                        publicOperation,
+                        token.getOperationToken(),
+                        _activityId);
+            }
         }
 
+        RecordingOperationDispatcher.DispatchStatus dispatch =
+                _operations.tryExecute(token, new Runnable() {
+                    @Override
+                    public void run() {
+                        runOperation(token, stateOperation);
+                    }
+                });
+        if (dispatch != RecordingOperationDispatcher.DispatchStatus.SCHEDULED) {
+            synchronized (this) {
+                if (_operations.owns(token)) {
+                    _stateMachine.completeFailure(stateOperation, false);
+                    _operations.finish(token);
+                }
+            }
+            Log.e(
+                    TAG,
+                    "Lifecycle operation could not be scheduled; retained data was not cleared: "
+                            + publicOperation
+                            + " ("
+                            + dispatch
+                            + ")");
+            return operationResult(
+                    dispatch == RecordingOperationDispatcher.DispatchStatus.STALE
+                            ? RecordingOperationResult.Status.STALE_OPERATION
+                            : RecordingOperationResult.Status.SERVICE_CLOSED,
+                    publicOperation,
+                    token.getOperationToken(),
+                    token.getActivityId());
+        }
+        return RecordingOperationResult.accepted(
+                publicOperation, token.getOperationToken(), token.getActivityId());
+    }
+
+    private void runOperation(
+            RecordingOperationDispatcher.Token token,
+            RecordingStateMachine.Operation stateOperation) {
+        switch (stateOperation) {
+            case START:
+                runStart(token);
+                break;
+            case PAUSE:
+                runPause(token);
+                break;
+            case RESUME:
+                runResume(token);
+                break;
+            case STOP:
+                runStop(token);
+                break;
+            case DISCARD:
+                runDiscard(token);
+                break;
+            case RECOVER:
+                runRecovery(token);
+                break;
+            default:
+                failWithoutRecovery(
+                        token,
+                        RecordingOperationResult.Status.INVALID_STATE,
+                        token.getActivityId());
+        }
+    }
+
+    private void runStart(RecordingOperationDispatcher.Token token) {
+        if (!operationOwns(token)) {
+            return;
+        }
+        if (_permissionLossHandled
+                || !RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss(token.getServiceGeneration());
+            return;
+        }
         LifecycleTermination previousGeneration =
-                WRITERS.fenceAny(WRITER_FENCE_TIMEOUT_MILLIS);
+                WRITERS.fenceAny(
+                        new RecordingWriterCoordinator.FenceClaim() {
+                            @Override
+                            public boolean claim() {
+                                return operationOwns(token);
+                            }
+                        },
+                        WRITER_FENCE_TIMEOUT_MILLIS);
         if (!previousGeneration.succeeded()) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
-            showIdle();
-            return writerFailure(
-                    previousGeneration,
-                    RecordingOperationResult.RecoveryAction.RETURN_TO_START);
+            failWithoutRecovery(
+                    token,
+                    writerStatus(previousGeneration),
+                    0);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+        LifecycleTermination listenerStartup =
+                listenersReady()
+                        ? LifecycleTermination.TERMINATED
+                        : replaceOwnedListeners(
+                                token.getServiceGeneration(), token);
+        if (!listenerStartup.succeeded()) {
+            failWithoutRecovery(
+                    token,
+                    listenerStatus(listenerStartup),
+                    0);
+            return;
         }
 
-        int createdActivityId = 0;
+        final int createdActivityId;
         try {
             SqlLogger.initDatabase();
             createdActivityId = SqlLogger.createActivity();
-            if (createdActivityId <= 0) {
-                _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
-                return RecordingOperationResult.of(
-                        RecordingOperationResult.Status.DATABASE_FAILED, _activityId);
-            }
-            RecordingRecoveryState.Transition createdTransition =
-                    _recoveryState.recordActivityCreated(createdActivityId);
-            if (!createdTransition.isPersisted()) {
-                _activityId = createdActivityId;
-                _writerGeneration = 0L;
-                return rollbackCreatedActivity(
-                        createdActivityId,
-                        RecordingOperationResult.Status.DATABASE_FAILED);
-            }
-            _activityId = createdActivityId;
-            _writerGeneration = 0L;
-
-            RecordingWriterCoordinator.StartStatus writerStatus =
-                    startWriter(createdActivityId);
-            if (writerStatus != RecordingWriterCoordinator.StartStatus.STARTED) {
-                LifecycleTermination writerTermination =
-                        WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-                if (!writerTermination.succeeded()) {
-                    _stateMachine.completeFailure(
-                            RecordingStateMachine.Operation.START, true);
-                    RecordingRecoveryState.Transition recoveryTransition =
-                            markRecoveryRequired();
-                    return writerFailure(
-                            writerTermination,
-                            RecordingOperationResult.RecoveryAction
-                                   .SHOW_RECOVERY_RETRY,
-                            recoveryTransition);
-                }
-                return rollbackCreatedActivity(
-                        createdActivityId,
-                        RecordingOperationResult.Status.START_FAILED);
-            }
-
-            RecordingRecoveryState.Transition recordingTransition =
-                    _writerGeneration <= 0L
-                            ? RecordingRecoveryState.Transition.rejected(
-                                    _recoveryState.snapshot())
-                            : _recoveryState.recordRecording(
-                                    createdActivityId, _writerGeneration);
-            if (!recordingTransition.isPersisted()) {
-                LifecycleTermination writerTermination =
-                        WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-                if (writerTermination.succeeded()) {
-                    return rollbackCreatedActivity(
-                            createdActivityId,
-                            RecordingOperationResult.Status.DATABASE_FAILED);
-                }
-                _stateMachine.completeFailure(
-                        RecordingStateMachine.Operation.START, true);
-                RecordingRecoveryState.Transition recoveryTransition =
-                        markRecoveryRequired();
-                return writerFailure(
-                        writerTermination,
-                        RecordingOperationResult.RecoveryAction
-                               .SHOW_RECOVERY_RETRY,
-                        recoveryTransition);
-            }
-            if (_permissionLossHandled) {
-                _stateMachine.completeFailure(
-                        RecordingStateMachine.Operation.START, true);
-                RecordingRecoveryState.Transition recoveryTransition =
-                        markRecoveryRequired();
-                return recoveryFailure(
-                        RecordingOperationResult.Status.PERMISSION_DENIED,
-                        createdActivityId,
-                        RecordingOperationResult.RecoveryAction
-                               .SHOW_RECOVERY_RETRY,
-                        recoveryTransition);
-            }
-            if (!_stateMachine.completeSuccess(
-                    RecordingStateMachine.Operation.START)) {
-                LifecycleTermination writerTermination =
-                        WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-                RecordingRecoveryState.Transition recoveryTransition =
-                        markRecoveryRequired();
-                return writerTermination.succeeded()
-                        ? recoveryFailure(
-                                RecordingOperationResult.Status.INVALID_STATE,
-                                createdActivityId,
-                                RecordingOperationResult.RecoveryAction
-                                        .SHOW_RECOVERY_RETRY,
-                                recoveryTransition)
-                        : writerFailure(
-                                writerTermination,
-                                RecordingOperationResult.RecoveryAction
-                                        .SHOW_RECOVERY_RETRY,
-                                recoveryTransition);
-            }
-            showRecording(createdActivityId);
-            _listenerEventsActive.set(true);
-            _stopWatch.startTImer();
-            Toast.makeText(
-                    this, "Starting new activity", Toast.LENGTH_SHORT).show();
-            return RecordingOperationResult.success(createdActivityId);
         } catch (RuntimeException exception) {
-            Log.e(TAG, "Could not start recording.", exception);
-            LifecycleTermination writerTermination =
-                    WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-            if (createdActivityId > 0 && writerTermination.succeeded()) {
-                return rollbackCreatedActivity(
-                        createdActivityId,
-                        RecordingOperationResult.Status.DATABASE_FAILED);
-            }
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.START,
-                    createdActivityId > 0);
-            if (createdActivityId > 0) {
-                RecordingRecoveryState.Transition recoveryTransition =
-                        markRecoveryRequired();
-                return recoveryFailure(
-                        RecordingOperationResult.Status.DATABASE_FAILED,
-                        createdActivityId,
-                        RecordingOperationResult.RecoveryAction
-                               .SHOW_RECOVERY_RETRY,
-                        recoveryTransition);
-            }
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.DATABASE_FAILED, 0);
+            Log.e(TAG, "Could not create a recording activity.", exception);
+            failWithoutRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    0);
+            return;
         }
-    }
-
-    public synchronized RecordingOperationResult pauseActivity() {
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.PAUSE);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        if (createdActivityId <= 0) {
+            failWithoutRecovery(
+                    token,
+                    RecordingOperationResult.Status.DATABASE_FAILED,
+                    0);
+            return;
         }
 
-        LifecycleTermination termination =
-                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-        if (!termination.succeeded()) {
-            _stopWatch.pauseTimer();
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.PAUSE, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return writerFailure(
-                    termination,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+        RecordingRecoveryState.Transition createdTransition =
+                _recoveryState.recordActivityCreated(createdActivityId);
+        if (!claimActivity(token, createdActivityId, 0L)) {
+            Log.w(
+                    TAG,
+                    "Start became stale after row creation; durable ownership was retained for "
+                            + createdActivityId
+                            + ".");
+            return;
         }
-        RecordingRecoveryState.Transition pausedTransition =
-                _recoveryState.recordPaused(_activityId, _writerGeneration);
-        if (!pausedTransition.isPersisted()) {
-            _stopWatch.pauseTimer();
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.PAUSE, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            if (recoveryTransition.isCurrentProcessOnly()) {
-                releaseOwnedListeners();
-            }
-            return recoveryFailure(
+        if (!createdTransition.isPersisted()) {
+            failWithRecovery(
+                    token,
                     RecordingOperationResult.Status.RECOVERY_PERSISTENCE_FAILED,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    createdActivityId,
+                    0L,
+                    createdTransition);
+            return;
         }
 
-        if (!_stateMachine.completeSuccess(RecordingStateMachine.Operation.PAUSE)) {
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
-                    RecordingOperationResult.Status.INVALID_STATE,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
-        }
-        showPausedRecording(_activityId);
-        _stopWatch.pauseTimer();
-        Toast.makeText(this, "Paused activity", Toast.LENGTH_SHORT).show();
-        return RecordingOperationResult.success(_activityId);
-    }
-
-    public synchronized RecordingOperationResult resumeActivity() {
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.RESUME);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-        if (_permissionLossHandled) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, false);
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, false);
-            handleRecordingPermissionLoss();
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.PERMISSION_DENIED, _activityId);
-        }
-        if (!_listenersReady
-                || _listenerGroup == null
-                || !LISTENERS.isOwner(_listenerGroup)) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
-                    RecordingOperationResult.Status.LISTENER_FAILED,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
-        }
-
-        RecordingWriterCoordinator.StartStatus writerStatus =
-                startWriter(_activityId);
-        if (writerStatus != RecordingWriterCoordinator.StartStatus.STARTED) {
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
-                    writerStatus
-                            == RecordingWriterCoordinator.StartStatus.PREVIOUS_GENERATION_ACTIVE
+        WriterStart writer = startWriter(
+                createdActivityId, token.getServiceGeneration(), token);
+        if (writer.status != RecordingWriterCoordinator.StartStatus.STARTED
+                || writer.generation == null) {
+            failWithRecovery(
+                    token,
+                    writer.status
+                                    == RecordingWriterCoordinator.StartStatus
+                                            .PREVIOUS_GENERATION_ACTIVE
                             ? RecordingOperationResult.Status.WRITER_TIMED_OUT
                             : RecordingOperationResult.Status.START_FAILED,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    createdActivityId,
+                    0L,
+                    null);
+            return;
         }
-        RecordingRecoveryState.Transition recordingTransition =
-                _writerGeneration <= 0L
-                        ? RecordingRecoveryState.Transition.rejected(
-                                _recoveryState.snapshot())
-                        : _recoveryState.recordRecording(
-                                _activityId, _writerGeneration);
-        if (!recordingTransition.isPersisted()) {
-            LifecycleTermination writerTermination =
-                    WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return writerTermination.succeeded()
-                    ? recoveryFailure(
-                            RecordingOperationResult.Status
-                                    .RECOVERY_PERSISTENCE_FAILED,
-                            _activityId,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition)
-                    : writerFailure(
-                            writerTermination,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition);
+        long writerGeneration = writer.generation.getGeneration();
+        if (!claimActivity(token, createdActivityId, writerGeneration)) {
+            Log.w(
+                    TAG,
+                    "Start became stale after writer creation; recovery ownership remains "
+                            + createdActivityId
+                            + "/"
+                            + writerGeneration
+                            + ".");
+            return;
         }
 
-        if (!_stateMachine.completeSuccess(RecordingStateMachine.Operation.RESUME)) {
+        RecordingRecoveryState.Transition recordingTransition =
+                _recoveryState.recordRecording(
+                        createdActivityId, writerGeneration);
+        if (!recordingTransition.isPersisted()
+                || !WRITERS.isActive(writer.generation)) {
             LifecycleTermination writerTermination =
-                    WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return writerTermination.succeeded()
-                    ? recoveryFailure(
-                            RecordingOperationResult.Status.INVALID_STATE,
-                            _activityId,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition)
-                    : writerFailure(
-                            writerTermination,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition);
+                    WRITERS.fenceGeneration(
+                            createdActivityId,
+                            writerGeneration,
+                            WRITER_FENCE_TIMEOUT_MILLIS);
+            failWithRecovery(
+                    token,
+                    !recordingTransition.isPersisted()
+                            ? RecordingOperationResult.Status
+                                    .RECOVERY_PERSISTENCE_FAILED
+                            : writerStatus(writerTermination),
+                    createdActivityId,
+                    writerGeneration,
+                    recordingTransition);
+            return;
         }
-        showRecording(_activityId);
-        _listenerEventsActive.set(true);
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)
+                    || _permissionLossHandled
+                    || !_stateMachine.completeSuccess(
+                            RecordingStateMachine.Operation.START)) {
+                return;
+            }
+            _activityId = createdActivityId;
+            _writerGeneration = writerGeneration;
+            showRecording(createdActivityId);
+            _listenerEventsActive.set(true);
+        }
         _stopWatch.startTImer();
-        Toast.makeText(this, "Resuming activity", Toast.LENGTH_SHORT).show();
-        return RecordingOperationResult.success(_activityId);
+        postOperationCompletion(
+                token, RecordingOperationResult.success(createdActivityId));
     }
 
-    public synchronized RecordingOperationResult stopActivity() {
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.STOP);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-
+    private void runPause(RecordingOperationDispatcher.Token token) {
         LifecycleTermination termination =
-                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-        RecordingTerminalTransition.Outcome terminalOutcome =
-                RecordingTerminalTransition.finish(
-                        _stateMachine,
-                        RecordingStateMachine.Operation.STOP,
-                        termination);
-        if (!terminalOutcome.permitsTerminalEffects()) {
-            _stopWatch.pauseTimer();
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            if (recoveryTransition.isCurrentProcessOnly()) {
-                releaseOwnedListeners();
-            }
-            return terminalOutcome
-                    == RecordingTerminalTransition.Outcome.STATE_CHANGED
-                    ? recoveryFailure(
-                            RecordingOperationResult.Status.INVALID_STATE,
-                            _activityId,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition)
-                    : writerFailure(
-                            termination,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition);
+                WRITERS.fenceGeneration(
+                        token.getActivityId(),
+                        token.getWriterGeneration(),
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            failWithRecovery(
+                    token,
+                    writerStatus(termination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
         }
 
-        int stoppedActivityId = _activityId;
+        RecordingRecoveryState.Transition pausedTransition =
+                _recoveryState.recordPaused(
+                        token.getActivityId(), token.getWriterGeneration());
+        if (!pausedTransition.isPersisted()) {
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.RECOVERY_PERSISTENCE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    pausedTransition);
+            return;
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)
+                    || !_stateMachine.completeSuccess(
+                            RecordingStateMachine.Operation.PAUSE)) {
+                return;
+            }
+            _listenerEventsActive.set(false);
+            showPausedRecording(token.getActivityId());
+        }
+        _stopWatch.pauseTimer();
+        postOperationCompletion(
+                token, RecordingOperationResult.success(token.getActivityId()));
+    }
+
+    private void runResume(RecordingOperationDispatcher.Token token) {
+        if (_permissionLossHandled
+                || !RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss(token.getServiceGeneration());
+            return;
+        }
+        if (!listenersReady()) {
+            failWithRecovery(
+                    token,
+                    RecordingOperationResult.Status.LISTENER_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+
+        WriterStart writer = startWriter(
+                token.getActivityId(), token.getServiceGeneration(), token);
+        if (writer.status != RecordingWriterCoordinator.StartStatus.STARTED
+                || writer.generation == null) {
+            failWithRecovery(
+                    token,
+                    writer.status
+                                    == RecordingWriterCoordinator.StartStatus
+                                            .PREVIOUS_GENERATION_ACTIVE
+                            ? RecordingOperationResult.Status.WRITER_TIMED_OUT
+                            : RecordingOperationResult.Status.START_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+
+        long writerGeneration = writer.generation.getGeneration();
+        if (!claimActivity(token, token.getActivityId(), writerGeneration)) {
+            return;
+        }
+        RecordingRecoveryState.Transition recordingTransition =
+                _recoveryState.recordRecording(
+                        token.getActivityId(), writerGeneration);
+        if (!recordingTransition.isPersisted()
+                || !WRITERS.isActive(writer.generation)) {
+            LifecycleTermination writerTermination =
+                    WRITERS.fenceGeneration(
+                            token.getActivityId(),
+                            writerGeneration,
+                            WRITER_FENCE_TIMEOUT_MILLIS);
+            failWithRecovery(
+                    token,
+                    !recordingTransition.isPersisted()
+                            ? RecordingOperationResult.Status
+                                    .RECOVERY_PERSISTENCE_FAILED
+                            : writerStatus(writerTermination),
+                    token.getActivityId(),
+                    writerGeneration,
+                    recordingTransition);
+            return;
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)
+                    || _permissionLossHandled
+                    || !_stateMachine.completeSuccess(
+                            RecordingStateMachine.Operation.RESUME)) {
+                return;
+            }
+            _writerGeneration = writerGeneration;
+            showRecording(token.getActivityId());
+            _listenerEventsActive.set(true);
+        }
+        _stopWatch.startTImer();
+        postOperationCompletion(
+                token, RecordingOperationResult.success(token.getActivityId()));
+    }
+
+    private void runStop(RecordingOperationDispatcher.Token token) {
+        LifecycleTermination termination =
+                WRITERS.fenceGeneration(
+                        token.getActivityId(),
+                        token.getWriterGeneration(),
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            failWithRecovery(
+                    token,
+                    writerStatus(termination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+        LifecycleTermination listenerTermination = releaseOwnedListeners();
+        if (!listenerTermination.succeeded()) {
+            failWithRecovery(
+                    token,
+                    listenerStatus(listenerTermination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+
+        RecordingTerminalTransition.Outcome terminalOutcome;
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            terminalOutcome = RecordingTerminalTransition.finish(
+                    _stateMachine,
+                    RecordingStateMachine.Operation.STOP,
+                    termination);
+        }
+        if (!terminalOutcome.permitsTerminalEffects()) {
+            failWithRecovery(
+                    token,
+                    terminalOutcome
+                                    == RecordingTerminalTransition.Outcome
+                                            .STATE_CHANGED
+                            ? RecordingOperationResult.Status.STALE_OPERATION
+                            : writerStatus(termination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+
         RecordingRecoveryState.Transition clearTransition =
-                _recoveryState.clearAfterStop(stoppedActivityId);
+                _recoveryState.clearAfterStop(token.getActivityId());
         if (!clearTransition.isPersisted()) {
-            _stateMachine.restoreOwnedActivity();
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
+            failWithRecovery(
+                    token,
                     clearTransition.isAccepted()
                             ? RecordingOperationResult.Status
                                     .RECOVERY_PERSISTENCE_FAILED
                             : RecordingOperationResult.Status.INVALID_STATE,
-                    stoppedActivityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    clearTransition);
+            return;
         }
-        showIdle();
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            _activityId = 0;
+            _writerGeneration = 0L;
+            _listenerEventsActive.set(false);
+            showIdle();
+        }
         _stopWatch.pauseTimer();
         _stopWatch.resetTimer();
-        _activityId = 0;
-        _writerGeneration = 0L;
-        Toast.makeText(this, "Stopped activity", Toast.LENGTH_SHORT).show();
-        return RecordingOperationResult.success(stoppedActivityId);
+        postOperationCompletion(
+                token, RecordingOperationResult.success(token.getActivityId()));
     }
 
-    public synchronized RecordingOperationResult discardActivity() {
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.DISCARD);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-
+    private void runDiscard(RecordingOperationDispatcher.Token token) {
         LifecycleTermination termination =
-                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
-        RecordingTerminalTransition.Outcome terminalOutcome =
-                RecordingTerminalTransition.finish(
-                        _stateMachine,
-                        RecordingStateMachine.Operation.DISCARD,
-                        termination);
-        if (!terminalOutcome.permitsTerminalEffects()) {
-            _stopWatch.pauseTimer();
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            if (recoveryTransition.isCurrentProcessOnly()) {
-                releaseOwnedListeners();
-            }
-            return terminalOutcome
-                    == RecordingTerminalTransition.Outcome.STATE_CHANGED
-                    ? recoveryFailure(
-                            RecordingOperationResult.Status.INVALID_STATE,
-                            _activityId,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition)
-                    : writerFailure(
-                            termination,
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition);
+                WRITERS.fenceGeneration(
+                        token.getActivityId(),
+                        token.getWriterGeneration(),
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            failWithRecovery(
+                    token,
+                    writerStatus(termination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+        LifecycleTermination listenerTermination = releaseOwnedListeners();
+        if (!listenerTermination.succeeded()) {
+            failWithRecovery(
+                    token,
+                    listenerStatus(listenerTermination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
         }
 
-        int discardedActivityId = _activityId;
+        RecordingTerminalTransition.Outcome terminalOutcome;
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            terminalOutcome = RecordingTerminalTransition.finish(
+                    _stateMachine,
+                    RecordingStateMachine.Operation.DISCARD,
+                    termination);
+        }
+        if (!terminalOutcome.permitsTerminalEffects()) {
+            failWithRecovery(
+                    token,
+                    terminalOutcome
+                                    == RecordingTerminalTransition.Outcome
+                                            .STATE_CHANGED
+                            ? RecordingOperationResult.Status.STALE_OPERATION
+                            : writerStatus(termination),
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+
         try {
-            new SqlLogger().deleteActivity(discardedActivityId);
+            new SqlLogger().deleteActivity(token.getActivityId());
         } catch (RuntimeException exception) {
             Log.e(TAG, "Could not discard activity.", exception);
-            _stopWatch.pauseTimer();
-            _stateMachine.restoreOwnedActivity();
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
+            failWithRecovery(
+                    token,
                     RecordingOperationResult.Status.DATABASE_FAILED,
-                    discardedActivityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            return;
+        }
+        if (!operationOwns(token)) {
+            Log.w(
+                    TAG,
+                    "Discard completed after its service generation closed; no stale UI was notified.");
+            return;
         }
 
         RecordingRecoveryState.Transition clearTransition =
-                _recoveryState.clearAfterDiscard(discardedActivityId);
+                _recoveryState.clearAfterDiscard(token.getActivityId());
         if (!clearTransition.isPersisted()) {
-            _activityId = 0;
-            _writerGeneration = 0L;
-            _stateMachine.restoreIdle();
-            showIdle();
-            _stopWatch.pauseTimer();
-            _stopWatch.resetTimer();
-            return RecordingOperationResult.of(
+            Log.e(
+                    TAG,
+                    "Discard deleted activity "
+                            + token.getActivityId()
+                            + " but could not clear durable recovery metadata.");
+            failWithRecovery(
+                    token,
                     RecordingOperationResult.Status
                             .RECOVERY_PERSISTENCE_FAILED,
-                    0);
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    clearTransition);
+            return;
         }
-        showIdle();
-        _stopWatch.pauseTimer();
-        _stopWatch.resetTimer();
-        _activityId = 0;
-        _writerGeneration = 0L;
-        Toast.makeText(this, "Discarded activity", Toast.LENGTH_SHORT).show();
-        return RecordingOperationResult.success(discardedActivityId);
-    }
-
-    public synchronized RecordingOperationResult retryRecovery() {
-        if (_recoveryCleanupInProgress) {
-            return RecordingOperationResult.recovery(
-                    RecordingOperationResult.Status.RECOVERY_IN_PROGRESS,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    SharedData.getInstance().RecoveryCurrentProcessOnly
-                            ? RecordingOperationResult.RecoveryRetention
-                                    .CURRENT_PROCESS_ONLY
-                            : RecordingOperationResult.RecoveryRetention.DURABLE);
-        }
-        RecordingStateMachine.Decision decision =
-                _stateMachine.begin(RecordingStateMachine.Operation.RECOVER);
-        if (decision == RecordingStateMachine.Decision.NO_OP) {
-            return RecordingOperationResult.noOp(_activityId);
-        }
-        if (decision == RecordingStateMachine.Decision.INVALID) {
-            return RecordingOperationResult.of(
-                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
-        }
-
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
-        if (!retained.ownsActivity()) {
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            _activityId = 0;
+            _writerGeneration = 0L;
+            _listenerEventsActive.set(false);
             _stateMachine.restoreIdle();
             showIdle();
-            return RecordingOperationResult.recovery(
-                    RecordingOperationResult.Status.INVALID_STATE,
-                    0,
-                    RecordingOperationResult.RecoveryAction.RETURN_TO_START);
+        }
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        postOperationCompletion(
+                token,
+                RecordingOperationResult.success(token.getActivityId()));
+    }
+
+    private void runRecovery(RecordingOperationDispatcher.Token token) {
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        if (!retained.ownsActivity()) {
+            synchronized (this) {
+                if (!operationOwnsLocked(token)) {
+                    return;
+                }
+                _stateMachine.restoreIdle();
+                showIdle();
+            }
+            postOperationCompletion(
+                    token,
+                    RecordingOperationResult.recovery(
+                            RecordingOperationResult.Status.INVALID_STATE,
+                            0,
+                            RecordingOperationResult.RecoveryAction
+                                    .RETURN_TO_START));
+            return;
         }
 
         try {
             SqlLogger.initDatabase();
             if (!SqlLogger.activityExists(retained.getActivityId())) {
-                _recoveryState.clearAfterDiscard(retained.getActivityId());
-                _activityId = 0;
-                _writerGeneration = 0L;
-                _stateMachine.restoreIdle();
-                showIdle();
-                return RecordingOperationResult.recovery(
-                        RecordingOperationResult.Status.DATABASE_FAILED,
-                        0,
-                        RecordingOperationResult.RecoveryAction.RETURN_TO_START);
+                if (!operationOwns(token)) {
+                    return;
+                }
+                RecordingRecoveryState.Transition clearTransition =
+                        _recoveryState.clearAfterDiscard(
+                                retained.getActivityId());
+                if (!clearTransition.isPersisted()) {
+                    failWithRecovery(
+                            token,
+                            RecordingOperationResult.Status
+                                    .RECOVERY_PERSISTENCE_FAILED,
+                            retained.getActivityId(),
+                            retained.getGeneration(),
+                            clearTransition);
+                    return;
+                }
+                synchronized (this) {
+                    if (!operationOwnsLocked(token)) {
+                        return;
+                    }
+                    _activityId = 0;
+                    _writerGeneration = 0L;
+                    _stateMachine.restoreIdle();
+                    showIdle();
+                }
+                postOperationCompletion(
+                        token,
+                        RecordingOperationResult.success(0));
+                return;
             }
         } catch (RuntimeException exception) {
             Log.e(TAG, "Could not validate the retained recording.", exception);
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.RECOVER, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
+            failWithRecovery(
+                    token,
                     RecordingOperationResult.Status.DATABASE_FAILED,
                     retained.getActivityId(),
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    retained.getGeneration(),
+                    null);
+            return;
         }
 
         LifecycleTermination writerTermination =
@@ -766,132 +983,326 @@ public class SportLoggerService extends Service {
                         retained.getGeneration(),
                         WRITER_FENCE_TIMEOUT_MILLIS);
         if (!writerTermination.succeeded()) {
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.RECOVER, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return writerFailure(
-                    writerTermination,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
-        }
-
-        _permissionLossHandled = false;
-        LifecycleTermination listenerStartup =
-                _listenersReady
-                        && _listenerGroup != null
-                        && LISTENERS.isOwner(_listenerGroup)
-                        ? LifecycleTermination.TERMINATED
-                        : replaceOwnedListeners();
-        if (!listenerStartup.succeeded()) {
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.RECOVER, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
-                    listenerStartup == LifecycleTermination.TIMED_OUT
-                            ? RecordingOperationResult.Status.LISTENER_TIMED_OUT
-                            : listenerStartup == LifecycleTermination.INTERRUPTED
-                                    ? RecordingOperationResult.Status.INTERRUPTED
-                                    : RecordingOperationResult.Status.LISTENER_FAILED,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+            failWithRecovery(
+                    token,
+                    writerStatus(writerTermination),
+                    retained.getActivityId(),
+                    retained.getGeneration(),
+                    null);
+            return;
         }
         if (_permissionLossHandled
                 || !RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.RECOVER, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            return recoveryFailure(
-                    RecordingOperationResult.Status.PERMISSION_DENIED,
+            handleRecordingPermissionLoss(token.getServiceGeneration());
+            return;
+        }
+
+        LifecycleTermination listenerStartup =
+                listenersReady()
+                        ? LifecycleTermination.TERMINATED
+                        : replaceOwnedListeners(
+                                token.getServiceGeneration(), token);
+        if (!listenerStartup.succeeded()) {
+            failWithRecovery(
+                    token,
+                    listenerStatus(listenerStartup),
                     retained.getActivityId(),
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    retained.getGeneration(),
+                    null);
+            return;
         }
 
         RecordingRecoveryState.Transition pausedTransition =
                 _recoveryState.recordPaused(
                         retained.getActivityId(), retained.getGeneration());
         if (!pausedTransition.isPersisted()) {
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.RECOVER, true);
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
             releaseOwnedListeners();
-            return recoveryFailure(
+            failWithRecovery(
+                    token,
                     RecordingOperationResult.Status.RECOVERY_PERSISTENCE_FAILED,
                     retained.getActivityId(),
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+                    retained.getGeneration(),
+                    pausedTransition);
+            return;
         }
 
-        if (!_stateMachine.completeSuccess(RecordingStateMachine.Operation.RECOVER)) {
-            RecordingRecoveryState.Transition recoveryTransition =
-                    markRecoveryRequired();
-            releaseOwnedListeners();
-            return recoveryFailure(
-                    RecordingOperationResult.Status.INVALID_STATE,
-                    retained.getActivityId(),
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    recoveryTransition);
+        synchronized (this) {
+            if (!operationOwnsLocked(token)
+                    || !_stateMachine.completeSuccess(
+                            RecordingStateMachine.Operation.RECOVER)) {
+                return;
+            }
+            _permissionLossHandled = false;
+            _activityId = retained.getActivityId();
+            _writerGeneration = retained.getGeneration();
+            _listenerEventsActive.set(false);
+            showPausedRecording(_activityId);
         }
-        _activityId = retained.getActivityId();
-        _writerGeneration = retained.getGeneration();
-        _listenerEventsActive.set(true);
-        showPausedRecording(_activityId);
-        return RecordingOperationResult.success(_activityId);
+        postOperationCompletion(
+                token, RecordingOperationResult.success(retained.getActivityId()));
     }
 
-    private RecordingWriterCoordinator.StartStatus startWriter(final int activityId) {
+    private void scheduleStartup() {
+        final RecordingOperationDispatcher.Token token;
+        synchronized (this) {
+            RecordingOperationDispatcher.BeginResult begin =
+                    _operations.begin(
+                            RecordingOperationResult.Operation.STARTUP,
+                            _activityId,
+                            _writerGeneration);
+            if (begin.getStatus()
+                    != RecordingOperationDispatcher.BeginStatus.ACCEPTED) {
+                Log.e(TAG, "Could not begin asynchronous service startup.");
+                return;
+            }
+            token = begin.getToken();
+        }
+
+        RecordingOperationDispatcher.DispatchStatus dispatch =
+                _operations.tryExecute(token, new Runnable() {
+                    @Override
+                    public void run() {
+                        runStartup(token);
+                    }
+                });
+        if (dispatch != RecordingOperationDispatcher.DispatchStatus.SCHEDULED) {
+            synchronized (this) {
+                _startupReady = true;
+            }
+            postLifecycleFailure(
+                    token,
+                    RecordingOperationResult.recovery(
+                            RecordingOperationResult.Status.START_FAILED,
+                            _activityId,
+                            _activityId > 0
+                                    ? RecordingOperationResult.RecoveryAction
+                                            .SHOW_RECOVERY_RETRY
+                                    : RecordingOperationResult.RecoveryAction
+                                            .RETURN_TO_START));
+        }
+    }
+
+    private void runStartup(RecordingOperationDispatcher.Token token) {
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        boolean activityExists = retained.ownsActivity();
+        if (activityExists) {
+            try {
+                SqlLogger.initDatabase();
+                activityExists = SqlLogger.activityExists(retained.getActivityId());
+            } catch (RuntimeException exception) {
+                Log.e(TAG, "Could not validate retained recording metadata.", exception);
+                failStartupWithRecovery(
+                        token,
+                        RecordingOperationResult.Status.DATABASE_FAILED,
+                        retained,
+                        null);
+                return;
+            }
+        }
+
+        if (!operationOwns(token)) {
+            return;
+        }
+        RecordingRecoveryState.Transition replacementTransition =
+                _recoveryState.prepareForServiceReplacement(activityExists);
+        retained = _recoveryState.snapshot();
+        if (!activityExists
+                && retained.ownsActivity()
+                && !replacementTransition.isPersisted()) {
+            failStartupWithRecovery(
+                    token,
+                    RecordingOperationResult.Status
+                            .RECOVERY_PERSISTENCE_FAILED,
+                    retained,
+                    replacementTransition);
+            return;
+        }
+        if (retained.ownsActivity()) {
+            WRITERS.restoreGenerationFloor(retained.getGeneration());
+            LifecycleTermination writerTermination =
+                    WRITERS.fenceGeneration(
+                            retained.getActivityId(),
+                            retained.getGeneration(),
+                            WRITER_FENCE_TIMEOUT_MILLIS);
+            if (!writerTermination.succeeded()) {
+                failStartupWithRecovery(
+                        token,
+                        writerStatus(writerTermination),
+                        retained,
+                        replacementTransition);
+                return;
+            }
+        }
+        if (!operationOwns(token)) {
+            return;
+        }
+
+        LifecycleTermination listenerStartup =
+                replaceOwnedListeners(token.getServiceGeneration(), token);
+        if (!listenerStartup.succeeded()) {
+            failStartupWithRecovery(
+                    token,
+                    listenerStatus(listenerStartup),
+                    retained,
+                    replacementTransition);
+            return;
+        }
+
+        if (retained.ownsActivity()) {
+            RecordingRecoveryState.Transition pausedTransition =
+                    _recoveryState.recordPaused(
+                            retained.getActivityId(), retained.getGeneration());
+            if (!pausedTransition.isPersisted()) {
+                releaseOwnedListeners();
+                failStartupWithRecovery(
+                        token,
+                        RecordingOperationResult.Status
+                                .RECOVERY_PERSISTENCE_FAILED,
+                        retained,
+                        pausedTransition);
+                return;
+            }
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            _startupReady = true;
+            _permissionLossHandled = false;
+            if (retained.ownsActivity()) {
+                _activityId = retained.getActivityId();
+                _writerGeneration = retained.getGeneration();
+                _stateMachine.restorePaused();
+                showPausedRecording(_activityId);
+            } else {
+                _activityId = 0;
+                _writerGeneration = 0L;
+                _stateMachine.restoreIdle();
+                showIdle();
+            }
+        }
+        postOperationCompletion(
+                token,
+                RecordingOperationResult.success(
+                        retained.ownsActivity() ? retained.getActivityId() : 0));
+    }
+
+    private void failStartupWithRecovery(
+            RecordingOperationDispatcher.Token token,
+            RecordingOperationResult.Status status,
+            RecordingRecoveryState.Snapshot retained,
+            RecordingRecoveryState.Transition transition) {
+        if (!operationOwns(token)) {
+            return;
+        }
+        RecordingRecoveryState.Transition recoveryTransition = transition;
+        if (retained.ownsActivity()
+                && (recoveryTransition == null
+                        || !recoveryTransition.isAccepted())) {
+            recoveryTransition = _recoveryState.requireRecovery(
+                    retained.getActivityId(), retained.getGeneration());
+        }
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            _startupReady = true;
+            if (retained.ownsActivity()) {
+                _activityId = retained.getActivityId();
+                _writerGeneration = retained.getGeneration();
+                _stateMachine.restoreOwnedActivity();
+                showRecoveryRequired(
+                        _activityId,
+                        recoveryTransition != null
+                                && recoveryTransition.isPersisted());
+            } else {
+                _activityId = 0;
+                _writerGeneration = 0L;
+                _stateMachine.restoreIdle();
+                showIdle();
+            }
+            _listenerEventsActive.set(false);
+            _listenersReady = false;
+        }
+        postLifecycleFailure(
+                token,
+                retained.ownsActivity()
+                        ? recoveryFailure(
+                                status,
+                                retained.getActivityId(),
+                                RecordingOperationResult.RecoveryAction
+                                        .SHOW_RECOVERY_RETRY,
+                                recoveryTransition)
+                        : RecordingOperationResult.recovery(
+                                status,
+                                0,
+                                RecordingOperationResult.RecoveryAction
+                                        .RETURN_TO_START));
+    }
+
+    private WriterStart startWriter(
+            final int activityId,
+            final long serviceGeneration,
+            final RecordingOperationDispatcher.Token operationToken) {
+        final AtomicReference<RecordingWriterCoordinator.GenerationToken> started =
+                new AtomicReference<>();
         RecordingWriterCoordinator.StartStatus status = WRITERS.start(
                 this,
                 activityId,
-                generation ->
-                        new PermissionCheckedTask(
-                                new PermissionCheckedTask.CancellationCheck() {
-                                    @Override
-                                    public boolean isCancelled() {
-                                        return _permissionLossHandled
-                                                || !WRITERS.isActive(generation);
-                                    }
-                                },
-                                new PermissionCheckedTask.PermissionCheck() {
-                                    @Override
-                                    public boolean allRequiredPermissionsGranted() {
-                                        return RecordingPermissions
-                                                .allRequiredForRecordingGranted(
-                                                        SportLoggerService.this);
-                                    }
-                                },
-                                new SqlLogger(activityId),
-                                new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        handleRecordingPermissionLoss();
-                                    }
-                                }),
+                generation -> {
+                    started.set(generation);
+                    return new PermissionCheckedTask(
+                            new PermissionCheckedTask.CancellationCheck() {
+                                @Override
+                                public boolean isCancelled() {
+                                    return _permissionLossHandled
+                                            || _closing
+                                            || !WRITERS.isActive(generation);
+                                }
+                            },
+                            new PermissionCheckedTask.PermissionCheck() {
+                                @Override
+                                public boolean allRequiredPermissionsGranted() {
+                                    return RecordingPermissions
+                                            .allRequiredForRecordingGranted(
+                                                    SportLoggerService.this);
+                                }
+                            },
+                            new SqlLogger(activityId),
+                            new Runnable() {
+                                @Override
+                                public void run() {
+                                    handleRecordingPermissionLoss(
+                                            serviceGeneration);
+                                }
+                            });
+                },
+                new RecordingWriterCoordinator.GenerationClaim() {
+                    @Override
+                    public boolean claim(
+                            RecordingWriterCoordinator.GenerationToken generation) {
+                        started.set(generation);
+                        return claimActivity(
+                                operationToken,
+                                activityId,
+                                generation.getGeneration());
+                    }
+                },
                 new RecordingWriterCoordinator.FailureListener() {
                     @Override
                     public void onFailure(
-                            final RecordingWriterCoordinator.GenerationToken generation,
-                            final RuntimeException exception) {
-                        _mainHandler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                handleWriterTaskFailure(generation, exception);
-                            }
-                        });
+                            RecordingWriterCoordinator.GenerationToken generation,
+                            RuntimeException exception) {
+                        handleWriterTaskFailure(
+                                serviceGeneration, generation, exception);
                     }
                 });
-        if (status == RecordingWriterCoordinator.StartStatus.STARTED) {
-            _writerGeneration = WRITERS.generationFor(this, activityId);
-        }
-        return status;
+        return new WriterStart(status, started.get());
     }
 
     private void handleWriterTaskFailure(
+            long serviceGeneration,
             RecordingWriterCoordinator.GenerationToken generation,
             RuntimeException exception) {
         Log.e(
@@ -900,331 +1311,934 @@ public class SportLoggerService extends Service {
                         + generation.getGeneration()
                         + ".",
                 exception);
-        final RecordingRecoveryState.Transition recoveryTransition;
+
+        final RecordingOperationDispatcher.Token cleanupToken;
+        final ListenerGroup listenerGroup;
         synchronized (this) {
-            if (_activityId != generation.getActivityId()
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            serviceGeneration)
+                    || _permissionLossHandled
+                    || _activityId != generation.getActivityId()
                     || _writerGeneration != generation.getGeneration()) {
+                Log.e(
+                        TAG,
+                        "Late writer failure was not dispatched. Existing recovery data remains "
+                                + "retained for "
+                                + generation.getActivityId()
+                                + "/"
+                                + generation.getGeneration()
+                                + ".");
                 return;
             }
-            recoveryTransition = _recoveryState.requireRecovery(
-                    generation.getActivityId(), generation.getGeneration());
-            if (!recoveryTransition.isAccepted()) {
-                return;
-            }
+            _operations.invalidateActive();
+            _pendingOperationCompletion = null;
             _stateMachine.failGeneration();
             _listenerEventsActive.set(false);
             _listenersReady = false;
-            _recoveryCleanupInProgress = true;
+            _listenerGeneration = ++_nextListenerGeneration;
+            listenerGroup = _listenerGroup;
+            RecordingOperationDispatcher.BeginResult begin =
+                    _operations.begin(
+                            RecordingOperationResult.Operation.NONE,
+                            generation.getActivityId(),
+                            generation.getGeneration());
+            if (begin.getStatus()
+                    != RecordingOperationDispatcher.BeginStatus.ACCEPTED) {
+                Log.e(
+                        TAG,
+                        "Writer failure cleanup could not claim the lifecycle executor; "
+                                + "recovery data was retained.");
+                return;
+            }
+            cleanupToken = begin.getToken();
+        }
+        _stopWatch.pauseTimer();
+        if (listenerGroup != null) {
+            listenerGroup.requestShutdown();
+        }
+
+        RecordingOperationDispatcher.DispatchStatus dispatch =
+                _operations.tryExecute(cleanupToken, new Runnable() {
+                    @Override
+                    public void run() {
+                        runWriterFailureCleanup(cleanupToken, generation);
+                    }
+                });
+        if (dispatch != RecordingOperationDispatcher.DispatchStatus.SCHEDULED) {
+            if (!operationOwns(cleanupToken)) {
+                Log.e(
+                        TAG,
+                        "Writer failure raced service destruction. The existing durable tuple was "
+                                + "left unchanged and no stale callback was delivered.");
+                return;
+            }
+            RecordingRecoveryState.Transition retained =
+                    _recoveryState.requireRecovery(
+                            generation.getActivityId(),
+                            generation.getGeneration());
+            synchronized (this) {
+                if (operationOwnsLocked(cleanupToken)) {
+                    showRecoveryRequired(
+                            generation.getActivityId(), retained.isPersisted());
+                }
+            }
+            Log.e(
+                    TAG,
+                    "Writer failure cleanup dispatch was rejected; exact recovery tuple retained: "
+                            + generation.getActivityId()
+                            + "/"
+                            + generation.getGeneration());
+            postLifecycleFailure(
+                    cleanupToken,
+                    recoveryFailure(
+                            RecordingOperationResult.Status.WRITER_FAILED,
+                            generation.getActivityId(),
+                            RecordingOperationResult.RecoveryAction
+                                    .SHOW_RECOVERY_RETRY,
+                            retained));
+        }
+    }
+
+    private void runWriterFailureCleanup(
+            RecordingOperationDispatcher.Token cleanupToken,
+            RecordingWriterCoordinator.GenerationToken generation) {
+        if (!operationOwns(cleanupToken)) {
+            return;
+        }
+        RecordingRecoveryState.Transition recoveryTransition =
+                _recoveryState.requireRecovery(
+                        generation.getActivityId(), generation.getGeneration());
+        LifecycleTermination writerTermination =
+                WRITERS.fenceGeneration(
+                        generation.getActivityId(),
+                        generation.getGeneration(),
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        LifecycleTermination listenerTermination = releaseOwnedListeners();
+
+        synchronized (this) {
+            if (!operationOwnsLocked(cleanupToken)) {
+                return;
+            }
+            _stateMachine.restoreOwnedActivity();
+            _activityId = generation.getActivityId();
+            _writerGeneration = generation.getGeneration();
             showRecoveryRequired(
                     generation.getActivityId(),
                     recoveryTransition.isPersisted());
-            _stopWatch.pauseTimer();
         }
-        _lifecycleExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                LifecycleTermination termination =
-                        WRITERS.fenceGeneration(
+        if (!listenerTermination.succeeded()) {
+            Log.e(
+                    TAG,
+                    "Writer failure listener shutdown did not complete: "
+                            + listenerTermination);
+        }
+        RecordingOperationResult failure =
+                writerTermination == LifecycleTermination.TIMED_OUT
+                                || writerTermination
+                                        == LifecycleTermination.INTERRUPTED
+                                || writerTermination == LifecycleTermination.FAILED
+                        ? recoveryFailure(
+                                writerStatus(writerTermination),
                                 generation.getActivityId(),
-                                generation.getGeneration(),
-                                WRITER_FENCE_TIMEOUT_MILLIS);
-                LifecycleTermination listenerTermination =
-                        releaseOwnedListeners();
-                _mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        synchronized (SportLoggerService.this) {
-                            _recoveryCleanupInProgress = false;
-                            _stateMachine.restoreOwnedActivity();
-                            showRecoveryRequired(
-                                    generation.getActivityId(),
-                                    recoveryTransition.isPersisted());
-                            if (!listenerTermination.succeeded()) {
-                                Log.e(
-                                        TAG,
-                                        "Writer failure listener shutdown did not complete: "
-                                                + listenerTermination);
-                            }
-                            RecordingOperationResult failure =
-                                    termination == LifecycleTermination.TIMED_OUT
-                                            || termination
-                                            == LifecycleTermination.INTERRUPTED
-                                            || termination == LifecycleTermination.FAILED
-                                            ? writerFailure(
-                                                    termination,
-                                                    RecordingOperationResult
-                                                            .RecoveryAction
-                                                            .SHOW_RECOVERY_RETRY,
-                                                    recoveryTransition)
-                                            : recoveryFailure(
-                                                    RecordingOperationResult.Status
-                                                            .WRITER_FAILED,
-                                                    generation.getActivityId(),
-                                                    RecordingOperationResult
-                                                            .RecoveryAction
-                                                            .SHOW_RECOVERY_RETRY,
-                                                    recoveryTransition);
-                            postLifecycleFailure(failure);
-                        }
-                    }
-                });
-            }
-        });
+                                RecordingOperationResult.RecoveryAction
+                                        .SHOW_RECOVERY_RETRY,
+                                recoveryTransition)
+                        : recoveryFailure(
+                                RecordingOperationResult.Status.WRITER_FAILED,
+                                generation.getActivityId(),
+                                RecordingOperationResult.RecoveryAction
+                                        .SHOW_RECOVERY_RETRY,
+                                recoveryTransition);
+        postLifecycleFailure(cleanupToken, failure);
     }
 
-    private LifecycleTermination replaceOwnedListeners() {
-        Runnable permissionFailure = new Runnable() {
-            @Override
-            public void run() {
-                handleRecordingPermissionLoss();
-            }
-        };
-        ListenerGroup group = new ListenerGroup(
-                _listenerEventsActive,
-                new SensorListener(
-                        this,
-                        _uiForwardingHandler,
-                        permissionFailure,
-                        _listenerEventsActive),
-                new GpsListener(
-                        this,
-                        _uiForwardingHandler,
-                        permissionFailure,
-                        _listenerEventsActive),
-                "sport-logger-" + System.identityHashCode(this));
-        _listenerGroup = group;
-        LifecycleTermination replacement =
-                LISTENERS.replace(group, LISTENER_FENCE_TIMEOUT_MILLIS);
-        _listenersReady = replacement.succeeded();
-        return replacement;
+    private void handleRecordingPermissionLoss(long serviceGeneration) {
+        handleRecordingPermissionLoss(serviceGeneration, 0L);
     }
 
-    private void handleRecordingPermissionLoss() {
-        final RecordingRecoveryState.Snapshot retained;
-        final RecordingRecoveryState.Transition recoveryTransition;
+    private void handleRecordingPermissionLoss(
+            long serviceGeneration, long listenerGeneration) {
+        final RecordingOperationDispatcher.Token permissionToken;
+        final ListenerGroup listenerGroup;
+        final ListenerGroup startingListenerGroup;
         synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            serviceGeneration)
+                    || (listenerGeneration != 0L
+                            && listenerGeneration != _listenerGeneration)) {
+                Log.w(
+                        TAG,
+                        "Ignored late permission-loss callback from a stale service/listener "
+                                + "generation.");
+                return;
+            }
             if (_permissionLossHandled) {
                 return;
             }
             _permissionLossHandled = true;
-            _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
-            retained = _recoveryState.snapshot();
-            if (retained.ownsActivity()) {
-                recoveryTransition = _recoveryState.requireRecovery(
-                        retained.getActivityId(), retained.getGeneration());
-                showRecoveryRequired(
-                        retained.getActivityId(),
-                        recoveryTransition.isPersisted());
-            } else {
-                recoveryTransition =
-                        _recoveryState.clearAfterPreRecordingFailure();
-                showIdle();
-            }
+            _listenerEventsActive.set(false);
             _listenersReady = false;
-            _stopWatch.pauseTimer();
+            _listenerGeneration = ++_nextListenerGeneration;
+            listenerGroup = _listenerGroup;
+            startingListenerGroup = _startingListenerGroup;
+            _operations.invalidateActive();
+            _pendingOperationCompletion = null;
+            _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
+            RecordingOperationDispatcher.BeginResult begin =
+                    _operations.begin(
+                            RecordingOperationResult.Operation.PERMISSION_LOSS,
+                            _activityId,
+                            _writerGeneration);
+            if (begin.getStatus()
+                    != RecordingOperationDispatcher.BeginStatus.ACCEPTED) {
+                Log.e(
+                        TAG,
+                        "Permission-loss teardown could not claim its lifecycle operation; "
+                                + "recording ownership remains retained.");
+                return;
+            }
+            permissionToken = begin.getToken();
+        }
+        _stopWatch.pauseTimer();
+        if (listenerGroup != null) {
+            listenerGroup.requestShutdown();
+        }
+        if (startingListenerGroup != null
+                && startingListenerGroup != listenerGroup) {
+            startingListenerGroup.requestShutdown();
+        }
+        boolean writerCancellationRequested =
+                permissionToken.getActivityId() > 0
+                        ? WRITERS.requestFenceGeneration(
+                                permissionToken.getActivityId(),
+                                permissionToken.getWriterGeneration())
+                        : WRITERS.requestFenceOwned(this);
+        if (!writerCancellationRequested) {
+            Log.e(
+                    TAG,
+                    "Permission loss could not immediately invalidate the exact writer; "
+                            + "bounded teardown will retain recovery.");
         }
 
-        _lifecycleExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-                LifecycleTermination writerTermination =
-                        retained.ownsActivity()
-                                ? WRITERS.fenceGeneration(
-                                        retained.getActivityId(),
-                                        retained.getGeneration(),
-                                        WRITER_FENCE_TIMEOUT_MILLIS)
-                                : WRITERS.fenceOwned(
-                                        SportLoggerService.this,
-                                        WRITER_FENCE_TIMEOUT_MILLIS);
-                LifecycleTermination listenerTermination =
-                        releaseOwnedListeners();
-                if (!writerTermination.succeeded()) {
-                    RecordingRecoveryState.Transition failureTransition =
-                            applyPermissionFenceFailureState(retained);
-                    postLifecycleFailure(writerFailure(
-                            writerTermination,
-                            retained.ownsActivity()
-                                    ? RecordingOperationResult.RecoveryAction
-                                            .SHOW_RECOVERY_RETRY
-                                    : RecordingOperationResult.RecoveryAction
-                                            .RETURN_TO_START,
-                            failureTransition));
-                    return;
-                }
-                if (!listenerTermination.succeeded()) {
-                    RecordingRecoveryState.Transition failureTransition =
-                            applyPermissionFenceFailureState(retained);
-                    postLifecycleFailure(listenerFailure(
-                            listenerTermination,
-                            retained.ownsActivity()
-                                    ? RecordingOperationResult.RecoveryAction
-                                            .SHOW_RECOVERY_RETRY
-                                    : RecordingOperationResult.RecoveryAction
-                                            .RETURN_TO_START,
-                            failureTransition));
-                    return;
-                }
-                if (retained.ownsActivity()
-                        && !recoveryTransition.isPersisted()) {
-                    synchronized (SportLoggerService.this) {
-                        _stateMachine.restoreOwnedActivity();
-                        showRecoveryRequired(retained.getActivityId(), false);
+        RecordingOperationDispatcher.DispatchStatus dispatch =
+                _operations.tryExecute(permissionToken, new Runnable() {
+                    @Override
+                    public void run() {
+                        runPermissionLoss(permissionToken);
                     }
-                    postLifecycleFailure(recoveryFailure(
-                            RecordingOperationResult.Status
-                                    .RECOVERY_PERSISTENCE_FAILED,
-                            retained.getActivityId(),
-                            RecordingOperationResult.RecoveryAction
-                                    .SHOW_RECOVERY_RETRY,
-                            recoveryTransition));
+                });
+        if (dispatch != RecordingOperationDispatcher.DispatchStatus.SCHEDULED) {
+            RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+            synchronized (this) {
+                if (operationOwnsLocked(permissionToken)) {
+                    if (retained.ownsActivity()) {
+                        _stateMachine.restoreOwnedActivity();
+                        showRecoveryRequired(retained.getActivityId());
+                    } else {
+                        _stateMachine.restoreIdle();
+                        showIdle();
+                    }
+                }
+            }
+            Log.e(
+                    TAG,
+                    "Permission-loss teardown dispatch was rejected; data was retained.");
+            postLifecycleFailure(
+                    permissionToken,
+                    retained.ownsActivity()
+                            ? RecordingOperationResult.recovery(
+                                    RecordingOperationResult.Status
+                                            .LISTENER_FAILED,
+                                    retained.getActivityId(),
+                                    RecordingOperationResult.RecoveryAction
+                                            .SHOW_RECOVERY_RETRY)
+                            : RecordingOperationResult.recovery(
+                                    RecordingOperationResult.Status
+                                            .LISTENER_FAILED,
+                                    0,
+                                    RecordingOperationResult.RecoveryAction
+                                            .RETURN_TO_START));
+        }
+    }
+
+    private void runPermissionLoss(
+            RecordingOperationDispatcher.Token permissionToken) {
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        int writerActivityId = permissionToken.getActivityId() > 0
+                ? permissionToken.getActivityId()
+                : retained.getActivityId();
+        long writerGeneration = permissionToken.getWriterGeneration() > 0L
+                ? permissionToken.getWriterGeneration()
+                : retained.getGeneration();
+        LifecycleTermination writerTermination =
+                writerActivityId > 0
+                        ? WRITERS.fenceGeneration(
+                                writerActivityId,
+                                writerGeneration,
+                                WRITER_FENCE_TIMEOUT_MILLIS)
+                        : WRITERS.fenceOwned(
+                                this, WRITER_FENCE_TIMEOUT_MILLIS);
+        LifecycleTermination listenerTermination = releaseOwnedListeners();
+        if (!writerTermination.succeeded()
+                || !listenerTermination.succeeded()) {
+            RecordingRecoveryState.Transition recoveryTransition =
+                    retained.ownsActivity()
+                            ? _recoveryState.requireRecovery(
+                                    retained.getActivityId(),
+                                    retained.getGeneration())
+                            : RecordingRecoveryState.Transition.rejected(
+                                    retained);
+            synchronized (this) {
+                if (!operationOwnsLocked(permissionToken)) {
                     return;
                 }
                 if (retained.ownsActivity()) {
-                    RecordingRecoveryState.Transition pausedTransition =
-                            _recoveryState.recordPaused(
+                    _stateMachine.restoreOwnedActivity();
+                    showRecoveryRequired(
+                            retained.getActivityId(),
+                            recoveryTransition.isPersisted());
+                } else {
+                    _stateMachine.restoreIdle();
+                    showIdle();
+                }
+            }
+            postLifecycleFailure(
+                    permissionToken,
+                    !writerTermination.succeeded()
+                            ? recoveryFailure(
+                                    writerStatus(writerTermination),
                                     retained.getActivityId(),
-                                    retained.getGeneration());
-                    if (!pausedTransition.isPersisted()) {
-                        RecordingRecoveryState.Transition failureTransition =
-                                applyPermissionFenceFailureState(retained);
-                        postLifecycleFailure(recoveryFailure(
+                                    retained.ownsActivity()
+                                            ? RecordingOperationResult
+                                                    .RecoveryAction
+                                                    .SHOW_RECOVERY_RETRY
+                                            : RecordingOperationResult
+                                                    .RecoveryAction
+                                                    .RETURN_TO_START,
+                                    recoveryTransition)
+                            : recoveryFailure(
+                                    listenerStatus(listenerTermination),
+                                    retained.getActivityId(),
+                                    retained.ownsActivity()
+                                            ? RecordingOperationResult
+                                                    .RecoveryAction
+                                                    .SHOW_RECOVERY_RETRY
+                                            : RecordingOperationResult
+                                                    .RecoveryAction
+                                                    .RETURN_TO_START,
+                                    recoveryTransition));
+            return;
+        }
+
+        RecordingRecoveryState.Transition pausedTransition = null;
+        if (retained.ownsActivity()) {
+            pausedTransition = _recoveryState.recordPaused(
+                    retained.getActivityId(), retained.getGeneration());
+            if (!pausedTransition.isPersisted()) {
+                synchronized (this) {
+                    if (!operationOwnsLocked(permissionToken)) {
+                        return;
+                    }
+                    _stateMachine.restoreOwnedActivity();
+                    showRecoveryRequired(retained.getActivityId(), false);
+                }
+                postLifecycleFailure(
+                        permissionToken,
+                        recoveryFailure(
                                 RecordingOperationResult.Status
                                         .RECOVERY_PERSISTENCE_FAILED,
                                 retained.getActivityId(),
                                 RecordingOperationResult.RecoveryAction
                                         .SHOW_RECOVERY_RETRY,
-                                failureTransition));
+                                pausedTransition));
+                return;
+            }
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(permissionToken)) {
+                return;
+            }
+            _stateMachine.completeSuccess(
+                    RecordingStateMachine.Operation.SHUTDOWN);
+            showIdle();
+        }
+        _stopWatch.resetTimer();
+        SharedData.getInstance().setHeartRate(0);
+        postPermissionLossCompletion(permissionToken);
+    }
+
+    private void failWithoutRecovery(
+            RecordingOperationDispatcher.Token token,
+            RecordingOperationResult.Status status,
+            int activityId) {
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            RecordingStateMachine.Operation stateOperation =
+                    stateOperation(token.getOperation());
+            if (stateOperation != null) {
+                _stateMachine.completeFailure(stateOperation, false);
+            }
+            if (activityId <= 0) {
+                _stateMachine.restoreIdle();
+                showIdle();
+            }
+        }
+        postOperationCompletion(
+                token,
+                activityId > 0
+                        ? RecordingOperationResult.recovery(
+                                status,
+                                activityId,
+                                RecordingOperationResult.RecoveryAction
+                                        .SHOW_RECOVERY_RETRY)
+                        : RecordingOperationResult.recovery(
+                                status,
+                                0,
+                                RecordingOperationResult.RecoveryAction
+                                        .RETURN_TO_START));
+    }
+
+    private void failWithRecovery(
+            RecordingOperationDispatcher.Token token,
+            RecordingOperationResult.Status status,
+            int activityId,
+            long writerGeneration,
+            RecordingRecoveryState.Transition existingTransition) {
+        if (!operationOwns(token)) {
+            return;
+        }
+        if (activityId <= 0) {
+            failWithoutRecovery(token, status, 0);
+            return;
+        }
+
+        RecordingRecoveryState.Transition recoveryTransition =
+                existingTransition;
+        if (recoveryTransition == null
+                || !recoveryTransition.isAccepted()
+                || _recoveryState.snapshot().getPhase()
+                        != RecordingRecoveryState.Phase.RECOVERY_REQUIRED) {
+            recoveryTransition =
+                    _recoveryState.requireRecovery(activityId, writerGeneration);
+        }
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                return;
+            }
+            RecordingStateMachine.Operation stateOperation =
+                    stateOperation(token.getOperation());
+            if (stateOperation != null
+                    && !_stateMachine.completeFailure(stateOperation, true)) {
+                _stateMachine.restoreOwnedActivity();
+            }
+            _activityId = activityId;
+            _writerGeneration = writerGeneration;
+            _listenerEventsActive.set(false);
+            _listenersReady = false;
+            showRecoveryRequired(
+                    activityId, recoveryTransition.isPersisted());
+        }
+        _stopWatch.pauseTimer();
+        if (recoveryTransition.isCurrentProcessOnly()) {
+            LifecycleTermination listenerTermination = releaseOwnedListeners();
+            if (!listenerTermination.succeeded()) {
+                Log.e(
+                        TAG,
+                        "Listener cleanup failed after recovery persistence failure: "
+                                + listenerTermination);
+            }
+        }
+        postOperationCompletion(
+                token,
+                recoveryFailure(
+                        status,
+                        activityId,
+                        RecordingOperationResult.RecoveryAction
+                                .SHOW_RECOVERY_RETRY,
+                        recoveryTransition));
+    }
+
+    private LifecycleTermination replaceOwnedListeners(
+            long serviceGeneration,
+            RecordingOperationDispatcher.Token operationToken) {
+        final long listenerGeneration;
+        synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            serviceGeneration)
+                    || !_operations.owns(operationToken)) {
+                return LifecycleTermination.FAILED;
+            }
+            listenerGeneration = ++_nextListenerGeneration;
+            _listenerGeneration = listenerGeneration;
+            _listenersReady = false;
+        }
+        final AtomicBoolean ownerActive = new AtomicBoolean(false);
+        final Handler uiForwardingHandler =
+                createListenerUiHandler(
+                        serviceGeneration, listenerGeneration);
+        Runnable permissionFailure = new Runnable() {
+            @Override
+            public void run() {
+                handleRecordingPermissionLoss(
+                        serviceGeneration, listenerGeneration);
+            }
+        };
+        ListenerGroup group = new ListenerGroup(
+                ownerActive,
+                new SensorListener(
+                        this,
+                        uiForwardingHandler,
+                        permissionFailure,
+                        ownerActive),
+                new GpsListener(
+                        this,
+                        uiForwardingHandler,
+                        permissionFailure,
+                        ownerActive),
+                "sport-logger-" + System.identityHashCode(this));
+        synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            serviceGeneration)
+                    || !_operations.owns(operationToken)) {
+                group.requestShutdown();
+                return LifecycleTermination.FAILED;
+            }
+            _startingListenerGroup = group;
+        }
+        LifecycleTermination replacement =
+                LISTENERS.replace(
+                        group,
+                        new OwnedListenerRegistry.OwnershipClaim() {
+                            @Override
+                            public boolean claim() {
+                                return operationOwns(operationToken);
+                            }
+                        },
+                        LISTENER_FENCE_TIMEOUT_MILLIS);
+        boolean registryOwner = LISTENERS.isOwner(group);
+        boolean retained;
+        synchronized (this) {
+            if (_startingListenerGroup == group) {
+                _startingListenerGroup = null;
+            }
+            retained = !_closing
+                    && _operations.isServiceGenerationCurrent(serviceGeneration)
+                    && _operations.owns(operationToken)
+                    && _listenerGeneration == listenerGeneration
+                    && registryOwner;
+            if (retained) {
+                _listenerGroup = group;
+                _listenersReady = replacement.succeeded();
+            } else {
+                _listenersReady = false;
+            }
+        }
+        if (!retained && registryOwner) {
+            LifecycleTermination staleRelease =
+                    LISTENERS.release(group, LISTENER_FENCE_TIMEOUT_MILLIS);
+            if (!staleRelease.succeeded()) {
+                Log.e(
+                        TAG,
+                        "Stale listener startup could not be released: "
+                                + staleRelease);
+            }
+            return LifecycleTermination.FAILED;
+        }
+        return retained ? replacement : LifecycleTermination.FAILED;
+    }
+
+    private LifecycleTermination releaseOwnedListeners() {
+        final ListenerGroup listenerGroup;
+        synchronized (this) {
+            _listenerEventsActive.set(false);
+            _listenersReady = false;
+            _listenerGeneration = ++_nextListenerGeneration;
+            listenerGroup = _listenerGroup;
+        }
+        if (listenerGroup == null) {
+            return LifecycleTermination.TERMINATED;
+        }
+        listenerGroup.requestShutdown();
+        LifecycleTermination termination =
+                LISTENERS.release(
+                        listenerGroup, LISTENER_FENCE_TIMEOUT_MILLIS);
+        synchronized (this) {
+            if (termination.succeeded() && _listenerGroup == listenerGroup) {
+                _listenerGroup = null;
+            }
+        }
+        return termination;
+    }
+
+    private Handler createListenerUiHandler(
+            final long serviceGeneration, final long listenerGeneration) {
+        return new Handler(Looper.getMainLooper()) {
+            @Override
+            public void handleMessage(Message message) {
+                Handler activityHandler;
+                synchronized (SportLoggerService.this) {
+                    if (_closing
+                            || !_listenerEventsActive.get()
+                            || !_operations.isServiceGenerationCurrent(
+                                    serviceGeneration)
+                            || _listenerGeneration != listenerGeneration) {
                         return;
                     }
+                    activityHandler = Config.activityHandler;
                 }
+                if (activityHandler != null) {
+                    Message forwarded = activityHandler.obtainMessage(
+                            message.what,
+                            message.arg1,
+                            message.arg2,
+                            message.obj);
+                    forwarded.sendToTarget();
+                }
+            }
+        };
+    }
 
-                _mainHandler.post(new Runnable() {
+    private void scheduleDestroyCleanup(
+            final int writerActivityId,
+            final long writerGeneration,
+            final ListenerGroup listenerGroup,
+            final ListenerGroup startingListenerGroup) {
+        try {
+            _destroyExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    LifecycleTermination writerTermination =
+                            writerActivityId > 0
+                                    ? WRITERS.fenceGeneration(
+                                            writerActivityId,
+                                            writerGeneration,
+                                            WRITER_FENCE_TIMEOUT_MILLIS)
+                                    : WRITERS.fenceOwned(
+                                            SportLoggerService.this,
+                                            WRITER_FENCE_TIMEOUT_MILLIS);
+                    LifecycleTermination listenerTermination =
+                            listenerGroup == null
+                                    ? LifecycleTermination.TERMINATED
+                                    : LISTENERS.release(
+                                            listenerGroup,
+                                            LISTENER_FENCE_TIMEOUT_MILLIS);
+                    LifecycleTermination startingListenerTermination =
+                            startingListenerGroup == null
+                                            || startingListenerGroup
+                                                    == listenerGroup
+                                    ? LifecycleTermination.TERMINATED
+                                    : LISTENERS.release(
+                                            startingListenerGroup,
+                                            LISTENER_FENCE_TIMEOUT_MILLIS);
+                    if (!writerTermination.succeeded()
+                            || !listenerTermination.succeeded()
+                            || !startingListenerTermination.succeeded()) {
+                        Log.e(
+                                TAG,
+                                "Destroyed service retained recovery because cleanup was incomplete: "
+                                        + "writer="
+                                        + writerTermination
+                                        + ", listeners="
+                                        + listenerTermination
+                                        + ", startingListeners="
+                                        + startingListenerTermination);
+                    }
+                }
+            });
+        } catch (RuntimeException exception) {
+            Log.e(
+                    TAG,
+                    "Destroyed service could not schedule bounded cleanup; retained metadata was "
+                            + "left intact.",
+                    exception);
+        } finally {
+            _destroyExecutor.shutdown();
+        }
+    }
+
+    private void initializeRetainedMirror() {
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        synchronized (this) {
+            if (retained.ownsActivity()) {
+                _activityId = retained.getActivityId();
+                _writerGeneration = retained.getGeneration();
+                _stateMachine.restoreOwnedActivity();
+                showRecoveryRequired(_activityId);
+            } else {
+                _stateMachine.restoreIdle();
+                showIdle();
+            }
+        }
+    }
+
+    private synchronized boolean claimActivity(
+            RecordingOperationDispatcher.Token token,
+            int activityId,
+            long writerGeneration) {
+        if (!operationOwnsLocked(token)) {
+            return false;
+        }
+        _activityId = activityId;
+        _writerGeneration = writerGeneration;
+        return true;
+    }
+
+    private boolean operationOwns(
+            RecordingOperationDispatcher.Token token) {
+        synchronized (this) {
+            return operationOwnsLocked(token);
+        }
+    }
+
+    private boolean operationOwnsLocked(
+            RecordingOperationDispatcher.Token token) {
+        return !_closing && _operations.owns(token);
+    }
+
+    private boolean listenersReady() {
+        ListenerGroup listenerGroup;
+        synchronized (this) {
+            if (!_startupReady
+                    || !_listenersReady
+                    || _listenerGroup == null) {
+                return false;
+            }
+            listenerGroup = _listenerGroup;
+        }
+        return LISTENERS.isOwner(listenerGroup);
+    }
+
+    private void postPermissionLossCompletion(
+            RecordingOperationDispatcher.Token permissionToken) {
+        synchronized (this) {
+            if (!operationOwnsLocked(permissionToken)) {
+                Log.w(
+                        TAG,
+                        "Dropped stale permission-loss completion without notifying UI.");
+                return;
+            }
+            _operations.finish(permissionToken);
+        }
+        postMainForGeneration(
+                permissionToken.getServiceGeneration(),
+                new Runnable() {
                     @Override
                     public void run() {
-                        SharedData shared = SharedData.getInstance();
-                        shared.IsRecording = false;
-                        shared.IsPaused = false;
-                        shared.RequiresRecovery = false;
-                        shared.RecoveryCurrentProcessOnly = false;
-                        shared.setHeartRate(0);
-                        _stopWatch.resetTimer();
-                        ISportLoggerServiceClient client = _serviceClient;
+                        ISportLoggerServiceClient client;
+                        synchronized (SportLoggerService.this) {
+                            client = _serviceClient;
+                        }
                         if (client != null) {
                             client.onRecordingPermissionLost();
                         }
                         stopSelf();
                     }
                 });
+    }
+
+    private void postOperationCompletion(
+            RecordingOperationDispatcher.Token token,
+            RecordingOperationResult result) {
+        RecordingOperationResult completion =
+                RecordingOperationResult.forOperation(
+                        result,
+                        token.getOperation(),
+                        token.getOperationToken());
+        synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            token.getServiceGeneration())
+                    || !_operations.owns(token)) {
+                Log.w(
+                        TAG,
+                        "Dropped stale operation completion without notifying UI: "
+                                + token.getOperation()
+                                + "/"
+                                + token.getOperationToken());
+                return;
             }
-        });
-    }
-
-    private RecordingRecoveryState.Transition applyPermissionFenceFailureState(
-            RecordingRecoveryState.Snapshot retained) {
-        if (retained.ownsActivity()) {
-            return markRecoveryRequired();
+            _pendingOperationCompletion = completion;
+            _operations.finish(token);
         }
-        _stateMachine.restoreIdle();
-        showIdle();
-        return RecordingRecoveryState.Transition.rejected(retained);
+        postMainForGeneration(
+                token.getServiceGeneration(),
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        deliverPendingOperationCompletion();
+                    }
+                });
     }
 
-    private void handleListenerLifecycleFailure(LifecycleTermination termination) {
-        _permissionLossHandled = true;
-        _listenersReady = false;
-        _stopWatch.pauseTimer();
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
-        if (!retained.ownsActivity()) {
-            _recoveryState.clearAfterPreRecordingFailure();
-            _stateMachine.restoreIdle();
-            showIdle();
-            postLifecycleFailure(listenerFailure(
-                    termination,
-                    RecordingOperationResult.RecoveryAction.RETURN_TO_START));
-            return;
+    private void postLifecycleFailure(
+            RecordingOperationDispatcher.Token token,
+            RecordingOperationResult failure) {
+        RecordingOperationResult publishedFailure =
+                RecordingOperationResult.forOperation(
+                        failure,
+                        token.getOperation(),
+                        token.getOperationToken());
+        Log.e(
+                TAG,
+                "Recording lifecycle failure: "
+                        + publishedFailure.getStatus());
+        synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            token.getServiceGeneration())
+                    || !_operations.owns(token)) {
+                Log.e(
+                        TAG,
+                        "Late lifecycle failure retained data but did not notify stale UI: "
+                                + publishedFailure.getStatus());
+                return;
+            }
+            _pendingLifecycleFailure = publishedFailure;
+            _operations.finish(token);
         }
-        RecordingRecoveryState.Transition recoveryTransition =
-                _recoveryState.requireRecovery(
-                retained.getActivityId(), retained.getGeneration());
-        _stateMachine.restoreOwnedActivity();
-        showRecoveryRequired(
-                retained.getActivityId(), recoveryTransition.isPersisted());
-        releaseOwnedListeners();
-        postLifecycleFailure(listenerFailure(
-                termination,
-                RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                recoveryTransition));
-    }
-
-    private void postLifecycleFailure(final RecordingOperationResult failure) {
-        Log.e(TAG, "Recording lifecycle failure: " + failure.getStatus());
-        _pendingLifecycleFailure = failure;
-        _mainHandler.post(new Runnable() {
+        postMainForGeneration(token.getServiceGeneration(), new Runnable() {
             @Override
             public void run() {
                 deliverPendingLifecycleFailure();
-                if (failure.getRecoveryAction()
-                        == RecordingOperationResult.RecoveryAction.RETURN_TO_START) {
+                if (publishedFailure.getRecoveryAction()
+                        == RecordingOperationResult.RecoveryAction
+                                .RETURN_TO_START) {
                     stopSelf();
                 }
             }
         });
     }
 
-    private synchronized void deliverPendingLifecycleFailure() {
-        ISportLoggerServiceClient client = _serviceClient;
-        RecordingOperationResult failure = _pendingLifecycleFailure;
-        if (client != null && failure != null) {
+    private void postMainForGeneration(
+            final long serviceGeneration, final Runnable callback) {
+        _mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (_operations.isServiceGenerationCurrent(serviceGeneration)
+                        && !_closing) {
+                    callback.run();
+                }
+            }
+        });
+    }
+
+    private void deliverPendingOperationCompletion() {
+        ISportLoggerServiceClient client;
+        RecordingOperationResult completion;
+        synchronized (this) {
+            client = _serviceClient;
+            completion = _pendingOperationCompletion;
+            if (client == null || completion == null || _closing) {
+                return;
+            }
+            _pendingOperationCompletion = null;
+        }
+        client.onRecordingOperationCompleted(completion);
+    }
+
+    private void deliverPendingLifecycleFailure() {
+        ISportLoggerServiceClient client;
+        RecordingOperationResult failure;
+        synchronized (this) {
+            client = _serviceClient;
+            failure = _pendingLifecycleFailure;
+            if (client == null || failure == null || _closing) {
+                return;
+            }
             _pendingLifecycleFailure = null;
-            client.onRecordingLifecycleFailure(failure);
+        }
+        client.onRecordingLifecycleFailure(failure);
+    }
+
+    private static RecordingStateMachine.Operation stateOperation(
+            RecordingOperationResult.Operation operation) {
+        switch (operation) {
+            case START:
+                return RecordingStateMachine.Operation.START;
+            case PAUSE:
+                return RecordingStateMachine.Operation.PAUSE;
+            case RESUME:
+                return RecordingStateMachine.Operation.RESUME;
+            case STOP:
+                return RecordingStateMachine.Operation.STOP;
+            case DISCARD:
+                return RecordingStateMachine.Operation.DISCARD;
+            case RECOVER:
+                return RecordingStateMachine.Operation.RECOVER;
+            default:
+                return null;
         }
     }
 
-    private RecordingOperationResult writerFailure(
-            LifecycleTermination termination,
-            RecordingOperationResult.RecoveryAction recoveryAction) {
-        return writerFailure(termination, recoveryAction, null);
+    private static RecordingStatus pendingStatus(
+            RecordingOperationResult.Operation operation, int activityId) {
+        switch (operation) {
+            case START:
+                return RecordingStatus.IDLE;
+            case PAUSE:
+                return RecordingStatus.RECORDING;
+            case RESUME:
+            case STOP:
+            case DISCARD:
+                return RecordingStatus.PAUSED;
+            case RECOVER:
+            case NONE:
+                return activityId > 0
+                        ? RecordingStatus.RECOVERY_REQUIRED
+                        : RecordingStatus.IDLE;
+            case PERMISSION_LOSS:
+                return activityId > 0
+                        ? RecordingStatus.RECOVERY_REQUIRED
+                        : RecordingStatus.IDLE;
+            default:
+                return null;
+        }
     }
 
-    private RecordingOperationResult writerFailure(
-            LifecycleTermination termination,
-            RecordingOperationResult.RecoveryAction recoveryAction,
-            RecordingRecoveryState.Transition recoveryTransition) {
-        RecordingOperationResult.Status status;
+    private static RecordingOperationResult operationResult(
+            RecordingOperationResult.Status status,
+            RecordingOperationResult.Operation operation,
+            long operationToken,
+            int activityId) {
+        return RecordingOperationResult.operation(
+                status,
+                operation,
+                operationToken,
+                activityId,
+                RecordingOperationResult.RecoveryAction.NONE,
+                RecordingOperationResult.RecoveryRetention.NONE);
+    }
+
+    private static RecordingOperationResult.Status writerStatus(
+            LifecycleTermination termination) {
         if (termination == LifecycleTermination.INTERRUPTED) {
-            status = RecordingOperationResult.Status.INTERRUPTED;
-        } else if (termination == LifecycleTermination.TIMED_OUT) {
-            status = RecordingOperationResult.Status.WRITER_TIMED_OUT;
-        } else {
-            status = RecordingOperationResult.Status.WRITER_FAILED;
+            return RecordingOperationResult.Status.INTERRUPTED;
         }
-        return recoveryFailure(
-                status, _activityId, recoveryAction, recoveryTransition);
+        if (termination == LifecycleTermination.TIMED_OUT) {
+            return RecordingOperationResult.Status.WRITER_TIMED_OUT;
+        }
+        return RecordingOperationResult.Status.WRITER_FAILED;
     }
 
-    private RecordingOperationResult listenerFailure(
-            LifecycleTermination termination,
-            RecordingOperationResult.RecoveryAction recoveryAction) {
-        return listenerFailure(termination, recoveryAction, null);
-    }
-
-    private RecordingOperationResult listenerFailure(
-            LifecycleTermination termination,
-            RecordingOperationResult.RecoveryAction recoveryAction,
-            RecordingRecoveryState.Transition recoveryTransition) {
-        RecordingOperationResult.Status status;
+    private static RecordingOperationResult.Status listenerStatus(
+            LifecycleTermination termination) {
         if (termination == LifecycleTermination.INTERRUPTED) {
-            status = RecordingOperationResult.Status.INTERRUPTED;
-        } else if (termination == LifecycleTermination.TIMED_OUT) {
-            status = RecordingOperationResult.Status.LISTENER_TIMED_OUT;
-        } else {
-            status = RecordingOperationResult.Status.LISTENER_FAILED;
+            return RecordingOperationResult.Status.INTERRUPTED;
         }
-        return recoveryFailure(
-                status, _activityId, recoveryAction, recoveryTransition);
+        if (termination == LifecycleTermination.TIMED_OUT) {
+            return RecordingOperationResult.Status.LISTENER_TIMED_OUT;
+        }
+        return RecordingOperationResult.Status.LISTENER_FAILED;
     }
 
-    private RecordingOperationResult recoveryFailure(
+    private static RecordingOperationResult recoveryFailure(
             RecordingOperationResult.Status status,
             int activityId,
             RecordingOperationResult.RecoveryAction recoveryAction,
@@ -1232,174 +2246,19 @@ public class SportLoggerService extends Service {
         RecordingOperationResult.RecoveryRetention retention;
         if (activityId <= 0
                 || recoveryAction
-                == RecordingOperationResult.RecoveryAction.RETURN_TO_START) {
+                        == RecordingOperationResult.RecoveryAction
+                                .RETURN_TO_START) {
             retention = RecordingOperationResult.RecoveryRetention.NONE;
         } else if (recoveryTransition != null
                 && recoveryTransition.isCurrentProcessOnly()) {
             retention =
-                    RecordingOperationResult.RecoveryRetention.CURRENT_PROCESS_ONLY;
+                    RecordingOperationResult.RecoveryRetention
+                            .CURRENT_PROCESS_ONLY;
         } else {
             retention = RecordingOperationResult.RecoveryRetention.DURABLE;
         }
         return RecordingOperationResult.recovery(
                 status, activityId, recoveryAction, retention);
-    }
-
-    private void restoreRetainedRecording() {
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
-        if (!retained.ownsActivity()) {
-            _recoveryState.clearAfterPreRecordingFailure();
-            _stateMachine.restoreIdle();
-            showIdle();
-            return;
-        }
-
-        boolean activityExists = true;
-        try {
-            SqlLogger.initDatabase();
-            activityExists = SqlLogger.activityExists(retained.getActivityId());
-        } catch (RuntimeException exception) {
-            Log.e(TAG, "Could not validate retained recording metadata.", exception);
-        }
-        RecordingRecoveryState.Transition replacementTransition =
-                _recoveryState.prepareForServiceReplacement(activityExists);
-        if (!replacementTransition.isPersisted()) {
-            Log.e(TAG, "Could not persist replacement recovery state.");
-        }
-
-        retained = _recoveryState.snapshot();
-        if (!retained.ownsActivity() || !activityExists) {
-            _activityId = 0;
-            _writerGeneration = 0L;
-            _stateMachine.restoreIdle();
-            showIdle();
-            return;
-        }
-
-        _activityId = retained.getActivityId();
-        _writerGeneration = retained.getGeneration();
-        WRITERS.restoreGenerationFloor(_writerGeneration);
-        _stateMachine.restoreOwnedActivity();
-        showRecoveryRequired(
-                _activityId, replacementTransition.isPersisted());
-        if (!replacementTransition.isPersisted()) {
-            LifecycleTermination writerTermination =
-                    WRITERS.fenceGeneration(
-                            _activityId,
-                            _writerGeneration,
-                            WRITER_FENCE_TIMEOUT_MILLIS);
-            if (!writerTermination.succeeded()
-                    && writerTermination
-                    != LifecycleTermination.TERMINATED_WITH_FAILURE) {
-                Log.e(
-                        TAG,
-                        "Could not fence the retained writer after recovery persistence failed: "
-                                + writerTermination);
-            }
-            _pendingLifecycleFailure = recoveryFailure(
-                    RecordingOperationResult.Status.RECOVERY_PERSISTENCE_FAILED,
-                    _activityId,
-                    RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                    replacementTransition);
-        }
-    }
-
-    private synchronized RecordingRecoveryState.Transition markRecoveryRequired() {
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
-        if (!retained.ownsActivity()) {
-            _stateMachine.restoreIdle();
-            showIdle();
-            return RecordingRecoveryState.Transition.rejected(retained);
-        }
-        _listenerEventsActive.set(false);
-        _listenersReady = false;
-        _stopWatch.pauseTimer();
-        RecordingRecoveryState.Transition transition =
-                _recoveryState.requireRecovery(
-                        retained.getActivityId(), retained.getGeneration());
-        _stateMachine.restoreOwnedActivity();
-        showRecoveryRequired(
-                retained.getActivityId(), transition.isPersisted());
-        if (transition.isCurrentProcessOnly()) {
-            LifecycleTermination writerTermination =
-                    WRITERS.fenceGeneration(
-                            retained.getActivityId(),
-                            retained.getGeneration(),
-                            WRITER_FENCE_TIMEOUT_MILLIS);
-            LifecycleTermination listenerTermination =
-                    releaseOwnedListeners();
-            if (!writerTermination.succeeded()
-                    && writerTermination
-                    != LifecycleTermination.TERMINATED_WITH_FAILURE) {
-                Log.e(
-                        TAG,
-                        "Could not fence writer after recovery persistence failed: "
-                                + writerTermination);
-            }
-            if (!listenerTermination.succeeded()) {
-                Log.e(
-                        TAG,
-                        "Could not fence listeners after recovery persistence failed: "
-                                + listenerTermination);
-            }
-        }
-        return transition;
-    }
-
-    private synchronized LifecycleTermination releaseOwnedListeners() {
-        _listenerEventsActive.set(false);
-        _listenersReady = false;
-        ListenerGroup listenerGroup = _listenerGroup;
-        if (listenerGroup == null) {
-            return LifecycleTermination.TERMINATED;
-        }
-        LifecycleTermination termination =
-                LISTENERS.release(
-                        listenerGroup, LISTENER_FENCE_TIMEOUT_MILLIS);
-        if (termination.succeeded() && _listenerGroup == listenerGroup) {
-            _listenerGroup = null;
-        }
-        return termination;
-    }
-
-    private RecordingOperationResult rollbackCreatedActivity(
-            int activityId, RecordingOperationResult.Status failureStatus) {
-        if (deleteActivity(activityId)) {
-            RecordingRecoveryState.Transition clearTransition =
-                    _recoveryState.clearAfterDiscard(activityId);
-            _activityId = 0;
-            _writerGeneration = 0L;
-            _stateMachine.completeFailure(
-                    RecordingStateMachine.Operation.START, false);
-            showIdle();
-            return clearTransition.isPersisted()
-                    ? RecordingOperationResult.of(failureStatus, 0)
-                    : RecordingOperationResult.recovery(
-                            RecordingOperationResult.Status
-                                    .RECOVERY_PERSISTENCE_FAILED,
-                            0,
-                            RecordingOperationResult.RecoveryAction
-                                    .RETURN_TO_START);
-        }
-
-        _stateMachine.completeFailure(RecordingStateMachine.Operation.START, true);
-        RecordingRecoveryState.Transition recoveryTransition =
-                markRecoveryRequired();
-        return recoveryFailure(
-                RecordingOperationResult.Status.DATABASE_FAILED,
-                activityId,
-                RecordingOperationResult.RecoveryAction.SHOW_RECOVERY_RETRY,
-                recoveryTransition);
-    }
-
-    private boolean deleteActivity(int activityId) {
-        try {
-            new SqlLogger().deleteActivity(activityId);
-            return true;
-        } catch (RuntimeException exception) {
-            Log.e(TAG, "Could not delete activity " + activityId + ".", exception);
-            return false;
-        }
     }
 
     private static void showRecording(int activityId) {
@@ -1457,14 +2316,16 @@ public class SportLoggerService extends Service {
                 NOTIFICATION_CHANNEL_ID,
                 getString(R.string.notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription(getString(R.string.notification_channel_description));
+        channel.setDescription(
+                getString(R.string.notification_channel_description));
         _notificationManager.createNotificationChannel(channel);
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                         .setWhen(System.currentTimeMillis())
                         .setContentTitle(getString(R.string.notification_title))
                         .setContentText(getString(R.string.notification_text))
-                        .setSmallIcon(R.drawable.ic_play_circle_outline_black_24dp)
+                        .setSmallIcon(
+                                R.drawable.ic_play_circle_outline_black_24dp)
                         .setOngoing(true)
                         .setOnlyAlertOnce(true)
                         .setContentIntent(pending);

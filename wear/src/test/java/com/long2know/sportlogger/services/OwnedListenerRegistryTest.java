@@ -70,6 +70,22 @@ public class OwnedListenerRegistryTest {
         assertFalse(registry.isOwner(oldOwner));
     }
 
+    @Test
+    public void staleOperationCannotStopOrReplaceTheCurrentListenerOwner() {
+        OwnedListenerRegistry<FakeLifecycle> registry = new OwnedListenerRegistry<>();
+        FakeLifecycle currentOwner = new FakeLifecycle();
+        FakeLifecycle staleReplacement = new FakeLifecycle();
+        registry.replace(currentOwner, 50);
+
+        assertEquals(
+                LifecycleTermination.FAILED,
+                registry.replace(staleReplacement, () -> false, 50));
+
+        assertEquals(0, currentOwner.shutdownCalls);
+        assertEquals(0, staleReplacement.startCalls);
+        assertTrue(registry.isOwner(currentOwner));
+    }
+
     private static final class FakeLifecycle implements BoundedLifecycle {
         LifecycleTermination shutdownResult = LifecycleTermination.TERMINATED;
         LifecycleTermination startResult = LifecycleTermination.TERMINATED;

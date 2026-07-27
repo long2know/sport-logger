@@ -12,7 +12,7 @@ import static org.junit.Assert.assertTrue;
 
 public class RecordingLifecycleContractTest {
     @Test
-    public void writerAndExportUseCapturedActivityId() throws Exception {
+    public void writerAndAsyncExportUseCapturedActivityId() throws Exception {
         String service = read(
                 "wear/src/main/java/com/long2know/sportlogger/services/"
                         + "SportLoggerService.java");
@@ -26,29 +26,228 @@ public class RecordingLifecycleContractTest {
         assertTrue(logger.contains("public SqlLogger(int activityId)"));
         assertTrue(logger.contains("int activityId = _activityId;"));
         assertFalse(logger.contains("int activityId = singleton.ActivityId"));
-        assertTrue(activity.contains("int activityId = result.getActivityId();"));
-        assertTrue(activity.contains("getTrackPointsByActivity(activityId)"));
+        assertTrue(activity.contains(
+                "exportActivityAsync(result.getActivityId())"));
+        assertTrue(activity.contains(
+                "getTrackPointsByActivity(activityId)"));
     }
 
     @Test
-    public void listenersHaveNoProcessWideWorkerHandler() throws Exception {
+    public void uiLifecycleEntryPointsOnlySubmitSerializedWork() throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+
+        assertActionSubmitsOnly(service, "startNewActivity", "pauseActivity");
+        assertActionSubmitsOnly(service, "pauseActivity", "resumeActivity");
+        assertActionSubmitsOnly(service, "resumeActivity", "stopActivity");
+        assertActionSubmitsOnly(service, "stopActivity", "discardActivity");
+        assertActionSubmitsOnly(service, "discardActivity", "retryRecovery");
+        String recovery = method(service, "public RecordingOperationResult retryRecovery()",
+                "private RecordingOperationResult submitOperation");
+        assertTrue(recovery.contains("submitOperation("));
+        assertFalse(recovery.contains("fence"));
+        assertFalse(recovery.contains("SqlLogger"));
+
+        assertFalse(service.contains(
+                "public synchronized RecordingOperationResult startNewActivity()"));
+        assertFalse(service.contains(
+                "public synchronized RecordingOperationResult pauseActivity()"));
+        assertFalse(service.contains(
+                "public synchronized RecordingOperationResult resumeActivity()"));
+        assertFalse(service.contains(
+                "public synchronized RecordingOperationResult stopActivity()"));
+        assertFalse(service.contains(
+                "public synchronized RecordingOperationResult discardActivity()"));
+        assertTrue(service.contains("RecordingOperationDispatcher"));
+        assertTrue(service.contains("_operations.tryExecute(token"));
+    }
+
+    @Test
+    public void serviceStateLocksContainNoFencePersistenceOrClientCallback()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String recovery = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingRecoveryState.java");
+
+        assertSynchronizedBlocksExclude(
+                service,
+                "WRITERS.fence",
+                "LISTENERS.replace",
+                "LISTENERS.release",
+                "releaseOwnedListeners()",
+                "SqlLogger.",
+                "deleteActivity(",
+                "onRecordingOperationCompleted(",
+                "onRecordingLifecycleFailure(",
+                "onRecordingPermissionLost(");
+        assertSynchronizedBlocksExclude(recovery, "_store.save", "_store.clear");
+    }
+
+    private static void assertSynchronizedBlocksExclude(
+            String source, String... forbiddenValues) {
+        int searchFrom = 0;
+        while (true) {
+            int marker = source.indexOf("synchronized (this) {", searchFrom);
+            if (marker < 0) {
+                break;
+            }
+            int open = source.indexOf('{', marker);
+            int close = matchingBrace(source, open);
+            String block = source.substring(open, close + 1);
+            for (String forbidden : forbiddenValues) {
+                assertFalse(block.contains(forbidden));
+            }
+            searchFrom = close + 1;
+        }
+    }
+
+    @Test
+    public void terminalEffectsRequireOwnedCommittedOperation() throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String stop = method(
+                service, "private void runStop(", "private void runDiscard(");
+        String discard = method(
+                service, "private void runDiscard(", "private void runRecovery(");
+
+        assertTrue(stop.contains("RecordingTerminalTransition.finish("));
+        assertTrue(discard.contains("RecordingTerminalTransition.finish("));
+        assertTrue(stop.contains("if (!operationOwns(token))"));
+        assertTrue(discard.contains("if (!operationOwns(token))"));
+        assertTrue(stop.contains("releaseOwnedListeners()"));
+        assertTrue(discard.contains("releaseOwnedListeners()"));
+        assertTrue(
+                stop.indexOf("RecordingTerminalTransition.finish(")
+                        < stop.indexOf("_recoveryState.clearAfterStop("));
+        assertTrue(
+                discard.indexOf("RecordingTerminalTransition.finish(")
+                        < discard.indexOf("new SqlLogger().deleteActivity("));
+    }
+
+    @Test
+    public void exportAndNavigationExistOnlyInAsyncSuccessCallback()
+            throws Exception {
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
+        String stopAction = method(
+                activity, "public void stopActivity()", "public void pauseActivity()");
+        String completion = method(
+                activity,
+                "public void onRecordingOperationCompleted(",
+                "public void onRecordingLifecycleFailure(");
+
+        assertFalse(stopAction.contains("SqlLogger"));
+        assertFalse(stopAction.contains("exportActivityAsync("));
+        assertTrue(completion.contains("if (!result.isSuccess())"));
+        assertTrue(completion.contains("case STOP:"));
+        assertTrue(completion.contains(
+                "exportActivityAsync(result.getActivityId())"));
+        assertTrue(completion.contains("showStartScreenIfPossible()"));
+        assertTrue(activity.contains("_exportExecutor.execute("));
+    }
+
+    @Test
+    public void acceptedOrDuplicateRequestsDisableRecordingControls()
+            throws Exception {
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
+        String start = read(
+                "wear/src/main/java/com/long2know/sportlogger/"
+                        + "StartActivityFragment.java");
+        String end = read(
+                "wear/src/main/java/com/long2know/sportlogger/"
+                        + "EndActivityFragment.java");
+        String recovery = read(
+                "wear/src/main/java/com/long2know/sportlogger/"
+                        + "RecoveryActivityFragment.java");
+
+        assertTrue(activity.contains(
+                "if (result.isAccepted() || result.isPending())"));
+        assertTrue(activity.contains("getPendingOperation()"));
+        assertTrue(activity.contains("setRecordingControlsPending(true)"));
+        assertTrue(activity.contains("clearPendingOperation()"));
+        assertTrue(start.contains("_start.setEnabled(!_operationPending)"));
+        assertTrue(end.contains("button.setEnabled(!_operationPending)"));
+        assertTrue(recovery.contains("_retry.setEnabled(!_operationPending)"));
+    }
+
+    @Test
+    public void completionIsPublishedBeforeItsOperationTokenIsReleased()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String completion = method(
+                service,
+                "private void postOperationCompletion(",
+                "private void postLifecycleFailure(");
+        String failure = method(
+                service,
+                "private void postLifecycleFailure(",
+                "private void postMainForGeneration(");
+        String submission = method(
+                service,
+                "private RecordingOperationResult submitOperation(",
+                "private void runOperation(");
+
+        assertTrue(completion.contains("_operations.owns(token)"));
+        assertTrue(
+                completion.indexOf("_pendingOperationCompletion = completion;")
+                        < completion.indexOf("_operations.finish(token);"));
+        assertTrue(failure.contains("_operations.owns(token)"));
+        assertTrue(
+                failure.indexOf("_pendingLifecycleFailure = publishedFailure;")
+                        < failure.indexOf("_operations.finish(token);"));
+        assertTrue(submission.contains("_pendingLifecycleFailure"));
+    }
+
+    @Test
+    public void listenersHaveNoProcessWideWorkerHandlerOrRegistryWaitLock()
+            throws Exception {
         String sensors = read(
                 "wear/src/main/java/com/long2know/sportlogger/services/"
                         + "SensorListener.java");
         String gps = read(
                 "wear/src/main/java/com/long2know/sportlogger/services/"
                         + "GpsListener.java");
+        String registry = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "OwnedListenerRegistry.java");
         String service = read(
                 "wear/src/main/java/com/long2know/sportlogger/services/"
                         + "SportLoggerService.java");
 
         assertFalse(sensors.contains("static Handler"));
         assertFalse(gps.contains("static Handler"));
-        assertFalse(service.contains("WorkerHandler"));
-        assertTrue(service.contains("OwnedListenerRegistry"));
-        assertTrue(service.contains("LISTENERS.replace("));
-        assertTrue(service.contains("LISTENERS.release("));
-        assertTrue(service.contains("if (_serviceClient == client)"));
+        assertTrue(sensors.contains("synchronized (_ownerActive)"));
+        assertTrue(gps.contains("synchronized (_ownerActive)"));
+        assertFalse(sensors.contains(
+                "SharedData.getInstance().setHeartRate(0)"));
+        assertFalse(gps.contains(
+                "SharedData.getInstance().setLocation(new LocationData())"));
+        assertFalse(registry.contains(
+                "synchronized LifecycleTermination replace"));
+        assertFalse(registry.contains(
+                "synchronized LifecycleTermination release"));
+        assertTrue(registry.contains("previous.shutdown(timeoutMillis)"));
+        assertTrue(registry.contains("owner.shutdown(timeoutMillis)"));
+        assertTrue(service.contains(
+                "final AtomicBoolean ownerActive = new AtomicBoolean(false)"));
+        assertTrue(service.contains("_startingListenerGroup = group;"));
+        assertTrue(service.contains(
+                "startingListenerGroup.requestShutdown();"));
+        assertTrue(service.contains(
+                "new OwnedListenerRegistry.OwnershipClaim()"));
+        assertTrue(service.contains(
+                "_listenerGeneration != listenerGeneration"));
+        assertTrue(service.contains(
+                "&& _operations.owns(operationToken)"));
+        assertTrue(service.contains("listenerGroup.requestShutdown();"));
     }
 
     @Test
@@ -64,32 +263,40 @@ public class RecordingLifecycleContractTest {
         assertFalse(fragment.contains("postDelayed(this, 0)"));
     }
 
-    @Test
-    public void terminalEffectsRequireCleanWriterAndCommittedStateTransition()
-            throws Exception {
-        String service = read(
-                "wear/src/main/java/com/long2know/sportlogger/services/"
-                        + "SportLoggerService.java");
-        String stop = service.substring(
-                service.indexOf("public synchronized RecordingOperationResult stopActivity()"),
-                service.indexOf(
-                        "public synchronized RecordingOperationResult discardActivity()"));
-        String discard = service.substring(
-                service.indexOf(
-                        "public synchronized RecordingOperationResult discardActivity()"),
-                service.indexOf(
-                        "public synchronized RecordingOperationResult retryRecovery()"));
+    private static void assertActionSubmitsOnly(
+            String service, String action, String nextAction) {
+        String body = method(
+                service,
+                "public RecordingOperationResult " + action + "()",
+                "public RecordingOperationResult " + nextAction + "()");
+        assertTrue(body.contains("submitOperation("));
+        assertFalse(body.contains("WRITERS."));
+        assertFalse(body.contains("releaseOwnedListeners"));
+        assertFalse(body.contains("SqlLogger"));
+        assertFalse(body.contains("await"));
+    }
 
-        assertTrue(stop.contains("RecordingTerminalTransition.finish("));
-        assertTrue(discard.contains("RecordingTerminalTransition.finish("));
-        assertTrue(
-                stop.indexOf("RecordingTerminalTransition.finish(")
-                        < stop.indexOf("_recoveryState.clearAfterStop("));
-        assertTrue(
-                discard.indexOf("RecordingTerminalTransition.finish(")
-                        < discard.indexOf("new SqlLogger().deleteActivity("));
-        assertFalse(stop.contains(".quiesced()"));
-        assertFalse(discard.contains(".quiesced()"));
+    private static String method(String source, String start, String end) {
+        int startIndex = source.indexOf(start);
+        int endIndex = source.indexOf(end, startIndex + start.length());
+        if (startIndex < 0 || endIndex < 0) {
+            throw new IllegalStateException(
+                    "Could not find method range: " + start + " -> " + end);
+        }
+        return source.substring(startIndex, endIndex);
+    }
+
+    private static int matchingBrace(String source, int openBrace) {
+        int depth = 0;
+        for (int index = openBrace; index < source.length(); index++) {
+            char character = source.charAt(index);
+            if (character == '{') {
+                depth++;
+            } else if (character == '}' && --depth == 0) {
+                return index;
+            }
+        }
+        throw new IllegalStateException("Unbalanced source block");
     }
 
     private static String read(String relativePath) throws Exception {
@@ -107,6 +314,7 @@ public class RecordingLifecycleContractTest {
             }
             directory = directory.getParent();
         }
-        throw new IllegalStateException("Could not find repository file: " + relativePath);
+        throw new IllegalStateException(
+                "Could not find repository file: " + relativePath);
     }
 }

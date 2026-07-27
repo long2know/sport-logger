@@ -184,6 +184,23 @@ public class RecordingRecoveryStateTest {
         assertEquals(19L, recovery.snapshot().getGeneration());
     }
 
+    @Test
+    public void failedDiscardClearRetainsMetadataForExplicitCleanupRetry() {
+        FakeStore store = new FakeStore();
+        RecordingRecoveryState recovery = createRecording(store, 141, 23L);
+        store.failClears = true;
+
+        RecordingRecoveryState.Transition transition =
+                recovery.clearAfterDiscard(141);
+
+        assertTrue(transition.isAccepted());
+        assertFalse(transition.isPersisted());
+        assertTrue(recovery.snapshot().ownsActivity());
+        assertEquals(
+                RecordingRecoveryState.Phase.RECORDING,
+                recovery.snapshot().getPhase());
+    }
+
     private static RecordingRecoveryState createRecording(
             FakeStore store, int activityId, long generation) {
         RecordingRecoveryState recovery = new RecordingRecoveryState(store);

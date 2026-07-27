@@ -101,30 +101,50 @@ The service checks the complete permission set before foreground startup, before
 resuming a recording, and immediately before every scheduled track-point write. The sensor thread
 also handles a permission-race `SecurityException`.
 
-Recording now has an explicit single-generation state machine. Start, pause, resume, stop, discard,
-and shutdown transitions are idempotent: duplicate UI actions are no-ops while invalid cross-state
-actions are rejected. A writer generation captures its activity ID before scheduling, and every SQL
-insert uses that immutable ID instead of consulting the mutable shared `ActivityId`. A process-wide
-writer coordinator permits at most one generation and fences cancellation plus an in-flight write
-before pause, stop/export, discard/delete, permission-loss completion, or a later recording. The
-fence is bounded to two seconds and honors interruption. If it times out or otherwise fails, the
-operation returns a typed failure, keeps the activity and database rows, and does not export or
-delete as though shutdown succeeded. A generation that terminates because its write threw is also a
-failed fence, not successful quiescence. Writer-failure callbacks and terminal state transitions are
-serialized through the service, and stop/discard must commit the exact state-machine transition
-before ownership clearing, export, or deletion is allowed. A raced write failure therefore retains
-the exact activity/generation in retry-only recovery and returns `WRITER_FAILED`.
+Recording now has an explicit single-generation state machine behind a dedicated lifecycle executor.
+Start, pause, resume, stop, discard, permission-loss, startup recovery, and explicit recovery return
+immediately from the binder call. An accepted request carries an operation token; duplicate clicks
+return the existing pending token, and invalid cross-state actions are rejected without entering a
+second fence. The Wear activity disables start/resume/stop/discard/retry controls while that token is
+in flight, including after activity reconnection. Until completion is delivered, status reconciliation
+keeps the previous stable screen; navigation changes only from the asynchronous completion callback.
+The service publishes the completion or failure into its reconnect-safe pending slot before releasing
+the operation token, so no later click can enter the pipeline between state commit and result delivery.
+
+Each operation captures the service generation, operation token, activity ID, and writer generation
+under a short service lock. Writer/listener fences, listener readiness waits, synchronous recovery
+metadata commits, SQLite creation/deletion, and export preparation run after that lock is released.
+The service reacquires the lock only to verify that the same token and generation still own the
+operation and to commit the state transition. No service, state-machine, listener-registry, or
+recovery-state monitor is held across a bounded wait or persistence call.
+Writer and listener replacement fences revalidate that claim while holding their coordinator lock;
+a stale service that passed an earlier check therefore cannot fence whichever generation a newer
+service has installed in the meantime.
+
+A writer generation captures its activity ID before scheduling, and every SQL insert uses that
+immutable ID instead of consulting the mutable shared `ActivityId`. A generation claim is published
+to the service before the scheduler can run, so permission loss or destruction cannot strand a newer
+untracked writer. A process-wide writer coordinator permits at most one generation and fences
+cancellation plus an in-flight write before pause, stop/export, discard/delete, permission-loss
+completion, or a later recording. The fence is bounded to two seconds and honors interruption. If it
+times out or otherwise fails, the operation returns a typed failure, keeps the activity and database
+rows, and does not export or delete as though shutdown succeeded. A generation that terminates
+because its write threw is also a failed fence, not successful quiescence. Stop/discard must validate
+the exact operation token and commit the state-machine transition before terminal effects are
+authorized. A raced write failure therefore retains the exact activity/generation in retry-only
+recovery and returns `WRITER_FAILED`.
 
 Recovery metadata is synchronously committed to private `SharedPreferences` as the exact activity
-ID, last writer generation, and phase. This metadata is not service ownership: writer and listener
-ownership remain in the existing fenced coordinators. A replacement service first validates that
-the activity row still exists, restores the writer-generation floor, marks the tuple as recovery
-required, and fences only that exact prior generation. Paused controls appear only after the writer
-is quiescent and the replacement listener group acknowledges startup. The same activity ID can then
-be resumed with a newer generation, stopped/exported, or discarded. An uncaught scheduled-write
-failure is surfaced as `WRITER_FAILED`, closes writer and listener ownership, pauses the stopwatch,
-and remains retry-only. An explicit recovery retry must establish a clean fence and listener
-generation before paused controls can be restored.
+ID, last writer generation, and phase, but the commit itself runs on the lifecycle executor without
+holding the recovery-state monitor. This metadata is not service ownership: writer and listener
+ownership remain in the existing fenced coordinators. Replacement startup also runs asynchronously:
+it validates that the activity row still exists, restores the writer-generation floor, marks the
+tuple as recovery required, and fences only that exact prior generation. Paused controls appear only
+after the writer is quiescent and the replacement listener group acknowledges startup. The same
+activity ID can then be resumed with a newer generation, stopped/exported, or discarded. An uncaught
+scheduled-write failure is surfaced as `WRITER_FAILED`, closes writer and listener ownership, pauses
+the stopwatch, and remains retry-only. An explicit recovery retry must establish a clean fence and
+listener generation before paused controls can be restored.
 
 A listener or service-startup failure before an activity row exists remains `IDLE`, clears the
 non-authoritative shared UI mirror, and returns to the start screen. A failure with an owned activity
@@ -144,22 +164,38 @@ stopwatch, retains the exact tuple in memory, and renders the retry screen. The 
 `RECOVERY_PERSISTENCE_FAILED` with `CURRENT_PROCESS_ONLY` retention, and the screen explicitly warns
 that process-death recovery is not guaranteed until a later retry commits successfully.
 
-Sensor and GPS loopers are owned by one service-instance listener group. Replacement first disables
-the old generation, unregisters both listener sets, requests safe looper quit, and waits for both
-termination acknowledgements within the same two-second bound. A timed-out owner remains registered
-as the owner, so no replacement starts beside it; a stale service release cannot clear a newer
-owner. The service client is also cleared by identity, preventing an old activity instance from
-disconnecting its replacement.
+Sensor and GPS loopers are owned by one service-instance listener group with a distinct per-group
+active gate and listener-generation number. Replacement first invalidates the old generation,
+unregisters both listener sets, requests safe looper quit, and waits for both termination
+acknowledgements within the same two-second bound. Listener registry locks are released before those
+waits. A timed-out owner remains registered as the owner, so no replacement starts beside it; a
+stale service release cannot clear a newer owner. Queued sensor messages and permission callbacks
+also verify the listener generation, so an old group cannot update shared samples, tear down a
+replacement, or notify its UI after replacement. A group being started is tracked separately from
+the established owner, so destruction or permission loss closes its active gate even when shutdown
+races the listener-readiness handshake. The service client is cleared by identity,
+preventing an old activity instance from disconnecting its replacement.
 
-A detected revocation first pauses callback production, then obtains the bounded writer and listener
-fences off the main thread. Only after both succeed does it reset the stopwatch, notify the activity,
-and stop the service. An owned activity's recovery tuple remains paused so a service created after a
-permission regrant can restore its controls. Reset cancels the stopwatch callback, clears the shared
-duration to `00:00:00`, and invalidates any stale callback that was already dequeued. Once
-permission-loss teardown begins, that service instance rejects start and resume, so a regrant cannot
-race old callbacks or scheduled writes into a later recording. A timeout is surfaced through
-`RecordingOperationResult` and retains the activity in the retry-only recovery state rather than
-presenting permission shutdown as successful.
+A detected revocation invalidates any active operation token and closes listener callback production
+immediately, then queues bounded writer and listener fences on the same lifecycle executor. This
+preemption does not wait for a stop/discard fence while holding the service monitor, so permission
+loss cannot lock-invert or self-timeout against a terminal operation. Only after both fences succeed
+does it reset the stopwatch, notify the activity, and stop the service. An owned activity's recovery
+tuple remains paused so a service created after a permission regrant can restore its controls. Reset
+cancels the stopwatch callback, clears the shared duration to `00:00:00`, and invalidates any stale
+callback that was already dequeued. Once teardown begins, that service instance rejects start and resume.
+A timeout is surfaced through `RecordingOperationResult` and
+retains the activity in the retry-only recovery state rather than presenting permission shutdown as
+successful.
+
+`onDestroy()` is nonblocking. It first marks the service closing, clears its client, invalidates the
+service/operation and listener generations, and only then shuts down the lifecycle executor. Exact
+writer and listener cleanup continues on a bounded destruction executor without updating UI or
+clearing recovery ownership. A writer/listener callback that races or follows destruction therefore
+cannot submit to the shut-down executor, throw `RejectedExecutionException`, mutate a replacement
+service, export/delete data, or notify stale UI. Rejected cleanup is logged explicitly and leaves the
+database and durable recovery tuple intact; current-process-only metadata is logged as unable to
+promise service/process replacement recovery.
 
 `SensorFragment` uses one main-thread handler through a generation-guarded callback loop. Repeated
 resume/start calls cannot create parallel chains, and pause, permission-loss state, view destruction,
@@ -167,7 +203,9 @@ or fragment destruction removes the callback through the same handler and preven
 from rescheduling. Activity failure/status rendering is also retained when fragment transactions are
 unsafe after state save. `onStart`, `onResume`, and service reconnection reconcile the authoritative
 service or retained recovery status, then render the pending idle, recording, paused, or retry screen
-once the `FragmentManager` can safely commit.
+once the `FragmentManager` can safely commit. Stop export database reads and serialization run on a
+separate activity executor and are entered only from a successful stop completion; failed or stale
+terminal operations retain data and never take the export/delete/navigation success path.
 
 ## Pinned direct dependencies
 
@@ -247,8 +285,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Thirty-four unit-test
-reports contained 154 tests with zero failures, errors, or skips. Lint completed with zero errors and
+The final clean local run completed successfully with 202 actionable tasks. Thirty-six unit-test
+reports contained 200 tests with zero failures, errors, or skips. Lint completed with zero errors and
 82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:

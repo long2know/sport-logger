@@ -14,6 +14,7 @@ import java.util.Set;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class RecordingPermissionContractTest {
@@ -60,40 +61,44 @@ public class RecordingPermissionContractTest {
     }
 
     @Test
-    public void permissionLossUsesBoundedFencesBeforeNotificationAndShutdown() throws Exception {
+    public void permissionLossQueuesBoundedFencesBeforeNotificationAndShutdown()
+            throws Exception {
         String service = new String(
                 Files.readAllBytes(findRepositoryFile(
                         "wear/src/main/java/com/long2know/sportlogger/services/"
                                 + "SportLoggerService.java")),
                 StandardCharsets.UTF_8);
-        int cleanup = service.indexOf("private void handleRecordingPermissionLoss()");
-        int pause = service.indexOf("_stopWatch.pauseTimer();", cleanup);
-        int cancelWrites = service.indexOf("WRITERS.fenceOwned(", cleanup);
-        int stopListeners = service.indexOf("releaseOwnedListeners();", cleanup);
-        int reset = service.indexOf("_stopWatch.resetTimer();", cleanup);
-        int callback = service.indexOf("client.onRecordingPermissionLost();", cleanup);
-        int shutdown = service.indexOf("stopSelf();", cleanup);
+        int handlerStart = service.indexOf(
+                "private void handleRecordingPermissionLoss(long serviceGeneration)");
+        int handlerEnd = service.indexOf(
+                "private void runPermissionLoss(", handlerStart);
+        String handler = service.substring(handlerStart, handlerEnd);
+        int workerStart = handlerEnd;
+        int workerEnd = service.indexOf(
+                "private void failWithoutRecovery(", workerStart);
+        String worker = service.substring(workerStart, workerEnd);
+        int completionStart = service.indexOf(
+                "private void postPermissionLossCompletion(");
+        int completionEnd = service.indexOf(
+                "private void postOperationCompletion(", completionStart);
+        String completion = service.substring(completionStart, completionEnd);
 
-        assertTrue(cleanup >= 0);
-        assertTrue(pause > cleanup);
-        assertTrue(cancelWrites > pause);
-        assertTrue(stopListeners > cancelWrites);
-        assertTrue(reset > stopListeners);
-        assertTrue(callback > reset);
-        assertTrue(shutdown > callback);
+        assertTrue(handler.contains("_operations.invalidateActive();"));
+        assertTrue(handler.contains("_operations.tryExecute(permissionToken"));
+        assertFalse(handler.contains("WRITERS.fence"));
+        assertFalse(handler.contains("releaseOwnedListeners();"));
+        assertTrue(worker.contains("WRITERS.fenceGeneration("));
+        assertTrue(worker.contains("WRITERS.fenceOwned("));
+        assertTrue(worker.contains("releaseOwnedListeners();"));
+        assertTrue(worker.contains("_stopWatch.resetTimer();"));
+        assertTrue(worker.contains(
+                "postPermissionLossCompletion(permissionToken);"));
+        assertTrue(completion.contains("client.onRecordingPermissionLost();"));
+        assertTrue(completion.contains("stopSelf();"));
         assertTrue(service.contains("WRITER_FENCE_TIMEOUT_MILLIS"));
         assertTrue(service.contains("LISTENER_FENCE_TIMEOUT_MILLIS"));
         assertTrue(service.contains("postLifecycleFailure"));
-        assertTrue(service.contains("shared.IsPaused = true"));
-
-        String start = service.substring(
-                service.indexOf("public synchronized RecordingOperationResult startNewActivity()"),
-                service.indexOf("public synchronized RecordingOperationResult pauseActivity()"));
-        String resume = service.substring(
-                service.indexOf("public synchronized RecordingOperationResult resumeActivity()"),
-                service.indexOf("public synchronized RecordingOperationResult stopActivity()"));
-        assertTrue(start.contains("_permissionLossHandled"));
-        assertTrue(resume.contains("_permissionLossHandled"));
+        assertTrue(service.contains("_permissionLossHandled"));
     }
 
     private static Path findRepositoryFile(String relativePath) {

@@ -26,7 +26,8 @@ public class RecordingRecoveryContractTest {
                 "utilities/src/main/java/com/long2know/utilities/data_access/"
                         + "SqlLogger.java");
 
-        assertTrue(service.contains("restoreRetainedRecording()"));
+        assertTrue(service.contains("initializeRetainedMirror()"));
+        assertTrue(service.contains("private void runStartup("));
         assertTrue(service.contains("SqlLogger.activityExists("));
         assertTrue(service.contains("WRITERS.restoreGenerationFloor("));
         assertTrue(service.contains("WRITERS.fenceGeneration("));
@@ -44,8 +45,8 @@ public class RecordingRecoveryContractTest {
         String activity = read(
                 "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
 
-        assertTrue(service.contains("RecoveryAction.RETURN_TO_START"));
-        assertTrue(service.contains("RecoveryAction.SHOW_RECOVERY_RETRY"));
+        assertTrue(service.contains("RETURN_TO_START"));
+        assertTrue(service.contains("SHOW_RECOVERY_RETRY"));
         assertFalse(service.contains("SHOW_PAUSED_CONTROLS"));
         assertTrue(activity.contains("RecoveryActivityFragment"));
         assertTrue(activity.contains("retryRecordingRecovery()"));
@@ -70,10 +71,15 @@ public class RecordingRecoveryContractTest {
                 "wear/src/main/java/com/long2know/sportlogger/services/"
                         + "SportLoggerService.java");
 
-        assertTrue(activity.contains("_loggingService.retryRecovery()"));
-        assertTrue(activity.contains("_loggingService.resumeActivity()"));
-        assertTrue(activity.contains("_loggingService.stopActivity()"));
-        assertTrue(activity.contains("_loggingService.discardActivity()"));
+        assertTrue(activity.contains(
+                "RecordingOperationResult result = _loggingService.retryRecovery()"));
+        assertTrue(activity.contains("handleOperationRequest(result)"));
+        assertTrue(activity.contains(
+                "handleOperationRequest(_loggingService.resumeActivity())"));
+        assertTrue(activity.contains(
+                "handleOperationRequest(_loggingService.stopActivity())"));
+        assertTrue(activity.contains(
+                "handleOperationRequest(_loggingService.discardActivity())"));
         assertTrue(service.contains("_recoveryState.recordRecording("));
         assertTrue(service.contains("_recoveryState.clearAfterStop("));
         assertTrue(service.contains("_recoveryState.clearAfterDiscard("));
@@ -92,18 +98,18 @@ public class RecordingRecoveryContractTest {
 
         int failureHandler = service.indexOf("private void handleWriterTaskFailure(");
         int nextMethod = service.indexOf(
-                "private LifecycleTermination replaceOwnedListeners()", failureHandler);
+                "private void handleRecordingPermissionLoss(", failureHandler);
         String writerFailure = service.substring(failureHandler, nextMethod);
         int permissionHandler = service.indexOf(
-                "private void handleRecordingPermissionLoss()");
+                "private void handleRecordingPermissionLoss(long serviceGeneration)");
         int permissionNext = service.indexOf(
-                "private RecordingRecoveryState.Transition "
-                        + "applyPermissionFenceFailureState(",
+                "private void failWithoutRecovery(",
                 permissionHandler);
         String permissionFailure =
                 service.substring(permissionHandler, permissionNext);
 
-        assertTrue(writerFailure.contains("recoveryTransition.isAccepted()"));
+        assertTrue(writerFailure.contains("_operations.tryExecute(cleanupToken"));
+        assertTrue(writerFailure.contains("operationOwns(cleanupToken)"));
         assertTrue(writerFailure.contains("recoveryTransition.isPersisted()"));
         assertTrue(writerFailure.contains("WRITERS.fenceGeneration("));
         assertTrue(writerFailure.contains("releaseOwnedListeners()"));
@@ -111,11 +117,36 @@ public class RecordingRecoveryContractTest {
         assertFalse(writerFailure.contains(
                 "|| !_recoveryState.requireRecovery("));
         assertTrue(permissionFailure.contains(
-                "!recoveryTransition.isPersisted()"));
+                "!pausedTransition.isPersisted()"));
         assertTrue(permissionFailure.contains("releaseOwnedListeners()"));
-        assertTrue(service.contains("RecoveryRetention.CURRENT_PROCESS_ONLY"));
+        assertTrue(service.contains("CURRENT_PROCESS_ONLY"));
         assertTrue(shared.contains("RecoveryCurrentProcessOnly"));
         assertTrue(activity.contains("recording_recovery_not_persisted"));
+    }
+
+    @Test
+    public void destructionClosesGenerationBeforeAsyncBoundedCleanup()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        int destroyStart = service.indexOf("public void onDestroy()");
+        int destroyEnd = service.indexOf(
+                "public void setServiceClient(", destroyStart);
+        String destroy = service.substring(destroyStart, destroyEnd);
+
+        assertTrue(destroy.indexOf("_closing = true;")
+                < destroy.indexOf("_operations.close();"));
+        assertTrue(destroy.indexOf("WRITERS.requestFence")
+                < destroy.indexOf("_operations.close();"));
+        assertTrue(destroy.indexOf("_operations.close();")
+                < destroy.indexOf("scheduleDestroyCleanup("));
+        assertFalse(destroy.contains("WRITERS.fence"));
+        assertFalse(destroy.contains("LISTENERS.release"));
+        assertTrue(service.contains(
+                "Late writer failure was not dispatched."));
+        assertTrue(service.contains(
+                "Dropped stale operation completion without notifying UI"));
     }
 
     @Test
@@ -146,6 +177,11 @@ public class RecordingRecoveryContractTest {
                 "process-death recovery is not guaranteed"));
         assertTrue(documentation.contains("fragment transactions are"));
         assertTrue(documentation.contains("unsafe after state save"));
+        assertTrue(documentation.contains("dedicated lifecycle executor"));
+        assertTrue(documentation.contains("operation token"));
+        assertTrue(documentation.contains("`onDestroy()` is nonblocking"));
+        assertTrue(documentation.contains("`RejectedExecutionException`"));
+        assertTrue(documentation.contains("separate activity executor"));
     }
 
     private static String read(String relativePath) throws Exception {

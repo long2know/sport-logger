@@ -10,6 +10,7 @@ final class ListenerGroup implements BoundedLifecycle {
     private final Thread _sensorThread;
     private final Thread _locationThread;
     private boolean _started;
+    private boolean _shutdownRequested;
 
     ListenerGroup(
             AtomicBoolean active,
@@ -24,12 +25,16 @@ final class ListenerGroup implements BoundedLifecycle {
     }
 
     @Override
-    public synchronized LifecycleTermination start(long timeoutMillis) {
-        if (_started) {
-            return LifecycleTermination.TERMINATED;
+    public LifecycleTermination start(long timeoutMillis) {
+        synchronized (this) {
+            if (_started) {
+                return LifecycleTermination.TERMINATED;
+            }
+            _started = true;
+            synchronized (_active) {
+                _active.set(!_shutdownRequested);
+            }
         }
-        _started = true;
-        _active.set(true);
         _sensorThread.start();
         _locationThread.start();
         long deadlineNanos = System.nanoTime()
@@ -54,9 +59,7 @@ final class ListenerGroup implements BoundedLifecycle {
 
     @Override
     public LifecycleTermination shutdown(long timeoutMillis) {
-        _active.set(false);
-        _sensorListener.requestShutdown();
-        _locationListener.requestShutdown();
+        requestShutdown();
 
         long deadlineNanos = System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMillis));
@@ -81,8 +84,21 @@ final class ListenerGroup implements BoundedLifecycle {
         }
     }
 
+    void requestShutdown() {
+        synchronized (this) {
+            _shutdownRequested = true;
+            synchronized (_active) {
+                _active.set(false);
+            }
+        }
+        _sensorListener.requestShutdown();
+        _locationListener.requestShutdown();
+    }
+
     boolean isActive() {
-        return _active.get();
+        synchronized (_active) {
+            return _active.get();
+        }
     }
 
     private static boolean await(ManagedListener listener, long deadlineNanos)

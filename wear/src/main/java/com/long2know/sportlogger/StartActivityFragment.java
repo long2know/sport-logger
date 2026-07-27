@@ -18,6 +18,7 @@ public class StartActivityFragment extends Fragment {
     private static final String TAG = "StartActivityFragment";
 
     private ImageButton _start;
+    private boolean _operationPending;
 
     public StartActivityFragment() {
         // Empty constructor required for fragment subclasses
@@ -29,7 +30,14 @@ public class StartActivityFragment extends Fragment {
         View rootView = inflater.inflate(R.layout.fragment_start_activity, container, false);
         _start = rootView.findViewById(R.id.btn_start_activity);
         attachEventHandlers();
+        applyOperationPending();
         return rootView;
+    }
+
+    @Override
+    public void onDestroyView() {
+        _start = null;
+        super.onDestroyView();
     }
 
     private void attachEventHandlers() {
@@ -39,6 +47,18 @@ public class StartActivityFragment extends Fragment {
                 ((MainActivity) getActivity()).startNewActivity();
             }
         });
+    }
+
+    void setOperationPending(boolean operationPending) {
+        _operationPending = operationPending;
+        applyOperationPending();
+    }
+
+    private void applyOperationPending() {
+        if (_start != null) {
+            _start.setEnabled(!_operationPending);
+            _start.setAlpha(_operationPending ? 0.45F : 1.0F);
+        }
     }
 
     public void onEnterAmbientInFragment(Bundle ambientDetails) {

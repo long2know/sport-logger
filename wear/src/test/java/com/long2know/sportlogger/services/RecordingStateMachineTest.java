@@ -118,4 +118,26 @@ public class RecordingStateMachineTest {
                 RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.RECOVER));
     }
+
+    @Test
+    public void inFlightTransitionsExposeTheirPreviousStableUiState() {
+        RecordingStateMachine machine = new RecordingStateMachine();
+
+        machine.begin(RecordingStateMachine.Operation.START);
+        assertEquals(
+                RecordingStateMachine.State.IDLE,
+                machine.getStableState());
+        machine.completeSuccess(RecordingStateMachine.Operation.START);
+
+        machine.begin(RecordingStateMachine.Operation.PAUSE);
+        assertEquals(
+                RecordingStateMachine.State.RECORDING,
+                machine.getStableState());
+        machine.completeSuccess(RecordingStateMachine.Operation.PAUSE);
+
+        machine.begin(RecordingStateMachine.Operation.STOP);
+        assertEquals(
+                RecordingStateMachine.State.PAUSED,
+                machine.getStableState());
+    }
 }

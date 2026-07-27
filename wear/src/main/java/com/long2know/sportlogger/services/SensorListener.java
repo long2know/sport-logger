@@ -81,7 +81,9 @@ final class SensorListener implements ManagedListener {
 
     @Override
     public void requestShutdown() {
-        _ownerActive.set(false);
+        synchronized (_ownerActive) {
+            _ownerActive.set(false);
+        }
         Handler handler;
         synchronized (_lifecycleLock) {
             _shutdownRequested = true;
@@ -129,20 +131,18 @@ final class SensorListener implements ManagedListener {
             _eventListener = new SensorEventListener() {
                 @Override
                 public void onSensorChanged(SensorEvent event) {
-                    if (!_ownerActive.get() || _shutdownRequested) {
-                        return;
-                    }
-
-                    SharedData singleton = SharedData.getInstance();
-                    int sensorType = event.sensor.getType();
-                    if (sensorType == Sensor.TYPE_STEP_DETECTOR) {
-                        _stepCount++;
-                        singleton.setSteps(_stepCount);
-                    } else if (sensorType == Sensor.TYPE_HEART_RATE) {
-                        singleton.setHeartRate(event.values[0]);
-                    }
-
-                    if (_ownerActive.get()) {
+                    synchronized (_ownerActive) {
+                        if (!_ownerActive.get() || _shutdownRequested) {
+                            return;
+                        }
+                        SharedData singleton = SharedData.getInstance();
+                        int sensorType = event.sensor.getType();
+                        if (sensorType == Sensor.TYPE_STEP_DETECTOR) {
+                            _stepCount++;
+                            singleton.setSteps(_stepCount);
+                        } else if (sensorType == Sensor.TYPE_HEART_RATE) {
+                            singleton.setHeartRate(event.values[0]);
+                        }
                         Message message =
                                 _uiHandler.obtainMessage(1, sensorType, 0, event);
                         message.sendToTarget();
@@ -161,8 +161,12 @@ final class SensorListener implements ManagedListener {
         } catch (SecurityException exception) {
             Log.e(TAG, "Recording sensor permission was denied or revoked.", exception);
             stopListeners();
-            if (_ownerActive.compareAndSet(true, false)
-                    && _permissionFailureCallback != null) {
+            boolean notify;
+            synchronized (_ownerActive) {
+                notify = _ownerActive.get();
+                _ownerActive.set(false);
+            }
+            if (notify && _permissionFailureCallback != null) {
                 _permissionFailureCallback.run();
             }
         }
@@ -182,8 +186,5 @@ final class SensorListener implements ManagedListener {
         _heartRateSensor = null;
         _stepCountSensor = null;
         _stepDetectSensor = null;
-        if (!_ownerActive.get()) {
-            SharedData.getInstance().setHeartRate(0);
-        }
     }
 }

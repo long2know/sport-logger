@@ -1,36 +1,74 @@
 package com.long2know.sportlogger.services;
 
 final class OwnedListenerRegistry<T extends BoundedLifecycle> {
-    private T _owner;
+    interface OwnershipClaim {
+        boolean claim();
+    }
 
-    synchronized LifecycleTermination replace(T replacement, long timeoutMillis) {
-        if (_owner == replacement) {
-            return LifecycleTermination.TERMINATED;
+    private T _owner;
+    private long _version;
+
+    LifecycleTermination replace(T replacement, long timeoutMillis) {
+        return replace(replacement, null, timeoutMillis);
+    }
+
+    LifecycleTermination replace(
+            T replacement,
+            OwnershipClaim ownershipClaim,
+            long timeoutMillis) {
+        T previous;
+        long version;
+        synchronized (this) {
+            if (ownershipClaim != null && !ownershipClaim.claim()) {
+                return LifecycleTermination.FAILED;
+            }
+            if (_owner == replacement) {
+                return LifecycleTermination.TERMINATED;
+            }
+            previous = _owner;
+            version = _version;
         }
-        if (_owner != null) {
-            LifecycleTermination termination = _owner.shutdown(timeoutMillis);
+
+        if (previous != null) {
+            LifecycleTermination termination = previous.shutdown(timeoutMillis);
             if (!termination.succeeded()) {
                 return termination;
             }
         }
 
-        _owner = replacement;
+        synchronized (this) {
+            if ((ownershipClaim != null && !ownershipClaim.claim())
+                    || _version != version
+                    || _owner != previous) {
+                return LifecycleTermination.FAILED;
+            }
+            _owner = replacement;
+            _version++;
+        }
         try {
-            LifecycleTermination startup = replacement.start(timeoutMillis);
-            return startup;
+            return replacement.start(timeoutMillis);
         } catch (RuntimeException exception) {
             return LifecycleTermination.FAILED;
         }
     }
 
-    synchronized LifecycleTermination release(T owner, long timeoutMillis) {
-        if (_owner != owner) {
-            return LifecycleTermination.TERMINATED;
+    LifecycleTermination release(T owner, long timeoutMillis) {
+        long version;
+        synchronized (this) {
+            if (_owner != owner) {
+                return LifecycleTermination.TERMINATED;
+            }
+            version = _version;
         }
 
         LifecycleTermination termination = owner.shutdown(timeoutMillis);
-        if (termination.succeeded() && _owner == owner) {
-            _owner = null;
+        if (termination.succeeded()) {
+            synchronized (this) {
+                if (_version == version && _owner == owner) {
+                    _owner = null;
+                    _version++;
+                }
+            }
         }
         return termination;
     }
