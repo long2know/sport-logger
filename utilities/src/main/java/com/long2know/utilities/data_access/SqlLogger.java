@@ -1,6 +1,7 @@
 package com.long2know.utilities.data_access;
 
 import android.content.ContentValues;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
@@ -47,12 +48,13 @@ public class SqlLogger implements Runnable {
     public static final String T_SPEED="SPEED";
     public static final String T_BEARING="BEARING";
     public static final String T_HEARTRATE="HEARTRATE";
+    static final int DATABASE_OPEN_MODE = Context.MODE_PRIVATE;
 
     private SQLiteDatabase _db;
 
     public SqlLogger() {
         _db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
     }
 
     @Override
@@ -105,7 +107,7 @@ public class SqlLogger implements Runnable {
 
     public static void initDatabase() {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         db.execSQL("CREATE TABLE IF NOT EXISTS " + ACTIVITY_TABLE_NAME
                 + " (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, DESCRIPTION VARCHAR,"
@@ -138,7 +140,7 @@ public class SqlLogger implements Runnable {
         Log.i(TAG, queryBuf.toString());
 
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
         db.execSQL(queryBuf.toString());
 
         String queryLastRowInserted = "select last_insert_rowid()";
@@ -179,7 +181,7 @@ public class SqlLogger implements Runnable {
 
     public SportActivity getSportActivity(int id) {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         String[] field = {A_ROWID, A_NAME, A_DESCRIPTION, A_START_TIME_UTC, A_DISTANCE, A_TIME, A_PACE};
         String whereClause = A_ROWID + "=?";
@@ -224,7 +226,7 @@ public class SqlLogger implements Runnable {
 
     public List<SportActivity> getSportActivities() {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         String[] field = {A_ROWID, A_NAME, A_DESCRIPTION, A_START_TIME_UTC, A_DISTANCE, A_TIME, A_PACE};
 //        String whereClause = A_ROWID + "=?";
@@ -275,7 +277,7 @@ public class SqlLogger implements Runnable {
 
     public void updateSportActivity(SportActivity sportActivity) {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         // Create a new map of values, where column names are the keys
         ContentValues values = new ContentValues();
@@ -296,7 +298,7 @@ public class SqlLogger implements Runnable {
 
     public void deleteActivity(int id) {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         // Delete the track points
         String whereClause = T_ACTIVITY_ID + "=?";
@@ -311,7 +313,7 @@ public class SqlLogger implements Runnable {
 
     public List<SportTrackPoint> getTrackPointsByActivity(int activityId) {
         SQLiteDatabase db = Config.context.openOrCreateDatabase(DATABASE_NAME,
-                SQLiteDatabase.OPEN_READWRITE, null);
+                DATABASE_OPEN_MODE, null);
 
         String[] field = {T_ROWID, T_ACTIVITY_ID, T_TIMESTAMP_UTC, T_LATITUDE, T_LONGITUDE, T_ALTITUDE,
                 T_ACCURACY, T_SPEED, T_BEARING, T_HEARTRATE};

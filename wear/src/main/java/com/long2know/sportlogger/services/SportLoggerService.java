@@ -12,9 +12,10 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
-import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.widget.Toast;
+
+import androidx.core.app.NotificationCompat;
 
 import com.long2know.utilities.models.Config;
 import com.long2know.sportlogger.MainActivity;
@@ -26,9 +27,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static android.support.constraint.Constraints.TAG;
-
 public class SportLoggerService extends Service {
+    private static final String TAG = "SportLoggerService";
 
     private NotificationManager _notificationManager;
     private final IBinder _binder = new LocalBinder();
@@ -57,7 +57,6 @@ public class SportLoggerService extends Service {
                 }
             }
         };
-
         _notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         _sensorListener = new SensorListener();
@@ -117,12 +116,18 @@ public class SportLoggerService extends Service {
         // Open the app when notification is clicked
         Intent contentIntent = new Intent(this, MainActivity.class);
         contentIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        PendingIntent pending = PendingIntent.getActivity(getBaseContext(), 0, contentIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent pending = PendingIntent.getActivity(
+                getBaseContext(),
+                0,
+                contentIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         String channelId = "long2know_sport_logger";
         CharSequence name = "long2know_channel";
-        NotificationChannel channel = new NotificationChannel(channelId, name,NotificationManager.IMPORTANCE_DEFAULT);
+        NotificationChannel channel = new NotificationChannel(
+                channelId,
+                name,
+                NotificationManager.IMPORTANCE_DEFAULT);
         _notificationManager.createNotificationChannel(channel);
         NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, channelId);
         notificationBuilder.setAutoCancel(true)

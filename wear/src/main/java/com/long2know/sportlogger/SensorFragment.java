@@ -4,24 +4,27 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.os.Bundle;
 import android.os.Handler;
-import android.support.v4.app.Fragment;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
+import androidx.fragment.app.Fragment;
+
 import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
 import com.long2know.utilities.models.SharedData;
 
-import static android.support.constraint.Constraints.TAG;
 import static com.long2know.utilities.models.Config.handler;
 
 /**
  * Fragment that appears in the "content_frame", just shows the currently selected planet.
  */
 public class SensorFragment extends Fragment {
+    private static final String TAG = "SensorFragment";
+
     private TextView _heartRate;
     private TextView _latitude;
     private TextView _longitude;
@@ -32,7 +35,7 @@ public class SensorFragment extends Fragment {
 
     public SensorFragment() {
         // Empty constructor required for fragment subclasses
-        _handler = new Handler();
+        _handler = new Handler(Looper.getMainLooper());
     }
 
     @Override

@@ -11,10 +11,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 
-import android.support.v4.content.ContextCompat;
 import android.util.Log;
+
+import androidx.core.content.ContextCompat;
+
 import java.util.concurrent.ScheduledExecutorService;
-import static android.support.constraint.Constraints.TAG;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
@@ -32,6 +33,8 @@ import java.util.TimeZone;
 import java.util.UUID;
 
 public class GpsListener implements Runnable  {
+    private static final String TAG = "GpsListener";
+
     public static Handler WorkerHandler;
     private Handler _handler;
     private ScheduledExecutorService _scheduler;
