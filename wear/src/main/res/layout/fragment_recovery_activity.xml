@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.wear.widget.BoxInsetLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="18dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="@string/recording_recovery_required" />
+
+        <ImageButton
+            android:id="@+id/btn_retry_recording_recovery"
+            android:layout_width="75dp"
+            android:layout_height="75dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/ic_play_circle_outline_black_24dp"
+            android:contentDescription="@string/retry_recording_recovery" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/retry_recording_recovery" />
+    </LinearLayout>
+</androidx.wear.widget.BoxInsetLayout>

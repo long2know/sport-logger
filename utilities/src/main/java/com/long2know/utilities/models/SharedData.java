@@ -5,6 +5,7 @@ public class SharedData {
     public String Duration;
     public boolean IsRecording;
     public boolean IsPaused;
+    public boolean RequiresRecovery;
 
     public int ActivityId;
 

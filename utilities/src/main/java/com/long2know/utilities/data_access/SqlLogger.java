@@ -185,6 +185,29 @@ public class SqlLogger implements Runnable {
         return idLastInsertedRow;
     }
 
+    public static boolean activityExists(int activityId) {
+        if (activityId <= 0) {
+            return false;
+        }
+        SQLiteDatabase db = Config.context.openOrCreateDatabase(
+                DATABASE_NAME, Context.MODE_PRIVATE, null);
+        Cursor cursor = db.query(
+                ACTIVITY_TABLE_NAME,
+                new String[]{A_ROWID},
+                A_ROWID + "=?",
+                new String[]{Integer.toString(activityId)},
+                null,
+                null,
+                null,
+                "1");
+        try {
+            return cursor.moveToFirst();
+        } finally {
+            cursor.close();
+            db.close();
+        }
+    }
+
     public int createActivity(SportActivity sportAcitvity) {
         // Create a new map of values, where column names are the keys
         ContentValues values = new ContentValues();

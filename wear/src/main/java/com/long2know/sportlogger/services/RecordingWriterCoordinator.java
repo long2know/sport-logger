@@ -191,12 +191,38 @@ final class RecordingWriterCoordinator {
         }
     }
 
+    synchronized void restoreGenerationFloor(long generation) {
+        if (generation > _nextGeneration) {
+            _nextGeneration = generation;
+        }
+    }
+
+    synchronized long generationFor(Object owner, int activityId) {
+        if (_current == null
+                || !_current.token.belongsTo(owner)
+                || _current.token.getActivityId() != activityId) {
+            return 0L;
+        }
+        return _current.token.getGeneration();
+    }
+
     LifecycleTermination fenceOwned(Object owner, long timeoutMillis) {
-        return fence(owner, false, timeoutMillis);
+        return fence(owner, false, 0, 0L, false, timeoutMillis);
     }
 
     LifecycleTermination fenceAny(long timeoutMillis) {
-        return fence(null, true, timeoutMillis);
+        return fence(null, true, 0, 0L, false, timeoutMillis);
+    }
+
+    LifecycleTermination fenceGeneration(
+            int activityId, long generation, long timeoutMillis) {
+        return fence(
+                null,
+                false,
+                activityId,
+                generation,
+                true,
+                timeoutMillis);
     }
 
     synchronized boolean isActive(GenerationToken token) {
@@ -206,18 +232,32 @@ final class RecordingWriterCoordinator {
     }
 
     private LifecycleTermination fence(
-            Object owner, boolean anyOwner, long timeoutMillis) {
+            Object owner,
+            boolean anyOwner,
+            int activityId,
+            long generationNumber,
+            boolean exactGeneration,
+            long timeoutMillis) {
         Generation generation;
         synchronized (this) {
             generation = _current;
-            if (generation == null
-                    || (!anyOwner && !generation.token.belongsTo(owner))) {
+            if (generation == null) {
+                return LifecycleTermination.TERMINATED;
+            }
+            if (exactGeneration
+                    && (generation.token.getActivityId() != activityId
+                    || generation.token.getGeneration() != generationNumber)) {
+                return LifecycleTermination.TIMED_OUT;
+            }
+            if (!exactGeneration
+                    && !anyOwner
+                    && !generation.token.belongsTo(owner)) {
                 return LifecycleTermination.TERMINATED;
             }
             if (generation.scheduler.isTerminated()) {
                 _current = null;
                 return generation.token.failed()
-                        ? LifecycleTermination.FAILED
+                        ? LifecycleTermination.TERMINATED_WITH_FAILURE
                         : LifecycleTermination.TERMINATED;
             }
             generation.token.deactivate();
@@ -244,7 +284,7 @@ final class RecordingWriterCoordinator {
                     && (terminated || generation.scheduler.isTerminated())) {
                 _current = null;
                 return generation.token.failed()
-                        ? LifecycleTermination.FAILED
+                        ? LifecycleTermination.TERMINATED_WITH_FAILURE
                         : LifecycleTermination.TERMINATED;
             }
             return _current == generation

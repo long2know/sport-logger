@@ -147,7 +147,7 @@ public class RecordingWriterCoordinatorTest {
     }
 
     @Test
-    public void taskFailureIsReportedAndMakesTheFenceFail() {
+    public void taskFailureIsReportedAndTheFailedGenerationQuiesces() {
         FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
         RecordingWriterCoordinator coordinator =
                 new RecordingWriterCoordinator(schedulers);
@@ -169,8 +169,48 @@ public class RecordingWriterCoordinatorTest {
         assertEquals(failure, reported.get());
         assertTrue(schedulers.schedulers.get(0).shutdownRequested);
         assertEquals(
-                LifecycleTermination.FAILED,
+                LifecycleTermination.TERMINATED_WITH_FAILURE,
                 coordinator.fenceOwned(owner, 50));
+    }
+
+    @Test
+    public void replacementCanFenceOnlyTheExactRetainedGeneration() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object oldOwner = new Object();
+
+        coordinator.restoreGenerationFloor(20L);
+        coordinator.start(oldOwner, 101, token -> () -> { });
+        assertEquals(21L, coordinator.generationFor(oldOwner, 101));
+
+        assertEquals(
+                LifecycleTermination.TIMED_OUT,
+                coordinator.fenceGeneration(101, 20L, 50));
+        assertEquals(0, schedulers.schedulers.get(0).shutdownCalls);
+        assertEquals(
+                LifecycleTermination.TIMED_OUT,
+                coordinator.fenceGeneration(100, 21L, 50));
+        assertEquals(0, schedulers.schedulers.get(0).shutdownCalls);
+
+        assertEquals(
+                LifecycleTermination.TERMINATED,
+                coordinator.fenceGeneration(101, 21L, 50));
+        assertEquals(1, schedulers.schedulers.get(0).shutdownCalls);
+    }
+
+    @Test
+    public void restoredGenerationFloorKeepsReplacementGenerationMonotonic() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object replacement = new Object();
+
+        coordinator.restoreGenerationFloor(37L);
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(replacement, 111, token -> () -> { }));
+        assertEquals(38L, coordinator.generationFor(replacement, 111));
     }
 
     private static final class FakeSchedulerFactory

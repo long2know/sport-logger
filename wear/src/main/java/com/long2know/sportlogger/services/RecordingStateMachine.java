@@ -10,7 +10,8 @@ final class RecordingStateMachine {
         RESUMING,
         STOPPING,
         DISCARDING,
-        FENCE_FAILED,
+        RECOVERING,
+        RECOVERY_REQUIRED,
         SHUTTING_DOWN
     }
 
@@ -20,6 +21,7 @@ final class RecordingStateMachine {
         RESUME,
         STOP,
         DISCARD,
+        RECOVER,
         SHUTDOWN
     }
 
@@ -57,8 +59,7 @@ final class RecordingStateMachine {
                         : Decision.INVALID;
             case PAUSE:
                 if (_state == State.PAUSING
-                        || _state == State.PAUSED
-                        || _state == State.FENCE_FAILED) {
+                        || _state == State.PAUSED) {
                     return Decision.NO_OP;
                 }
                 return _state == State.RECORDING
@@ -68,7 +69,7 @@ final class RecordingStateMachine {
                 if (_state == State.RESUMING || _state == State.RECORDING) {
                     return Decision.NO_OP;
                 }
-                return _state == State.PAUSED || _state == State.FENCE_FAILED
+                return _state == State.PAUSED
                         ? accept(operation, State.RESUMING)
                         : Decision.INVALID;
             case STOP:
@@ -85,6 +86,13 @@ final class RecordingStateMachine {
                 return isRetainedActivityState(_state)
                         ? accept(operation, State.DISCARDING)
                         : Decision.INVALID;
+            case RECOVER:
+                if (_state == State.RECOVERING) {
+                    return Decision.NO_OP;
+                }
+                return _state == State.RECOVERY_REQUIRED
+                        ? accept(operation, State.RECOVERING)
+                        : Decision.INVALID;
             default:
                 return Decision.INVALID;
         }
@@ -100,6 +108,7 @@ final class RecordingStateMachine {
                 _state = State.RECORDING;
                 break;
             case PAUSE:
+            case RECOVER:
                 _state = State.PAUSED;
                 break;
             case STOP:
@@ -120,7 +129,7 @@ final class RecordingStateMachine {
         if (_activeOperation != operation) {
             return false;
         }
-        _state = fenceFailed ? State.FENCE_FAILED : _rollbackState;
+        _state = fenceFailed ? State.RECOVERY_REQUIRED : _rollbackState;
         _activeOperation = null;
         return true;
     }
@@ -132,7 +141,25 @@ final class RecordingStateMachine {
     synchronized void failGeneration() {
         _activeOperation = null;
         _rollbackState = _state;
-        _state = State.SHUTTING_DOWN;
+        _state = State.RECOVERY_REQUIRED;
+    }
+
+    synchronized void restoreOwnedActivity() {
+        _activeOperation = null;
+        _rollbackState = State.RECOVERY_REQUIRED;
+        _state = State.RECOVERY_REQUIRED;
+    }
+
+    synchronized void restorePaused() {
+        _activeOperation = null;
+        _rollbackState = State.PAUSED;
+        _state = State.PAUSED;
+    }
+
+    synchronized void restoreIdle() {
+        _activeOperation = null;
+        _rollbackState = State.IDLE;
+        _state = State.IDLE;
     }
 
     private Decision accept(Operation operation, State transitionState) {
@@ -144,7 +171,6 @@ final class RecordingStateMachine {
 
     private static boolean isRetainedActivityState(State state) {
         return state == State.RECORDING
-                || state == State.PAUSED
-                || state == State.FENCE_FAILED;
+                || state == State.PAUSED;
     }
 }

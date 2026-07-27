@@ -49,7 +49,7 @@ public class RecordingStateMachineTest {
     }
 
     @Test
-    public void fenceFailureRetainsActivityAndAllowsRetry() {
+    public void fenceFailureRequiresExplicitRecoveryBeforeRetry() {
         RecordingStateMachine machine = new RecordingStateMachine();
         machine.begin(RecordingStateMachine.Operation.START);
         machine.completeSuccess(RecordingStateMachine.Operation.START);
@@ -59,19 +59,25 @@ public class RecordingStateMachineTest {
                 machine.begin(RecordingStateMachine.Operation.STOP));
         assertTrue(machine.completeFailure(RecordingStateMachine.Operation.STOP, true));
         assertEquals(
-                RecordingStateMachine.State.FENCE_FAILED,
+                RecordingStateMachine.State.RECOVERY_REQUIRED,
                 machine.getState());
 
         assertEquals(
+                RecordingStateMachine.Decision.INVALID,
+                machine.begin(RecordingStateMachine.Operation.STOP));
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                machine.begin(RecordingStateMachine.Operation.RECOVER));
+        assertFalse(machine.completeSuccess(RecordingStateMachine.Operation.STOP));
+        assertTrue(machine.completeSuccess(RecordingStateMachine.Operation.RECOVER));
+        assertEquals(RecordingStateMachine.State.PAUSED, machine.getState());
+        assertEquals(
                 RecordingStateMachine.Decision.ACCEPTED,
                 machine.begin(RecordingStateMachine.Operation.STOP));
-        assertFalse(machine.completeSuccess(RecordingStateMachine.Operation.DISCARD));
-        assertTrue(machine.completeSuccess(RecordingStateMachine.Operation.STOP));
-        assertEquals(RecordingStateMachine.State.IDLE, machine.getState());
     }
 
     @Test
-    public void asynchronousWriterFailureMakesTheGenerationTerminal() {
+    public void asynchronousWriterFailureRetainsActivityForExplicitRecovery() {
         RecordingStateMachine machine = new RecordingStateMachine();
         machine.begin(RecordingStateMachine.Operation.START);
         machine.completeSuccess(RecordingStateMachine.Operation.START);
@@ -79,7 +85,7 @@ public class RecordingStateMachineTest {
         machine.failGeneration();
 
         assertEquals(
-                RecordingStateMachine.State.SHUTTING_DOWN,
+                RecordingStateMachine.State.RECOVERY_REQUIRED,
                 machine.getState());
         assertEquals(
                 RecordingStateMachine.Decision.INVALID,
@@ -87,5 +93,29 @@ public class RecordingStateMachineTest {
         assertEquals(
                 RecordingStateMachine.Decision.INVALID,
                 machine.begin(RecordingStateMachine.Operation.STOP));
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                machine.begin(RecordingStateMachine.Operation.RECOVER));
+        assertTrue(machine.completeSuccess(RecordingStateMachine.Operation.RECOVER));
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                machine.begin(RecordingStateMachine.Operation.RESUME));
+    }
+
+    @Test
+    public void replacementRestoresOwnedActivityWithoutPretendingItIsPaused() {
+        RecordingStateMachine machine = new RecordingStateMachine();
+
+        machine.restoreOwnedActivity();
+
+        assertEquals(
+                RecordingStateMachine.State.RECOVERY_REQUIRED,
+                machine.getState());
+        assertEquals(
+                RecordingStateMachine.Decision.INVALID,
+                machine.begin(RecordingStateMachine.Operation.DISCARD));
+        assertEquals(
+                RecordingStateMachine.Decision.ACCEPTED,
+                machine.begin(RecordingStateMachine.Operation.RECOVER));
     }
 }

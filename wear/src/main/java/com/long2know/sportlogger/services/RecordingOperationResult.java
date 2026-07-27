@@ -15,16 +15,32 @@ public final class RecordingOperationResult {
         DATABASE_FAILED
     }
 
+    public enum RecoveryAction {
+        NONE,
+        RETURN_TO_START,
+        SHOW_PAUSED_CONTROLS,
+        SHOW_RECOVERY_RETRY
+    }
+
     private final Status _status;
     private final int _activityId;
+    private final RecoveryAction _recoveryAction;
 
-    private RecordingOperationResult(Status status, int activityId) {
+    private RecordingOperationResult(
+            Status status, int activityId, RecoveryAction recoveryAction) {
         _status = status;
         _activityId = activityId;
+        _recoveryAction = recoveryAction;
     }
 
     public static RecordingOperationResult of(Status status, int activityId) {
-        return new RecordingOperationResult(status, activityId);
+        return new RecordingOperationResult(
+                status, activityId, RecoveryAction.NONE);
+    }
+
+    public static RecordingOperationResult recovery(
+            Status status, int activityId, RecoveryAction recoveryAction) {
+        return new RecordingOperationResult(status, activityId, recoveryAction);
     }
 
     static RecordingOperationResult success(int activityId) {
@@ -41,6 +57,10 @@ public final class RecordingOperationResult {
 
     public int getActivityId() {
         return _activityId;
+    }
+
+    public RecoveryAction getRecoveryAction() {
+        return _recoveryAction;
     }
 
     public boolean isSuccess() {

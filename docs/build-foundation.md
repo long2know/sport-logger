@@ -108,10 +108,31 @@ insert uses that immutable ID instead of consulting the mutable shared `Activity
 writer coordinator permits at most one generation and fences cancellation plus an in-flight write
 before pause, stop/export, discard/delete, permission-loss completion, or a later recording. The
 fence is bounded to two seconds and honors interruption. If it times out or otherwise fails, the
-operation returns a typed failure, keeps the activity and database rows, leaves the recording
-paused, and does not export or delete as though shutdown succeeded. An uncaught scheduled-write
-failure also terminates its generation and is surfaced as `WRITER_FAILED`; it cannot be retried as a
-successful export.
+operation returns a typed failure, keeps the activity and database rows, and does not export or
+delete as though shutdown succeeded.
+
+Recovery metadata is synchronously committed to private `SharedPreferences` as the exact activity
+ID, last writer generation, and phase. This metadata is not service ownership: writer and listener
+ownership remain in the existing fenced coordinators. A replacement service first validates that
+the activity row still exists, restores the writer-generation floor, marks the tuple as recovery
+required, and fences only that exact prior generation. Paused controls appear only after the writer
+is quiescent and the replacement listener group acknowledges startup. The same activity ID can then
+be resumed with a newer generation, stopped/exported, or discarded. An uncaught scheduled-write
+failure is surfaced as `WRITER_FAILED`; once its failed generation is confirmed terminated, the
+retained partial activity may be resumed, stopped, or discarded without overlapping writes.
+
+A listener or service-startup failure before an activity row exists remains `IDLE`, clears the
+non-authoritative shared UI mirror, and returns to the start screen. A failure with an owned activity
+preserves the exact tuple. If either exact-generation or listener termination cannot be proven, the
+state becomes `RECOVERY_REQUIRED` and the Wear UI shows a retry-only recovery screen rather than
+success-shaped paused controls. Retry repeats the bounded fences; resume, stop, and discard remain
+invalid until recovery succeeds.
+
+The retained tuple survives process death, but stopwatch elapsed time and live sensor samples remain
+in memory and may restart from their last displayed/default values. A process death in the narrow
+legacy interval between SQLite row insertion and the synchronous metadata commit can leave an
+unclaimed unfinished row; the app does not guess that row's ownership. Commit or rollback failures
+are kept in the explicit recovery state while the current service can still retain the known ID.
 
 Sensor and GPS loopers are owned by one service-instance listener group. Replacement first disables
 the old generation, unregisters both listener sets, requests safe looper quit, and waits for both
@@ -122,12 +143,13 @@ disconnecting its replacement.
 
 A detected revocation first pauses callback production, then obtains the bounded writer and listener
 fences off the main thread. Only after both succeed does it reset the stopwatch, notify the activity,
-and stop the service. Reset cancels the stopwatch callback, clears the shared duration to
-`00:00:00`, and invalidates any stale callback that was already dequeued. Once permission-loss
-teardown begins, that service instance rejects start and resume, so a regrant cannot race old
-callbacks or scheduled writes into a later recording. A timeout is surfaced through
-`RecordingOperationResult` and retains the activity rather than presenting permission shutdown as
-successful.
+and stop the service. An owned activity's recovery tuple remains paused so a service created after a
+permission regrant can restore its controls. Reset cancels the stopwatch callback, clears the shared
+duration to `00:00:00`, and invalidates any stale callback that was already dequeued. Once
+permission-loss teardown begins, that service instance rejects start and resume, so a regrant cannot
+race old callbacks or scheduled writes into a later recording. A timeout is surfaced through
+`RecordingOperationResult` and retains the activity in the retry-only recovery state rather than
+presenting permission shutdown as successful.
 
 `SensorFragment` uses one main-thread handler through a generation-guarded callback loop. Repeated
 resume/start calls cannot create parallel chains, and pause, permission-loss state, view destruction,
