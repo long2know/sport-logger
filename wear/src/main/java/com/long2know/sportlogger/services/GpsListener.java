@@ -2,310 +2,281 @@ package com.long2know.sportlogger.services;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.location.GnssMeasurementsEvent;
-import android.location.GnssStatus;
+import android.location.Criteria;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.location.LocationProvider;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
-import java.util.concurrent.ScheduledExecutorService;
-import android.location.Criteria;
-import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
-import android.content.SharedPreferences;
-import android.content.SharedPreferences.Editor;
-
-import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
 import com.long2know.utilities.models.SharedData;
 
-import java.util.Calendar;
-import java.util.GregorianCalendar;
-import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class GpsListener implements Runnable  {
+final class GpsListener implements ManagedListener {
     private static final String TAG = "GpsListener";
+    private static final String PREF_UNIQUE_ID =
+            "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
+    private static final long MIN_TIME_MILLIS = 750L;
+    private static final float MIN_DISTANCE_METERS = 0.1F;
+    private static final float MIN_ACCURACY_METERS = 75F;
 
-    public static Handler WorkerHandler;
-    private Handler _handler;
-    private ScheduledExecutorService _scheduler;
     private static String _deviceId;
+    private static String _uniqueId;
 
-    private static long _minTimeMillis = 750;
-    private static float _minDistanceMeters = (float) 0.1;
-    private static float _minAccuracyMeters = 75;
+    private final Context _context;
+    private final Handler _uiHandler;
+    private final Runnable _permissionFailureCallback;
+    private final AtomicBoolean _ownerActive;
+    private final CountDownLatch _ready = new CountDownLatch(1);
+    private final CountDownLatch _stopped = new CountDownLatch(1);
+    private final Object _lifecycleLock = new Object();
 
+    private Looper _looper;
+    private Handler _workerHandler;
     private LocationManager _locationManager;
     private LocationListener _locationListener;
-    private GnssStatus.Callback _gnssStatusListener;
-    private GnssMeasurementsEvent.Callback _gnssMeasurementsListener;
-    private GnssStatus _gnssStatus;
+    private volatile boolean _shutdownRequested;
+    private boolean _isGpsLocked;
 
-    private boolean _isGpsEnabled;
-    private boolean _isNetworkEnabled;
-    private boolean _isGpsLocked = false;
+    GpsListener(
+            Context context,
+            Handler uiHandler,
+            Runnable permissionFailureCallback,
+            AtomicBoolean ownerActive) {
+        _context = context.getApplicationContext();
+        _uiHandler = uiHandler;
+        _permissionFailureCallback = permissionFailureCallback;
+        _ownerActive = ownerActive;
+    }
 
-    private static String _uniqueId = null;
-    private static final String PREF_UNIQUE_ID = "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
-    private boolean _isStarted = true;
-
-    // Defines the code to run for this task.
     @Override
     public void run() {
-        // Moves the current Thread into the background
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-
-        Looper.prepare();
-        _handler = Config.handler;
-
-        WorkerHandler = new Handler(Looper.myLooper()) {
-            public void handleMessage(Message msg) {
-                Log.d(TAG, "Received a message!");
-                // For now, the only messages are start/stop
-                if (msg.what == 0) {
-                    // The sensors are started by default
-                    if (_isStarted) {
-                        stopListeners();
-                        Looper.myLooper().quit();
-                        _isStarted = false;
-                    }
-                } else {
-                    if (!_isStarted) {
-                        startListeners();
-                        _isStarted = true;
-                    }
+        android.os.Process.setThreadPriority(
+                android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        try {
+            Looper.prepare();
+            synchronized (_lifecycleLock) {
+                if (_shutdownRequested) {
+                    return;
                 }
+                _looper = Looper.myLooper();
+                _workerHandler = new Handler(_looper);
             }
-        };
-
-        boolean hasPerms = ContextCompat.checkSelfPermission(
-                Config.context,
-                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-
-        if (hasPerms) {
-            startListeners();
+            if (!_shutdownRequested && _ownerActive.get()) {
+                startListeners();
+            }
+            _ready.countDown();
+            if (!_shutdownRequested && _ownerActive.get()) {
+                Looper.loop();
+            }
+        } finally {
+            stopListeners();
+            synchronized (_lifecycleLock) {
+                _workerHandler = null;
+                _looper = null;
+            }
+            _ready.countDown();
+            _stopped.countDown();
         }
-        else {
-            Log.e(TAG, "We do not have location permissions!");
-        }
-
-        Looper.loop();
     }
 
-    public void startListeners() {
-        // Get a unique ID for the device
-        _deviceId = getUniqueId(Config.context);
+    @Override
+    public void requestShutdown() {
+        _ownerActive.set(false);
+        Handler handler;
+        synchronized (_lifecycleLock) {
+            _shutdownRequested = true;
+            handler = _workerHandler;
+            if (handler == null) {
+                return;
+            }
+        }
+        if (!handler.postAtFrontOfQueue(new Runnable() {
+            @Override
+            public void run() {
+                Looper.myLooper().quitSafely();
+            }
+        })) {
+            Looper looper;
+            synchronized (_lifecycleLock) {
+                looper = _looper;
+            }
+            if (looper != null) {
+                looper.quitSafely();
+            }
+        }
+    }
 
-        Criteria criteria = new Criteria();
-        criteria.setAccuracy(Criteria.ACCURACY_FINE);
-//        criteria.setAltitudeRequired(true);
-//        criteria.setBearingRequired(true);
-//        criteria.setCostAllowed(true);
-//        criteria.setPowerRequirement(Criteria.POWER_LOW);
+    @Override
+    public boolean awaitStopped(long timeoutMillis) throws InterruptedException {
+        return _stopped.await(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS);
+    }
 
-        // Use the LocationManager class to obtain GPS locations---
-        _locationManager =
-                (LocationManager) Config.context.getSystemService(Context.LOCATION_SERVICE);
-        String provider = _locationManager.getBestProvider(criteria, true);
+    @Override
+    public boolean awaitReady(long timeoutMillis) throws InterruptedException {
+        return _ready.await(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS);
+    }
 
-        if (ContextCompat.checkSelfPermission(Config.context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+    private void startListeners() {
+        if (ContextCompat.checkSelfPermission(
+                _context, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            notifyPermissionFailure();
+            return;
+        }
 
-            // Get GPS and network status
-            _isGpsEnabled = _locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
-            _isNetworkEnabled = _locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-
-            if (_isGpsEnabled) {
-                // Get the last location
-                _locationManager.getLastKnownLocation(provider);
+        try {
+            _deviceId = getUniqueId(_context);
+            Criteria criteria = new Criteria();
+            criteria.setAccuracy(Criteria.ACCURACY_FINE);
+            _locationManager =
+                    (LocationManager) _context.getSystemService(Context.LOCATION_SERVICE);
+            if (_locationManager == null) {
+                return;
+            }
+            String provider = _locationManager.getBestProvider(criteria, true);
+            if (provider == null) {
+                return;
             }
 
-            // Get the last location
             Location currentLocation = _locationManager.getLastKnownLocation(provider);
             _locationListener = createLocationListener(currentLocation);
-            _locationManager.requestLocationUpdates(provider, _minTimeMillis, _minDistanceMeters, _locationListener);
+            _locationManager.requestLocationUpdates(
+                    provider,
+                    MIN_TIME_MILLIS,
+                    MIN_DISTANCE_METERS,
+                    _locationListener,
+                    _looper);
+        } catch (SecurityException exception) {
+            Log.e(TAG, "Recording location permission was denied or revoked.", exception);
+            notifyPermissionFailure();
         }
-//        initDatabase();
     }
 
-    public void stopListeners()    {
+    private void notifyPermissionFailure() {
+        stopListeners();
+        if (_ownerActive.compareAndSet(true, false)
+                && _permissionFailureCallback != null) {
+            _permissionFailureCallback.run();
+        }
+    }
+
+    private void stopListeners() {
         if (_locationManager != null && _locationListener != null) {
-            _locationManager.removeUpdates(_locationListener);
+            try {
+                _locationManager.removeUpdates(_locationListener);
+            } catch (SecurityException exception) {
+                Log.w(TAG, "Location permission was revoked during listener shutdown.", exception);
+            }
         }
-        SharedData singleton = SharedData.getInstance();
-        singleton.setLocation(new LocationData());
+        _locationListener = null;
+        if (!_ownerActive.get()) {
+            SharedData.getInstance().setLocation(new LocationData());
+        }
     }
 
-    public synchronized static String getUniqueId(Context context) {
+    static synchronized String getUniqueId(Context context) {
         if (_deviceId == null) {
             SharedPreferences sharedPrefs = context.getSharedPreferences(
                     PREF_UNIQUE_ID, Context.MODE_PRIVATE);
             _uniqueId = sharedPrefs.getString(PREF_UNIQUE_ID, null);
             if (_uniqueId == null) {
                 _uniqueId = UUID.randomUUID().toString();
-                Editor editor = sharedPrefs.edit();
-                editor.putString(PREF_UNIQUE_ID, _uniqueId);
-                editor.commit();
+                sharedPrefs.edit().putString(PREF_UNIQUE_ID, _uniqueId).commit();
             }
+            _deviceId = _uniqueId;
         }
-        return _uniqueId;
+        return _deviceId;
     }
 
-    public LocationListener createLocationListener(final Location currentLocation) {
-        LocationListener listener = new LocationListener() {
-
-            Location _lastLocation = currentLocation;
-            double _totalDistance = 0;
+    private LocationListener createLocationListener(final Location currentLocation) {
+        return new LocationListener() {
+            private Location _lastLocation = currentLocation;
+            private double _totalDistance;
 
             @Override
             public void onLocationChanged(Location location) {
-                if (location != null) {
-                    try {
-                        if (location.hasAccuracy() && location.getAccuracy() <= _minAccuracyMeters) {
-                            GregorianCalendar greg = new GregorianCalendar();
-                            TimeZone tz = greg.getTimeZone();
-                            int offset = tz.getOffset(System.currentTimeMillis());
-                            greg.add(Calendar.SECOND, (offset / 1000) * -1);
-                            String ts = Config.DotnetTimestampFormat.format(greg.getTime());
-                            double distance = calculateDistance(_lastLocation, location);
-                            _totalDistance += distance;
-                            LocationData data = new LocationData(location, _totalDistance, distance);
-                            Message completeMessage = _handler.obtainMessage(0, 1, 1, data);
-                            completeMessage.sendToTarget();
-                            _lastLocation = location;
-
-                            SharedData singleton = SharedData.getInstance();
-                            singleton.setLocation(data);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, e.toString());
-                    } finally {
-
-                    }
+                if (!_ownerActive.get()
+                        || _shutdownRequested
+                        || location == null
+                        || !location.hasAccuracy()
+                        || location.getAccuracy() > MIN_ACCURACY_METERS) {
+                    return;
                 }
+
+                double distance = calculateDistance(_lastLocation, location);
+                _totalDistance += distance;
+                LocationData data =
+                        new LocationData(location, _totalDistance, distance);
+
+                if (!_ownerActive.get()) {
+                    return;
+                }
+                SharedData.getInstance().setLocation(data);
+                Message message = _uiHandler.obtainMessage(0, 1, 1, data);
+                message.sendToTarget();
+                _lastLocation = location;
             }
 
             @Override
             public void onStatusChanged(String provider, int status, Bundle extras) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    if (status == LocationProvider.OUT_OF_SERVICE || status == LocationProvider.TEMPORARILY_UNAVAILABLE) {
-                        // We lost our lock
-                        _isGpsLocked = false;
-                    }
+                if (LocationManager.GPS_PROVIDER.equalsIgnoreCase(provider)
+                        && (status == LocationProvider.OUT_OF_SERVICE
+                        || status == LocationProvider.TEMPORARILY_UNAVAILABLE)) {
+                    _isGpsLocked = false;
                 }
             }
 
             @Override
             public void onProviderEnabled(String provider) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    // Our provider is enabled
+                if (LocationManager.GPS_PROVIDER.equalsIgnoreCase(provider)) {
                     _isGpsLocked = true;
                 }
             }
 
             @Override
             public void onProviderDisabled(String provider) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    // We lost our lock
+                if (LocationManager.GPS_PROVIDER.equalsIgnoreCase(provider)) {
                     _isGpsLocked = false;
                 }
             }
         };
-
-        return listener;
     }
 
-    @SuppressWarnings({"MissingPermission"})
-    private void addGnssStatusListener() {
-        _gnssStatusListener = new GnssStatus.Callback() {
-            @Override
-            public void onStarted() {
-            }
-
-            @Override
-            public void onStopped() {
-            }
-
-            @Override
-            public void onFirstFix(int ttffMillis) {
-            }
-
-            @Override
-            public void onSatelliteStatusChanged(GnssStatus status) {
-                _gnssStatus = status;
-            }
-        };
-
-        _locationManager.registerGnssStatusCallback(_gnssStatusListener);
-    }
-
-    @SuppressWarnings({"MissingPermission"})
-    private void addGnssMeasurementsListener() {
-        _gnssMeasurementsListener = new GnssMeasurementsEvent.Callback() {
-            @Override
-            public void onGnssMeasurementsReceived(GnssMeasurementsEvent event) {
-            }
-
-            @Override
-            public void onStatusChanged(int status) {
-                final String statusMessage;
-                switch (status) {
-                    case STATUS_LOCATION_DISABLED:
-                        statusMessage = "disabled";
-                        break;
-                    case STATUS_NOT_SUPPORTED:
-                        statusMessage = "not supported";
-                        break;
-                    case STATUS_READY:
-                        statusMessage = "ready";
-                        break;
-                    default:
-                        statusMessage = "unknown";
-                }
-                Log.d(TAG, "GnssMeasurementsEvent.Callback.onStatusChanged() - " + statusMessage);
-            }
-        };
-
-        _locationManager.registerGnssMeasurementsCallback(_gnssMeasurementsListener);
-    }
-
-    public double calculateDistance(Location start, Location end)    {
-        double distance = 0.0;
-        boolean convertToMeters = true;
-        double factor = convertToMeters ? 1000.0 : 1.0;
-
+    double calculateDistance(Location start, Location end) {
+        if (start == null || end == null) {
+            return 0.0;
+        }
         double startLat = start.getLatitude();
         double startLon = start.getLongitude();
         double endLat = end.getLatitude();
         double endLon = end.getLongitude();
-
-        if (startLat != 0.0 && startLon != 0.0 && endLat != 0.0 && endLon != 0.0)
-        {
-            double lat1 = Math.toRadians(startLat);
-            double lon1 = Math.toRadians(startLon);
-            double lat2 = Math.toRadians(endLat);
-            double lon2 = Math.toRadians(endLon);
-
-            double longdis = Math.toRadians(startLon - endLon); //calculating longitudinal difference
-            double angudis = Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(longdis);
-            angudis = Math.acos(angudis); //converted back to radians
-            distance = angudis * 6372.795; //multiplied by the radius of the Earth
+        if (startLat == 0.0 || startLon == 0.0 || endLat == 0.0 || endLon == 0.0) {
+            return 0.0;
         }
 
-        // Distance will be in KM, but convert to meters if desired
-        return distance / factor;
-    }
-
-    // Determine if the watch has GPS
-    private boolean hasGps() {
-        return Config.context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LOCATION_GPS);
+        double latitude1 = Math.toRadians(startLat);
+        double latitude2 = Math.toRadians(endLat);
+        double longitudeDifference = Math.toRadians(startLon - endLon);
+        double angularDistance =
+                Math.sin(latitude1) * Math.sin(latitude2)
+                        + Math.cos(latitude1)
+                        * Math.cos(latitude2)
+                        * Math.cos(longitudeDifference);
+        angularDistance = Math.acos(angularDistance);
+        return angularDistance * 6372.795 / 1000.0;
     }
 }

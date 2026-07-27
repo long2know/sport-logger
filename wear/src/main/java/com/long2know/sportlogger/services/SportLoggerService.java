@@ -6,7 +6,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -18,53 +17,70 @@ import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 
-import com.long2know.utilities.models.Config;
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
 import com.long2know.sportlogger.RecordingPermissions;
-import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.data_access.SqlLogger;
+import com.long2know.utilities.models.Config;
+import com.long2know.utilities.models.SharedData;
 
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SportLoggerService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "long2know_sport_logger";
     private static final int NOTIFICATION_ID = 1;
     private static final String TAG = "SportLoggerService";
+    private static final long WRITER_FENCE_TIMEOUT_MILLIS = 2_000L;
+    private static final long LISTENER_FENCE_TIMEOUT_MILLIS = 2_000L;
+
+    private static final RecordingWriterCoordinator WRITERS =
+            new RecordingWriterCoordinator();
+    private static final OwnedListenerRegistry<ListenerGroup> LISTENERS =
+            new OwnedListenerRegistry<>();
+
+    private final IBinder _binder = new LocalBinder();
+    private final Handler _mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService _lifecycleExecutor =
+            Executors.newSingleThreadExecutor();
+    private final RecordingStateMachine _stateMachine = new RecordingStateMachine();
+    private final StopWatch _stopWatch = new StopWatch();
+    private final AtomicBoolean _listenerEventsActive = new AtomicBoolean(false);
+    private final AtomicBoolean _writerFailureHandled = new AtomicBoolean(false);
 
     private NotificationManager _notificationManager;
-    private final IBinder _binder = new LocalBinder();
-    public static ISportLoggerServiceClient _serviceClient;
+    private Handler _uiForwardingHandler;
+    private ListenerGroup _listenerGroup;
+    private volatile ISportLoggerServiceClient _serviceClient;
+    private volatile RecordingOperationResult _pendingLifecycleFailure;
+    private volatile boolean _permissionLossHandled;
+    private volatile int _activityId;
 
-    private Thread _sensorThread;
-    private Thread _locationThread;
-    private SensorListener _sensorListener;
-    private GpsListener _locationListener;
-    private ScheduledExecutorService _scheduler;
-    private StopWatch _stopWatch = new StopWatch();
-    private boolean _permissionLossHandled;
-    private final Handler _mainHandler = new Handler(Looper.getMainLooper());
-
-    // Below is the service framework methods
     @Override
     public void onCreate() {
         super.onCreate();
-
-        Config.context = this;
-
-        // Pass through any messages
-        Config.handler = new Handler(Looper.getMainLooper()) {
-            public void handleMessage(Message msg) {
-                if (Config.activityHandler != null) {
-                    Message completeMessage = Config.activityHandler.obtainMessage(msg.what, msg.arg1, msg.arg2, msg.obj);
-                    completeMessage.sendToTarget();
+        Config.context = getApplicationContext();
+        _uiForwardingHandler = new Handler(Looper.getMainLooper()) {
+            @Override
+            public void handleMessage(Message message) {
+                if (!_listenerEventsActive.get()) {
+                    return;
+                }
+                Handler activityHandler = Config.activityHandler;
+                if (activityHandler != null) {
+                    Message forwarded = activityHandler.obtainMessage(
+                            message.what,
+                            message.arg1,
+                            message.arg2,
+                            message.obj);
+                    forwarded.sendToTarget();
                 }
             }
         };
 
-        _notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        _notificationManager =
+                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
             handleRecordingPermissionLoss();
             return;
@@ -78,23 +94,11 @@ public class SportLoggerService extends Service {
             return;
         }
 
-        _sensorListener = new SensorListener(new Runnable() {
-            @Override
-            public void run() {
-                handleRecordingPermissionLoss();
-            }
-        });
-        _locationListener = new GpsListener();
-
-        _sensorThread = new Thread(_sensorListener);
-        _locationThread = new Thread(_locationListener);
-        _sensorThread.start();
-        _locationThread.start();
+        startOwnedListeners();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.i("LocalService", "Received start id " + startId + ": " + intent);
         if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
             handleRecordingPermissionLoss();
             return START_NOT_STICKY;
@@ -109,20 +113,495 @@ public class SportLoggerService extends Service {
 
     @Override
     public void onDestroy() {
-        ScheduledExecutorService scheduler = cancelScheduledWrites();
-        awaitSchedulerTermination(scheduler, 100);
-        _stopWatch.pauseTimer();
-        _stopWatch.resetTimer();
-        requestListenerShutdown();
-
         _serviceClient = null;
+        _permissionLossHandled = true;
+        _listenerEventsActive.set(false);
+        _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
+        LifecycleTermination writerTermination =
+                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+        LifecycleTermination listenerTermination = LifecycleTermination.TERMINATED;
+        if (_listenerGroup != null) {
+            listenerTermination =
+                    LISTENERS.release(
+                            _listenerGroup, LISTENER_FENCE_TIMEOUT_MILLIS);
+            _listenerGroup = null;
+        }
+        _stopWatch.pauseTimer();
+        if (writerTermination.succeeded()
+                && listenerTermination.succeeded()
+                && SharedData.getInstance().ActivityId == _activityId) {
+            _stopWatch.resetTimer();
+        } else {
+            Log.e(
+                    TAG,
+                    "Service destroyed before bounded lifecycle termination: writer="
+                            + writerTermination
+                            + ", listeners="
+                            + listenerTermination);
+        }
+        _lifecycleExecutor.shutdownNow();
         super.onDestroy();
     }
 
+    public synchronized void setServiceClient(ISportLoggerServiceClient client) {
+        _serviceClient = client;
+        if (client != null && _pendingLifecycleFailure != null) {
+            _mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    deliverPendingLifecycleFailure();
+                }
+            });
+        }
+    }
+
+    public synchronized void clearServiceClient(ISportLoggerServiceClient client) {
+        if (_serviceClient == client) {
+            _serviceClient = null;
+        }
+    }
+
+    public void recordingPermissionsRevoked() {
+        handleRecordingPermissionLoss();
+    }
+
+    public class LocalBinder extends Binder {
+        public SportLoggerService getService() {
+            return SportLoggerService.this;
+        }
+    }
+
+    public synchronized RecordingOperationResult startNewActivity() {
+        RecordingStateMachine.Decision decision =
+                _stateMachine.begin(RecordingStateMachine.Operation.START);
+        if (decision == RecordingStateMachine.Decision.NO_OP) {
+            return RecordingOperationResult.noOp(_activityId);
+        }
+        if (decision == RecordingStateMachine.Decision.INVALID) {
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+        if (_permissionLossHandled) {
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
+            handleRecordingPermissionLoss();
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.PERMISSION_DENIED, _activityId);
+        }
+
+        LifecycleTermination previousGeneration =
+                WRITERS.fenceAny(WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!previousGeneration.succeeded()) {
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, true);
+            return writerFailure(previousGeneration);
+        }
+
+        try {
+            SqlLogger.initDatabase();
+            int activityId = SqlLogger.createActivity();
+            if (activityId <= 0) {
+                _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
+                return RecordingOperationResult.of(
+                        RecordingOperationResult.Status.DATABASE_FAILED, _activityId);
+            }
+
+            RecordingWriterCoordinator.StartStatus writerStatus =
+                    startWriter(activityId);
+            if (writerStatus != RecordingWriterCoordinator.StartStatus.STARTED) {
+                LifecycleTermination writerTermination =
+                        WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+                if (!writerTermination.succeeded()) {
+                    _stateMachine.completeFailure(
+                            RecordingStateMachine.Operation.START, true);
+                    return writerFailure(writerTermination);
+                }
+                new SqlLogger().deleteActivity(activityId);
+                _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
+                return RecordingOperationResult.of(
+                        RecordingOperationResult.Status.START_FAILED, _activityId);
+            }
+
+            _activityId = activityId;
+            SharedData shared = SharedData.getInstance();
+            shared.ActivityId = activityId;
+            if (_permissionLossHandled) {
+                shared.IsRecording = true;
+                shared.IsPaused = true;
+                return RecordingOperationResult.of(
+                        RecordingOperationResult.Status.WRITER_FAILED, activityId);
+            }
+            shared.IsRecording = true;
+            shared.IsPaused = false;
+            _stopWatch.startTImer();
+            _stateMachine.completeSuccess(RecordingStateMachine.Operation.START);
+            Toast.makeText(
+                    this, "Starting new activity", Toast.LENGTH_SHORT).show();
+            return RecordingOperationResult.success(activityId);
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Could not start recording.", exception);
+            WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.START, false);
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.DATABASE_FAILED, _activityId);
+        }
+    }
+
+    public synchronized RecordingOperationResult pauseActivity() {
+        RecordingStateMachine.Decision decision =
+                _stateMachine.begin(RecordingStateMachine.Operation.PAUSE);
+        if (decision == RecordingStateMachine.Decision.NO_OP) {
+            return RecordingOperationResult.noOp(_activityId);
+        }
+        if (decision == RecordingStateMachine.Decision.INVALID) {
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+
+        LifecycleTermination termination =
+                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            SharedData.getInstance().IsPaused = true;
+            _stopWatch.pauseTimer();
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.PAUSE, true);
+            return writerFailure(termination);
+        }
+
+        SharedData.getInstance().IsPaused = true;
+        _stopWatch.pauseTimer();
+        _stateMachine.completeSuccess(RecordingStateMachine.Operation.PAUSE);
+        Toast.makeText(this, "Paused activity", Toast.LENGTH_SHORT).show();
+        return RecordingOperationResult.success(_activityId);
+    }
+
+    public synchronized RecordingOperationResult resumeActivity() {
+        RecordingStateMachine.Decision decision =
+                _stateMachine.begin(RecordingStateMachine.Operation.RESUME);
+        if (decision == RecordingStateMachine.Decision.NO_OP) {
+            return RecordingOperationResult.noOp(_activityId);
+        }
+        if (decision == RecordingStateMachine.Decision.INVALID) {
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+        if (_permissionLossHandled) {
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, false);
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.RESUME, false);
+            handleRecordingPermissionLoss();
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.PERMISSION_DENIED, _activityId);
+        }
+
+        RecordingWriterCoordinator.StartStatus writerStatus =
+                startWriter(_activityId);
+        if (writerStatus != RecordingWriterCoordinator.StartStatus.STARTED) {
+            _stateMachine.completeFailure(
+                    RecordingStateMachine.Operation.RESUME,
+                    writerStatus
+                            == RecordingWriterCoordinator.StartStatus.PREVIOUS_GENERATION_ACTIVE);
+            return RecordingOperationResult.of(
+                    writerStatus
+                            == RecordingWriterCoordinator.StartStatus.PREVIOUS_GENERATION_ACTIVE
+                            ? RecordingOperationResult.Status.WRITER_TIMED_OUT
+                            : RecordingOperationResult.Status.START_FAILED,
+                    _activityId);
+        }
+
+        SharedData.getInstance().IsPaused = false;
+        _stopWatch.startTImer();
+        _stateMachine.completeSuccess(RecordingStateMachine.Operation.RESUME);
+        Toast.makeText(this, "Resuming activity", Toast.LENGTH_SHORT).show();
+        return RecordingOperationResult.success(_activityId);
+    }
+
+    public synchronized RecordingOperationResult stopActivity() {
+        RecordingStateMachine.Decision decision =
+                _stateMachine.begin(RecordingStateMachine.Operation.STOP);
+        if (decision == RecordingStateMachine.Decision.NO_OP) {
+            return RecordingOperationResult.noOp(_activityId);
+        }
+        if (decision == RecordingStateMachine.Decision.INVALID) {
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+
+        LifecycleTermination termination =
+                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            SharedData.getInstance().IsPaused = true;
+            _stopWatch.pauseTimer();
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.STOP, true);
+            return writerFailure(termination);
+        }
+
+        SharedData shared = SharedData.getInstance();
+        shared.IsRecording = false;
+        shared.IsPaused = false;
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        _stateMachine.completeSuccess(RecordingStateMachine.Operation.STOP);
+        Toast.makeText(this, "Stopped activity", Toast.LENGTH_SHORT).show();
+        return RecordingOperationResult.success(_activityId);
+    }
+
+    public synchronized RecordingOperationResult discardActivity() {
+        RecordingStateMachine.Decision decision =
+                _stateMachine.begin(RecordingStateMachine.Operation.DISCARD);
+        if (decision == RecordingStateMachine.Decision.NO_OP) {
+            return RecordingOperationResult.noOp(_activityId);
+        }
+        if (decision == RecordingStateMachine.Decision.INVALID) {
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.INVALID_STATE, _activityId);
+        }
+
+        LifecycleTermination termination =
+                WRITERS.fenceOwned(this, WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!termination.succeeded()) {
+            SharedData.getInstance().IsPaused = true;
+            _stopWatch.pauseTimer();
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.DISCARD, true);
+            return writerFailure(termination);
+        }
+
+        try {
+            new SqlLogger().deleteActivity(_activityId);
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "Could not discard activity.", exception);
+            SharedData.getInstance().IsPaused = true;
+            _stopWatch.pauseTimer();
+            _stateMachine.completeFailure(RecordingStateMachine.Operation.DISCARD, true);
+            return RecordingOperationResult.of(
+                    RecordingOperationResult.Status.DATABASE_FAILED, _activityId);
+        }
+
+        SharedData shared = SharedData.getInstance();
+        shared.IsRecording = false;
+        shared.IsPaused = false;
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        _stateMachine.completeSuccess(RecordingStateMachine.Operation.DISCARD);
+        Toast.makeText(this, "Discarded activity", Toast.LENGTH_SHORT).show();
+        return RecordingOperationResult.success(_activityId);
+    }
+
+    private RecordingWriterCoordinator.StartStatus startWriter(final int activityId) {
+        return WRITERS.start(
+                this,
+                activityId,
+                generation ->
+                        new PermissionCheckedTask(
+                                new PermissionCheckedTask.CancellationCheck() {
+                                    @Override
+                                    public boolean isCancelled() {
+                                        return _permissionLossHandled
+                                                || !WRITERS.isActive(generation);
+                                    }
+                                },
+                                new PermissionCheckedTask.PermissionCheck() {
+                                    @Override
+                                    public boolean allRequiredPermissionsGranted() {
+                                        return RecordingPermissions
+                                                .allRequiredForRecordingGranted(
+                                                        SportLoggerService.this);
+                                    }
+                                },
+                                new SqlLogger(activityId),
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        handleRecordingPermissionLoss();
+                                    }
+                                }),
+                new RecordingWriterCoordinator.FailureListener() {
+                    @Override
+                    public void onFailure(
+                            final RecordingWriterCoordinator.GenerationToken generation,
+                            final RuntimeException exception) {
+                        if (!_writerFailureHandled.compareAndSet(false, true)) {
+                            return;
+                        }
+                        _permissionLossHandled = true;
+                        _listenerEventsActive.set(false);
+                        _stateMachine.failGeneration();
+                        _mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                handleWriterTaskFailure(generation, exception);
+                            }
+                        });
+                    }
+                });
+    }
+
+    private void handleWriterTaskFailure(
+            RecordingWriterCoordinator.GenerationToken generation,
+            RuntimeException exception) {
+        Log.e(
+                TAG,
+                "Track-point writer failed for generation "
+                        + generation.getGeneration()
+                        + ".",
+                exception);
+        synchronized (this) {
+            SharedData shared = SharedData.getInstance();
+            if (shared.ActivityId == generation.getActivityId()) {
+                shared.IsPaused = true;
+                _stopWatch.pauseTimer();
+            }
+        }
+        postLifecycleFailure(RecordingOperationResult.of(
+                RecordingOperationResult.Status.WRITER_FAILED,
+                generation.getActivityId()));
+    }
+
+    private void startOwnedListeners() {
+        Runnable permissionFailure = new Runnable() {
+            @Override
+            public void run() {
+                handleRecordingPermissionLoss();
+            }
+        };
+        ListenerGroup group = new ListenerGroup(
+                _listenerEventsActive,
+                new SensorListener(
+                        this,
+                        _uiForwardingHandler,
+                        permissionFailure,
+                        _listenerEventsActive),
+                new GpsListener(
+                        this,
+                        _uiForwardingHandler,
+                        permissionFailure,
+                        _listenerEventsActive),
+                "sport-logger-" + System.identityHashCode(this));
+        _listenerGroup = group;
+        LifecycleTermination replacement =
+                LISTENERS.replace(group, LISTENER_FENCE_TIMEOUT_MILLIS);
+        if (!replacement.succeeded()) {
+            Log.e(TAG, "Could not replace the previous listener generation: " + replacement);
+            handleListenerLifecycleFailure(replacement);
+        }
+    }
+
+    private void handleRecordingPermissionLoss() {
+        synchronized (this) {
+            if (_permissionLossHandled) {
+                return;
+            }
+            _permissionLossHandled = true;
+            _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
+            SharedData shared = SharedData.getInstance();
+            shared.IsPaused = true;
+            _stopWatch.pauseTimer();
+        }
+
+        _lifecycleExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                LifecycleTermination writerTermination =
+                        WRITERS.fenceOwned(
+                                SportLoggerService.this,
+                                WRITER_FENCE_TIMEOUT_MILLIS);
+                LifecycleTermination listenerTermination =
+                        _listenerGroup == null
+                                ? LifecycleTermination.TERMINATED
+                                : LISTENERS.release(
+                                        _listenerGroup,
+                                        LISTENER_FENCE_TIMEOUT_MILLIS);
+                if (!writerTermination.succeeded()) {
+                    postLifecycleFailure(writerFailure(writerTermination));
+                    return;
+                }
+                if (!listenerTermination.succeeded()) {
+                    postLifecycleFailure(listenerFailure(listenerTermination));
+                    return;
+                }
+
+                _mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        SharedData shared = SharedData.getInstance();
+                        shared.IsRecording = false;
+                        shared.IsPaused = false;
+                        shared.setHeartRate(0);
+                        _stopWatch.resetTimer();
+                        ISportLoggerServiceClient client = _serviceClient;
+                        if (client != null) {
+                            client.onRecordingPermissionLost();
+                        }
+                        stopSelf();
+                    }
+                });
+            }
+        });
+    }
+
+    private void handleListenerLifecycleFailure(LifecycleTermination termination) {
+        _permissionLossHandled = true;
+        SharedData.getInstance().IsPaused = true;
+        _stopWatch.pauseTimer();
+        postLifecycleFailure(listenerFailure(termination));
+    }
+
+    private void postLifecycleFailure(final RecordingOperationResult failure) {
+        Log.e(TAG, "Recording lifecycle failure: " + failure.getStatus());
+        _pendingLifecycleFailure = failure;
+        _mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                deliverPendingLifecycleFailure();
+                stopSelf();
+            }
+        });
+    }
+
+    private synchronized void deliverPendingLifecycleFailure() {
+        ISportLoggerServiceClient client = _serviceClient;
+        RecordingOperationResult failure = _pendingLifecycleFailure;
+        if (client != null && failure != null) {
+            _pendingLifecycleFailure = null;
+            client.onRecordingLifecycleFailure(failure);
+        }
+    }
+
+    private RecordingOperationResult writerFailure(LifecycleTermination termination) {
+        RecordingOperationResult.Status status;
+        if (termination == LifecycleTermination.INTERRUPTED) {
+            status = RecordingOperationResult.Status.INTERRUPTED;
+        } else if (termination == LifecycleTermination.TIMED_OUT) {
+            status = RecordingOperationResult.Status.WRITER_TIMED_OUT;
+        } else {
+            status = RecordingOperationResult.Status.WRITER_FAILED;
+        }
+        return RecordingOperationResult.of(
+                status, _activityId);
+    }
+
+    private RecordingOperationResult listenerFailure(LifecycleTermination termination) {
+        RecordingOperationResult.Status status;
+        if (termination == LifecycleTermination.INTERRUPTED) {
+            status = RecordingOperationResult.Status.INTERRUPTED;
+        } else if (termination == LifecycleTermination.TIMED_OUT) {
+            status = RecordingOperationResult.Status.LISTENER_TIMED_OUT;
+        } else {
+            status = RecordingOperationResult.Status.LISTENER_FAILED;
+        }
+        return RecordingOperationResult.of(
+                status, _activityId);
+    }
+
     private void showNotification() {
-        // Open the app when notification is clicked
         Intent contentIntent = new Intent(this, MainActivity.class);
-        contentIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        contentIntent.setFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         PendingIntent pending = PendingIntent.getActivity(
                 this,
                 0,
@@ -135,234 +614,19 @@ public class SportLoggerService extends Service {
                 NotificationManager.IMPORTANCE_LOW);
         channel.setDescription(getString(R.string.notification_channel_description));
         _notificationManager.createNotificationChannel(channel);
-        NotificationCompat.Builder notificationBuilder =
-                new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
-        notificationBuilder.setAutoCancel(true)
-                .setWhen(System.currentTimeMillis())
-                .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(R.string.notification_text))
-                .setSmallIcon(R.drawable.ic_play_circle_outline_black_24dp)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(false)
-                .setContentIntent(pending);
+        NotificationCompat.Builder builder =
+                new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                        .setWhen(System.currentTimeMillis())
+                        .setContentTitle(getString(R.string.notification_title))
+                        .setContentText(getString(R.string.notification_text))
+                        .setSmallIcon(R.drawable.ic_play_circle_outline_black_24dp)
+                        .setOngoing(true)
+                        .setOnlyAlertOnce(true)
+                        .setContentIntent(pending);
 
         int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
                 | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notificationBuilder.build(),
-                serviceTypes);
-    }
-
-    public static void setServiceClient(ISportLoggerServiceClient client) {
-        _serviceClient = client;
-    }
-
-    /**
-     * Class for clients to access. Because we know this service always runs in
-     * the same process as its clients, we don't need to deal with IPC.
-     */
-    public class LocalBinder extends Binder {
-        public SportLoggerService getService() {
-            return SportLoggerService.this;
-        }
-    }
-
-    public synchronized boolean startNewActivity() {
-        if (_permissionLossHandled) {
-            return false;
-        }
-        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            handleRecordingPermissionLoss();
-            return false;
-        }
-
-        // We can force reading at specific intervals like this
-        _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(createRecordingTask(), 0, 1, TimeUnit.SECONDS);
-        _stopWatch.startTImer();
-        SqlLogger.initDatabase();
-        SharedData.getInstance().ActivityId = SqlLogger.createActivity();
-        SharedData.getInstance().IsRecording = true;
-        SharedData.getInstance().IsPaused = false;
-        CharSequence text = "Starting new activity";
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-        return true;
-    }
-
-    public synchronized void stopActivity() {
-        ScheduledExecutorService scheduler = cancelScheduledWrites();
-        awaitSchedulerTermination(scheduler, 300);
-
-        _stopWatch.pauseTimer();
-        _stopWatch.resetTimer();
-
-        CharSequence text = "Stopped activity";
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-        SharedData.getInstance().IsRecording = false;
-        SharedData.getInstance().IsPaused = false;
-    }
-
-    public synchronized void pauseActivity() {
-        if (_permissionLossHandled) {
-            return;
-        }
-        SharedData.getInstance().IsPaused = true;
-        ScheduledExecutorService scheduler = cancelScheduledWrites();
-        awaitSchedulerTermination(scheduler, 300);
-
-        _stopWatch.pauseTimer();
-        CharSequence text = "Paused activity";
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-    }
-
-    public synchronized boolean resumeActivity() {
-        if (_permissionLossHandled) {
-            return false;
-        }
-        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
-            handleRecordingPermissionLoss();
-            return false;
-        }
-
-        // We can force reading at specific intervals like this
-        _scheduler = Executors.newScheduledThreadPool(1);
-        _scheduler.scheduleAtFixedRate(createRecordingTask(), 0, 1, TimeUnit.SECONDS);
-        SharedData.getInstance().IsPaused = false;
-        _stopWatch.startTImer();
-        CharSequence text = "Resuming activity";
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-        return true;
-    }
-
-    public synchronized void discardActivity() {
-        SharedData.getInstance().IsRecording = false;
-        SharedData.getInstance().IsPaused = false;
-        final int activityId = SharedData.getInstance().ActivityId;
-        final ScheduledExecutorService scheduler = cancelScheduledWrites();
-
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (scheduler != null) {
-                        scheduler.awaitTermination(300, TimeUnit.MILLISECONDS);
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-
-                SqlLogger sqlLogger = new SqlLogger();
-                sqlLogger.deleteActivity(activityId);
-            }
-        });
-
-        _stopWatch.pauseTimer();
-        _stopWatch.resetTimer();
-
-        CharSequence text = "Discarded activity";
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-    }
-
-    private Runnable createRecordingTask() {
-        final SqlLogger sqlLogger = new SqlLogger();
-        return new PermissionCheckedTask(
-                new PermissionCheckedTask.PermissionCheck() {
-                    @Override
-                    public boolean allRequiredPermissionsGranted() {
-                        return recordingMayContinue()
-                                && RecordingPermissions.allRequiredForRecordingGranted(
-                                        SportLoggerService.this);
-                    }
-                },
-                sqlLogger,
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        handleRecordingPermissionLoss();
-                    }
-                });
-    }
-
-    private synchronized void handleRecordingPermissionLoss() {
-        if (_permissionLossHandled) {
-            return;
-        }
-        _permissionLossHandled = true;
-
-        SharedData shared = SharedData.getInstance();
-        shared.IsRecording = false;
-        shared.IsPaused = false;
-        shared.setHeartRate(0);
-
-        ScheduledExecutorService scheduler = cancelScheduledWrites();
-        awaitSchedulerTermination(scheduler, 100);
-        requestListenerShutdown();
-
-        _mainHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                _stopWatch.pauseTimer();
-                _stopWatch.resetTimer();
-                if (_serviceClient != null) {
-                    _serviceClient.onRecordingPermissionLost();
-                }
-                stopSelf();
-            }
-        });
-    }
-
-    private synchronized boolean recordingMayContinue() {
-        return !_permissionLossHandled;
-    }
-
-    private synchronized ScheduledExecutorService cancelScheduledWrites() {
-        ScheduledExecutorService scheduler = _scheduler;
-        _scheduler = null;
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-        }
-        return scheduler;
-    }
-
-    private void awaitSchedulerTermination(
-            final ScheduledExecutorService scheduler,
-            final long timeoutMillis) {
-        if (scheduler == null) {
-            return;
-        }
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    scheduler.awaitTermination(timeoutMillis, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        });
-    }
-
-    private void requestListenerShutdown() {
-        Handler sensorHandler = SensorListener.WorkerHandler;
-        if (sensorHandler != null) {
-            Message sensorMessage = sensorHandler.obtainMessage(0);
-            sensorHandler.sendMessage(sensorMessage);
-        }
-
-        Handler locationHandler = GpsListener.WorkerHandler;
-        if (locationHandler != null) {
-            Message locationMessage = locationHandler.obtainMessage(0);
-            locationHandler.sendMessage(locationMessage);
-        }
-
-        if (_sensorThread != null) {
-            _sensorThread.interrupt();
-        }
-        if (_locationThread != null) {
-            _locationThread.interrupt();
-        }
+                this, NOTIFICATION_ID, builder.build(), serviceTypes);
     }
 }

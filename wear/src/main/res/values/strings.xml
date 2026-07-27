@@ -8,6 +8,8 @@
     <string name="notification_text">Tap to return to the active recording.</string>
     <string name="recording_permissions_required">Allow activity, sensor, and location access to record.</string>
     <string name="background_sensor_permission_required">Allow all-the-time sensor access in Settings to record heart rate after leaving SportLogger.</string>
+    <string name="recording_shutdown_failed">Recording could not finish safely. Your activity was retained; wait or restart SportLogger before retrying.</string>
+    <string name="recording_operation_failed">The recording action could not be completed.</string>
     <!--
     This string is used for square devices and overridden by hello_world in
     values-round/strings.xml for round devices.

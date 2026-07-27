@@ -50,8 +50,18 @@ public class SqlLogger implements Runnable {
     public static final String T_HEARTRATE="HEARTRATE";
 
     private SQLiteDatabase _db;
+    private final Integer _activityId;
 
     public SqlLogger() {
+        this(null);
+    }
+
+    public SqlLogger(int activityId) {
+        this(Integer.valueOf(activityId));
+    }
+
+    private SqlLogger(Integer activityId) {
+        _activityId = activityId;
         _db = Config.context.openOrCreateDatabase(DATABASE_NAME,
                 Context.MODE_PRIVATE, null);
     }
@@ -64,6 +74,14 @@ public class SqlLogger implements Runnable {
     }
 
     private void writeData() {
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
+        if (_activityId == null) {
+            throw new IllegalStateException(
+                    "Scheduled SQL writes require an immutable activity ID.");
+        }
+
         // Get a timestamp
         GregorianCalendar greg = new GregorianCalendar();
         TimeZone tz = greg.getTimeZone();
@@ -77,13 +95,18 @@ public class SqlLogger implements Runnable {
         SharedData singleton = SharedData.getInstance();
         LocationData locationData = singleton.getData();
 
+        int activityId = _activityId;
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
+
         queryBuf.append("INSERT INTO "
                 + GPS_TABLE_NAME
                 + " (GMTTIMESTAMP, ACTIVITYID, LATITUDE,LONGITUDE,ALTITUDE,ACCURACY,SPEED,BEARING,HEARTRATE) VALUES ("
                 + "'"
                 + gmtTime
                 + "',"
-                + singleton.ActivityId
+                + activityId
                 + ","
                 + locationData.Latitude
                 + ","
@@ -100,6 +123,9 @@ public class SqlLogger implements Runnable {
                 + locationData.HeartRate
                 + ");");
         Log.i(TAG, queryBuf.toString());
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
         _db.execSQL(queryBuf.toString());
     }
 

@@ -51,42 +51,49 @@ public class RecordingPermissionContractTest {
         assertTrue(documentation.contains("separate runtime request"));
         assertTrue(documentation.contains("recording remains gated"));
         assertTrue(documentation.contains("hard-restricted permission"));
-        assertTrue(documentation.contains("pauses and resets the stopwatch"));
+        assertTrue(documentation.contains("single-generation state machine"));
+        assertTrue(documentation.contains("immutable ID"));
+        assertTrue(documentation.contains("typed failure"));
+        assertTrue(documentation.contains("service-instance listener group"));
+        assertTrue(documentation.contains("one main-thread handler"));
         assertTrue(documentation.contains("rejects start and resume"));
     }
 
     @Test
-    public void permissionLossStopsAndResetsStopwatchBeforeServiceShutdown() throws Exception {
+    public void permissionLossUsesBoundedFencesBeforeNotificationAndShutdown() throws Exception {
         String service = new String(
                 Files.readAllBytes(findRepositoryFile(
                         "wear/src/main/java/com/long2know/sportlogger/services/"
                                 + "SportLoggerService.java")),
                 StandardCharsets.UTF_8);
-        int cleanup = service.indexOf("private synchronized void handleRecordingPermissionLoss()");
-        int cancelWrites = service.indexOf("cancelScheduledWrites();", cleanup);
-        int stopListeners = service.indexOf("requestListenerShutdown();", cleanup);
+        int cleanup = service.indexOf("private void handleRecordingPermissionLoss()");
         int pause = service.indexOf("_stopWatch.pauseTimer();", cleanup);
+        int cancelWrites = service.indexOf("WRITERS.fenceOwned(", cleanup);
+        int stopListeners = service.indexOf("LISTENERS.release(", cleanup);
         int reset = service.indexOf("_stopWatch.resetTimer();", cleanup);
-        int callback = service.indexOf("_serviceClient.onRecordingPermissionLost();", cleanup);
+        int callback = service.indexOf("client.onRecordingPermissionLost();", cleanup);
         int shutdown = service.indexOf("stopSelf();", cleanup);
 
         assertTrue(cleanup >= 0);
-        assertTrue(cancelWrites > cleanup);
+        assertTrue(pause > cleanup);
+        assertTrue(cancelWrites > pause);
         assertTrue(stopListeners > cancelWrites);
-        assertTrue(pause > stopListeners);
-        assertTrue(reset > pause);
+        assertTrue(reset > stopListeners);
         assertTrue(callback > reset);
         assertTrue(shutdown > callback);
-        assertTrue(service.contains("return recordingMayContinue()"));
+        assertTrue(service.contains("WRITER_FENCE_TIMEOUT_MILLIS"));
+        assertTrue(service.contains("LISTENER_FENCE_TIMEOUT_MILLIS"));
+        assertTrue(service.contains("postLifecycleFailure"));
+        assertTrue(service.contains("shared.IsPaused = true"));
 
         String start = service.substring(
-                service.indexOf("public synchronized boolean startNewActivity()"),
-                service.indexOf("public synchronized void stopActivity()"));
+                service.indexOf("public synchronized RecordingOperationResult startNewActivity()"),
+                service.indexOf("public synchronized RecordingOperationResult pauseActivity()"));
         String resume = service.substring(
-                service.indexOf("public synchronized boolean resumeActivity()"),
-                service.indexOf("public synchronized void discardActivity()"));
-        assertTrue(start.contains("if (_permissionLossHandled)"));
-        assertTrue(resume.contains("if (_permissionLossHandled)"));
+                service.indexOf("public synchronized RecordingOperationResult resumeActivity()"),
+                service.indexOf("public synchronized RecordingOperationResult stopActivity()"));
+        assertTrue(start.contains("_permissionLossHandled"));
+        assertTrue(resume.contains("_permissionLossHandled"));
     }
 
     private static Path findRepositoryFile(String relativePath) {

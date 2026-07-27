@@ -17,8 +17,6 @@ import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
 import com.long2know.utilities.models.SharedData;
 
-import static com.long2know.utilities.models.Config.handler;
-
 /**
  * Fragment that appears in the "content_frame", just shows the currently selected planet.
  */
@@ -31,17 +29,64 @@ public class SensorFragment extends Fragment {
     private TextView _totalDistance;
     private TextView _steps;
     private TextView _duration;
-    Handler _handler;
+    private final Handler _handler;
+    private final CancellableCallbackLoop _timerLoop;
 
     public SensorFragment() {
         // Empty constructor required for fragment subclasses
         _handler = new Handler(Looper.getMainLooper());
+        _timerLoop = new CancellableCallbackLoop(
+                new CancellableCallbackLoop.Scheduler() {
+                    @Override
+                    public void postDelayed(Runnable callback, long delayMillis) {
+                        _handler.postDelayed(callback, delayMillis);
+                    }
+
+                    @Override
+                    public void removeCallbacks(Runnable callback) {
+                        _handler.removeCallbacks(callback);
+                    }
+                },
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        updateDuration();
+                    }
+                },
+                200L);
     }
 
     @Override
     public void onDestroy () {
-        _handler.removeCallbacks(runnable);
+        pauseTimer();
         super.onDestroy ();
+    }
+
+    @Override
+    public void onPause() {
+        pauseTimer();
+        super.onPause();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (SharedData.getInstance().IsRecording
+                && !SharedData.getInstance().IsPaused) {
+            startTImer();
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        pauseTimer();
+        _heartRate = null;
+        _latitude = null;
+        _longitude = null;
+        _totalDistance = null;
+        _steps = null;
+        _duration = null;
+        super.onDestroyView();
     }
 
     @Override
@@ -64,11 +109,14 @@ public class SensorFragment extends Fragment {
     }
 
     public void refresh() {
-        _duration.setText(SharedData.getInstance().Duration);
+        updateDuration();
         updateHeartRate(SharedData.getInstance().getData().HeartRate);
         updateLocation(SharedData.getInstance().getData());
         updateSteps(SharedData.getInstance().getData().Steps);
-        startTImer();
+        if (SharedData.getInstance().IsRecording
+                && !SharedData.getInstance().IsPaused) {
+            startTImer();
+        }
     }
 
     public void updateHeartRate(float heartRate) {
@@ -92,7 +140,10 @@ public class SensorFragment extends Fragment {
     }
 
     public void startTImer() {
-        _handler.postDelayed(runnable, 200);
+        if (!isAdded() || getView() == null) {
+            return;
+        }
+        _timerLoop.start();
     }
 
     public void resetTimer() {
@@ -102,7 +153,7 @@ public class SensorFragment extends Fragment {
     }
 
     public void pauseTimer() {
-        _handler.removeCallbacks(runnable);
+        _timerLoop.stop();
     }
 
     public void onEnterAmbientInFragment(Bundle ambientDetails) {
@@ -120,11 +171,12 @@ public class SensorFragment extends Fragment {
         Log.d(TAG, "SensorFragment.onExitAmbient()");
     }
 
-    public Runnable runnable = new Runnable() {
-        public void run() {
-            _duration.setText(SharedData.getInstance().Duration);
-            handler.postDelayed(this, 0);
+    private void updateDuration() {
+        SharedData shared = SharedData.getInstance();
+        if (!shared.IsRecording || shared.IsPaused || !isAdded() || _duration == null) {
+            _timerLoop.stop();
+            return;
         }
-
-    };
+        _duration.setText(shared.Duration);
+    }
 }

@@ -99,14 +99,40 @@ allowlisting and the device Settings flow require Play/OEM and physical-device v
 
 The service checks the complete permission set before foreground startup, before starting or
 resuming a recording, and immediately before every scheduled track-point write. The sensor thread
-also handles a permission-race `SecurityException`. A detected revocation first shuts down scheduled
-writes and sensor/location listeners, then pauses and resets the stopwatch on the main thread before
-notifying the activity or stopping the service. Reset cancels the stopwatch callback, clears the
-shared duration to `00:00:00`, and invalidates any stale callback that was already dequeued. Once
-permission-loss teardown begins, that service instance rejects start and resume, so a regrant cannot
-race old callbacks or scheduled writes into a later recording. The activity then stops and unbinds
-the recorder and returns to the start screen instead of persisting or displaying stale health or
-duration data.
+also handles a permission-race `SecurityException`.
+
+Recording now has an explicit single-generation state machine. Start, pause, resume, stop, discard,
+and shutdown transitions are idempotent: duplicate UI actions are no-ops while invalid cross-state
+actions are rejected. A writer generation captures its activity ID before scheduling, and every SQL
+insert uses that immutable ID instead of consulting the mutable shared `ActivityId`. A process-wide
+writer coordinator permits at most one generation and fences cancellation plus an in-flight write
+before pause, stop/export, discard/delete, permission-loss completion, or a later recording. The
+fence is bounded to two seconds and honors interruption. If it times out or otherwise fails, the
+operation returns a typed failure, keeps the activity and database rows, leaves the recording
+paused, and does not export or delete as though shutdown succeeded. An uncaught scheduled-write
+failure also terminates its generation and is surfaced as `WRITER_FAILED`; it cannot be retried as a
+successful export.
+
+Sensor and GPS loopers are owned by one service-instance listener group. Replacement first disables
+the old generation, unregisters both listener sets, requests safe looper quit, and waits for both
+termination acknowledgements within the same two-second bound. A timed-out owner remains registered
+as the owner, so no replacement starts beside it; a stale service release cannot clear a newer
+owner. The service client is also cleared by identity, preventing an old activity instance from
+disconnecting its replacement.
+
+A detected revocation first pauses callback production, then obtains the bounded writer and listener
+fences off the main thread. Only after both succeed does it reset the stopwatch, notify the activity,
+and stop the service. Reset cancels the stopwatch callback, clears the shared duration to
+`00:00:00`, and invalidates any stale callback that was already dequeued. Once permission-loss
+teardown begins, that service instance rejects start and resume, so a regrant cannot race old
+callbacks or scheduled writes into a later recording. A timeout is surfaced through
+`RecordingOperationResult` and retains the activity rather than presenting permission shutdown as
+successful.
+
+`SensorFragment` uses one main-thread handler through a generation-guarded callback loop. Repeated
+resume/start calls cannot create parallel chains, and pause, permission-loss state, view destruction,
+or fragment destruction removes the callback through the same handler and prevents stale callbacks
+from rescheduling.
 
 ## Pinned direct dependencies
 
@@ -186,9 +212,9 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Twelve unit-test reports
-contained 46 tests with zero failures, errors, or skips. Lint completed with zero errors and 83
-unsuppressed warnings (6 mobile, 72 Wear, and 5 utilities).
+The final clean local run completed successfully with 202 actionable tasks. Twenty-four unit-test
+reports contained 96 tests with zero failures, errors, or skips. Lint completed with zero errors and
+82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:
 

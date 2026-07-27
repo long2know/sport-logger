@@ -35,6 +35,7 @@ import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
 import com.google.android.gms.wearable.Wearable;
 import com.long2know.sportlogger.services.ISportLoggerServiceClient;
+import com.long2know.sportlogger.services.RecordingOperationResult;
 import com.long2know.sportlogger.services.SportLoggerService;
 import com.long2know.utilities.data_access.SqlLogger;
 import com.long2know.utilities.models.Config;
@@ -45,8 +46,6 @@ import com.long2know.utilities.models.SportActivity;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ScheduledExecutorService;
-
 public class MainActivity extends FragmentActivity implements
         AmbientModeSupport.AmbientCallbackProvider,
         MenuItem.OnMenuItemClickListener,
@@ -66,13 +65,10 @@ public class MainActivity extends FragmentActivity implements
 
     private SportLoggerService _loggingService;
     private ServiceConnection _loggingServiceConnection;
-    private static Intent _serviceIntent;
+    private Intent _serviceIntent;
+    private Handler _activityHandler;
     private boolean _permissionRequestInFlight;
     private boolean _permissionLossMessagePending;
-
-//    private SensorListener _sensorListener;
-//    private GpsListener _locationListener;
-    private ScheduledExecutorService _scheduler;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -114,7 +110,7 @@ public class MainActivity extends FragmentActivity implements
 
         // Create a handler for the UI thread
         // Defines a Handler object that's attached to the UI thread
-        Config.activityHandler = new Handler(Looper.getMainLooper()) {
+        _activityHandler = new Handler(Looper.getMainLooper()) {
             public void handleMessage(Message msg) {
                 int messageType = msg.what;
 
@@ -145,6 +141,7 @@ public class MainActivity extends FragmentActivity implements
                 }
             }
         };
+        Config.activityHandler = _activityHandler;
 
         requestMissingPermissions();
 
@@ -166,7 +163,7 @@ public class MainActivity extends FragmentActivity implements
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
                 _loggingService = ((SportLoggerService.LocalBinder) service).getService();
-                SportLoggerService.setServiceClient(MainActivity.this);
+                _loggingService.setServiceClient(MainActivity.this);
             }
         };
     }
@@ -194,7 +191,15 @@ public class MainActivity extends FragmentActivity implements
             stopAndUnbindServiceIfRequired();
         }
 
-        SportLoggerService.setServiceClient(null);
+        if (_loggingService != null) {
+            _loggingService.clearServiceClient(this);
+        }
+        if (Config.activityHandler == _activityHandler) {
+            Config.activityHandler = null;
+        }
+        if (Config.activityContext == this) {
+            Config.activityContext = null;
+        }
         super.onDestroy();
     }
 
@@ -210,6 +215,12 @@ public class MainActivity extends FragmentActivity implements
         if (canPresentPermissionUi) {
             requestMissingPermissions();
         }
+    }
+
+    @Override
+    public void onRecordingLifecycleFailure(RecordingOperationResult result) {
+        handleRecordingFailure(result);
+        stopLoggingServiceForMissingPermissions();
     }
 
     // Start the logger service and bind the activity to the service
@@ -250,7 +261,12 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        if (!_loggingService.startNewActivity()) {
+        RecordingOperationResult result = _loggingService.startNewActivity();
+        if (!result.isSuccess() && !result.isNoOp()) {
+            handleRecordingFailure(result);
+            return;
+        }
+        if (result.isNoOp()) {
             return;
         }
         _sensorFragment.startTImer();
@@ -262,14 +278,21 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        _loggingService.stopActivity();
+        RecordingOperationResult result = _loggingService.stopActivity();
+        if (!result.isSuccess()) {
+            if (!result.isNoOp()) {
+                handleRecordingFailure(result);
+            }
+            return;
+        }
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
 
         // Send the activity to the phone
         SqlLogger sqlLogger = new SqlLogger();
-        SportActivity activity = sqlLogger.getSportActivity(SharedData.getInstance().ActivityId);
-        activity.SportTrackPoints = sqlLogger.getTrackPointsByActivity(SharedData.getInstance().ActivityId);
+        int activityId = result.getActivityId();
+        SportActivity activity = sqlLogger.getSportActivity(activityId);
+        activity.SportTrackPoints = sqlLogger.getTrackPointsByActivity(activityId);
 
         try {
             // Transmit the activity to the phone
@@ -297,7 +320,13 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        _loggingService.pauseActivity();
+        RecordingOperationResult result = _loggingService.pauseActivity();
+        if (!result.isSuccess()) {
+            if (!result.isNoOp()) {
+                handleRecordingFailure(result);
+            }
+            return;
+        }
         _sensorFragment.pauseTimer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _endFragment).commit();
         _wearableActionDrawer.getController().closeDrawer();
@@ -307,7 +336,11 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        if (!_loggingService.resumeActivity()) {
+        RecordingOperationResult result = _loggingService.resumeActivity();
+        if (!result.isSuccess()) {
+            if (!result.isNoOp()) {
+                handleRecordingFailure(result);
+            }
             return;
         }
         _sensorFragment.startTImer();
@@ -319,7 +352,13 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        _loggingService.discardActivity();
+        RecordingOperationResult result = _loggingService.discardActivity();
+        if (!result.isSuccess()) {
+            if (!result.isNoOp()) {
+                handleRecordingFailure(result);
+            }
+            return;
+        }
         _sensorFragment.pauseTimer();
         _sensorFragment.resetTimer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _startFragment).commit();
@@ -450,6 +489,24 @@ public class MainActivity extends FragmentActivity implements
     private void handleMissingRecordingPermissions(boolean showMessage, int messageResource) {
         SharedData shared = SharedData.getInstance();
         boolean recordingWasActive = shared.IsRecording || shared.IsPaused;
+        if (recordingWasActive && _loggingService != null) {
+            if (_sensorFragment != null) {
+                _sensorFragment.pauseTimer();
+            }
+            _loggingService.recordingPermissionsRevoked();
+            return;
+        }
+        if (recordingWasActive) {
+            shared.IsPaused = true;
+            if (_sensorFragment != null) {
+                _sensorFragment.pauseTimer();
+            }
+            handleRecordingFailure(RecordingOperationResult.of(
+                    RecordingOperationResult.Status.LISTENER_FAILED,
+                    shared.ActivityId));
+            return;
+        }
+
         shared.IsRecording = false;
         shared.IsPaused = false;
 
@@ -473,7 +530,9 @@ public class MainActivity extends FragmentActivity implements
     }
 
     private void stopLoggingServiceForMissingPermissions() {
-        SportLoggerService.setServiceClient(null);
+        if (_loggingService != null) {
+            _loggingService.clearServiceClient(this);
+        }
         if (Session.isBoundToService() && _loggingServiceConnection != null) {
             unbindService(_loggingServiceConnection);
             Session.setBoundToService(false);
@@ -501,6 +560,38 @@ public class MainActivity extends FragmentActivity implements
         if (_wearableActionDrawer != null) {
             _wearableActionDrawer.getController().closeDrawer();
         }
+    }
+
+    private void handleRecordingFailure(RecordingOperationResult result) {
+        _sensorFragment.pauseTimer();
+        if (result.getStatus() == RecordingOperationResult.Status.WRITER_TIMED_OUT
+                || result.getStatus() == RecordingOperationResult.Status.WRITER_FAILED
+                || result.getStatus()
+                == RecordingOperationResult.Status.LISTENER_TIMED_OUT
+                || result.getStatus() == RecordingOperationResult.Status.LISTENER_FAILED
+                || result.getStatus() == RecordingOperationResult.Status.INTERRUPTED
+                || (result.getStatus() == RecordingOperationResult.Status.DATABASE_FAILED
+                && SharedData.getInstance().IsRecording)) {
+            SharedData shared = SharedData.getInstance();
+            shared.IsPaused = true;
+            Toast.makeText(
+                    this,
+                    R.string.recording_shutdown_failed,
+                    Toast.LENGTH_LONG)
+                    .show();
+            if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
+                _fragmentManager.beginTransaction()
+                        .replace(R.id.content_frame, _endFragment)
+                        .commit();
+            }
+            return;
+        }
+
+        Toast.makeText(
+                this,
+                R.string.recording_operation_failed,
+                Toast.LENGTH_SHORT)
+                .show();
     }
 
     @Override

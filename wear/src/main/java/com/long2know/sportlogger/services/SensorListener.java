@@ -1,5 +1,6 @@
 package com.long2know.sportlogger.services;
 
+import android.content.Context;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -9,176 +10,180 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
-import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.SharedData;
 
-import java.util.concurrent.ScheduledExecutorService;
-import static android.content.Context.SENSOR_SERVICE;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class SensorListener implements Runnable {
+final class SensorListener implements ManagedListener {
     private static final String TAG = "SensorListener";
 
-    public static Handler WorkerHandler;
+    private final Context _context;
+    private final Handler _uiHandler;
+    private final Runnable _permissionFailureCallback;
+    private final AtomicBoolean _ownerActive;
+    private final CountDownLatch _ready = new CountDownLatch(1);
+    private final CountDownLatch _stopped = new CountDownLatch(1);
+    private final Object _lifecycleLock = new Object();
 
-    private Handler _handler;
+    private Looper _looper;
+    private Handler _workerHandler;
     private SensorManager _sensorManager;
     private SensorEventListener _eventListener;
     private Sensor _heartRateSensor;
     private Sensor _stepCountSensor;
     private Sensor _stepDetectSensor;
-    private ScheduledExecutorService _scheduler;
-    private boolean _isStarted = true;
-
     private int _stepCount;
-    private final Runnable _permissionFailureCallback;
+    private volatile boolean _shutdownRequested;
 
-    public SensorListener(Runnable permissionFailureCallback) {
+    SensorListener(
+            Context context,
+            Handler uiHandler,
+            Runnable permissionFailureCallback,
+            AtomicBoolean ownerActive) {
+        _context = context.getApplicationContext();
+        _uiHandler = uiHandler;
         _permissionFailureCallback = permissionFailureCallback;
+        _ownerActive = ownerActive;
     }
 
-    // Defines the code to run for this task.
     @Override
     public void run() {
-        // Moves the current Thread into the background
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-
-        Looper.prepare();
-        _handler = Config.handler;
-
-        WorkerHandler = new Handler(Looper.myLooper()) {
-            public void handleMessage(Message msg) {
-                Log.d(TAG, "Received a message!");
-                // For now, the only messages are start/stop
-                if (msg.what == 0) {
-                    // The sensors are started by default
-                    if (_isStarted) {
-                        stopListeners();
-                        Looper.myLooper().quit();
-                        _isStarted = false;
-                    }
-                } else {
-                    if (!_isStarted) {
-                        _isStarted = startListeners();
-                        if (!_isStarted) {
-                            Looper.myLooper().quit();
-                        }
-                    }
+        android.os.Process.setThreadPriority(
+                android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        try {
+            Looper.prepare();
+            synchronized (_lifecycleLock) {
+                if (_shutdownRequested) {
+                    return;
                 }
+                _looper = Looper.myLooper();
+                _workerHandler = new Handler(_looper);
             }
-        };
-
-        _isStarted = startListeners();
-        if (_isStarted) {
-            Looper.loop();
+            if (!_shutdownRequested && _ownerActive.get()) {
+                startListeners();
+            }
+            _ready.countDown();
+            if (!_shutdownRequested && _ownerActive.get()) {
+                Looper.loop();
+            }
+        } finally {
+            stopListeners();
+            synchronized (_lifecycleLock) {
+                _workerHandler = null;
+                _looper = null;
+            }
+            _ready.countDown();
+            _stopped.countDown();
         }
-        WorkerHandler = null;
     }
 
-    private boolean startListeners() {
+    @Override
+    public void requestShutdown() {
+        _ownerActive.set(false);
+        Handler handler;
+        synchronized (_lifecycleLock) {
+            _shutdownRequested = true;
+            handler = _workerHandler;
+            if (handler == null) {
+                return;
+            }
+        }
+        if (!handler.postAtFrontOfQueue(new Runnable() {
+            @Override
+            public void run() {
+                Looper.myLooper().quitSafely();
+            }
+        })) {
+            Looper looper;
+            synchronized (_lifecycleLock) {
+                looper = _looper;
+            }
+            if (looper != null) {
+                looper.quitSafely();
+            }
+        }
+    }
+
+    @Override
+    public boolean awaitStopped(long timeoutMillis) throws InterruptedException {
+        return _stopped.await(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS);
+    }
+
+    @Override
+    public boolean awaitReady(long timeoutMillis) throws InterruptedException {
+        return _ready.await(Math.max(0L, timeoutMillis), TimeUnit.MILLISECONDS);
+    }
+
+    private void startListeners() {
         try {
-            _sensorManager = ((SensorManager) Config.context.getSystemService(SENSOR_SERVICE));
+            _sensorManager = (SensorManager) _context.getSystemService(Context.SENSOR_SERVICE);
+            if (_sensorManager == null) {
+                return;
+            }
+
             _heartRateSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE);
             _stepCountSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
             _stepDetectSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
-
             _eventListener = new SensorEventListener() {
                 @Override
                 public void onSensorChanged(SensorEvent event) {
-                    Log.d(TAG, event.toString());
+                    if (!_ownerActive.get() || _shutdownRequested) {
+                        return;
+                    }
 
                     SharedData singleton = SharedData.getInstance();
                     int sensorType = event.sensor.getType();
-
                     if (sensorType == Sensor.TYPE_STEP_DETECTOR) {
                         _stepCount++;
                         singleton.setSteps(_stepCount);
-                    }
-
-                    if (sensorType == Sensor.TYPE_HEART_RATE) {
+                    } else if (sensorType == Sensor.TYPE_HEART_RATE) {
                         singleton.setHeartRate(event.values[0]);
                     }
 
-                    Message completeMessage = _handler.obtainMessage(1, sensorType, 0, event);
-                    completeMessage.sendToTarget();
+                    if (_ownerActive.get()) {
+                        Message message =
+                                _uiHandler.obtainMessage(1, sensorType, 0, event);
+                        message.sendToTarget();
+                    }
                 }
 
                 @Override
                 public void onAccuracyChanged(Sensor sensor, int accuracy) {
-                    Log.d("MY_APP", sensor.toString() + " - " + accuracy);
+                    Log.d(TAG, sensor + " - " + accuracy);
                 }
             };
 
-            if (_heartRateSensor != null) {
-                _sensorManager.registerListener(
-                        _eventListener, _heartRateSensor, SensorManager.SENSOR_DELAY_FASTEST);
-            }
-
-            if (_stepCountSensor != null) {
-                _sensorManager.registerListener(
-                        _eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
-                _sensorManager.unregisterListener(_eventListener, _stepCountSensor);
-                _sensorManager.registerListener(
-                        _eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
-            }
-
-            if (_stepDetectSensor != null) {
-                _sensorManager.registerListener(
-                        _eventListener, _stepDetectSensor, SensorManager.SENSOR_DELAY_GAME);
-            }
-            return true;
+            register(_heartRateSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            register(_stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
+            register(_stepDetectSensor, SensorManager.SENSOR_DELAY_GAME);
         } catch (SecurityException exception) {
             Log.e(TAG, "Recording sensor permission was denied or revoked.", exception);
             stopListeners();
-            if (_permissionFailureCallback != null) {
+            if (_ownerActive.compareAndSet(true, false)
+                    && _permissionFailureCallback != null) {
                 _permissionFailureCallback.run();
             }
-            return false;
         }
-
-//        // We can force reading at specific intervals like this
-//        if (_heartRateSensor != null) {
-//            final int measurementDuration = 1;   // Seconds
-//            final int measurementBreak = 0;    // Seconds
-//
-//            _scheduler = Executors.newScheduledThreadPool(1);
-//            _scheduler.scheduleAtFixedRate(
-//                    new Runnable() {
-//                        @Override
-//                        public void run() {
-//                            Log.d(TAG, "register Heartrate Sensor");
-//                            _sensorManager.registerListener(_eventListener, _heartRateSensor, SensorManager.SENSOR_DELAY_FASTEST);
-//
-//                            try {
-//                                Thread.sleep(measurementDuration * 1000);
-//                            } catch (InterruptedException e) {
-//                                Log.e(TAG, "Interrupted while waitting to unregister Heartrate Sensor");
-//                            }
-//
-//                            Log.d(TAG, "unregister Heartrate Sensor");
-//                            _sensorManager.unregisterListener(_eventListener, _heartRateSensor);
-//                        }
-//                    }, 3, measurementDuration + measurementBreak, TimeUnit.SECONDS);
-//
-//        } else {
-//            Log.d(TAG, "No Heartrate Sensor found");
-//        }
-
     }
 
-    public void stopListeners() {
-        if (_sensorManager != null && _eventListener != null && _heartRateSensor != null) {
-            _sensorManager.unregisterListener(_eventListener, _heartRateSensor);
+    private void register(Sensor sensor, int delay) {
+        if (sensor != null && _ownerActive.get() && !_shutdownRequested) {
+            _sensorManager.registerListener(_eventListener, sensor, delay);
         }
+    }
 
-        if (_sensorManager != null && _eventListener != null && _stepCountSensor != null) {
-            _sensorManager.unregisterListener(_eventListener, _stepCountSensor);
+    private void stopListeners() {
+        if (_sensorManager != null && _eventListener != null) {
+            _sensorManager.unregisterListener(_eventListener);
         }
-
-        if (_sensorManager != null && _eventListener != null && _stepDetectSensor != null) {
-            _sensorManager.unregisterListener(_eventListener, _stepDetectSensor);
+        _eventListener = null;
+        _heartRateSensor = null;
+        _stepCountSensor = null;
+        _stepDetectSensor = null;
+        if (!_ownerActive.get()) {
+            SharedData.getInstance().setHeartRate(0);
         }
-
-        SharedData singleton = SharedData.getInstance();
-        singleton.setHeartRate(0);
     }
 }
