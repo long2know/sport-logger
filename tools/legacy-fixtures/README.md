@@ -8,12 +8,18 @@ copied from a user, device, backup, or production database.
 From the repository root:
 
 ```bash
+# Validate the committed Temurin 17 formatter matrix.
+"$JAVA_HOME/bin/java" tools/legacy-fixtures/LocaleTimestampProbe.java
+
 # Recreate fixtures/, expected/, and manifest.json.
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all 49 defect detectors.
+# all 56 defect detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
+
+# Prove the modern and Android API-26 schema paths make equivalent decisions.
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-legacy-schema-path
 
 # Regenerate twice. SQLite artifacts use their declared logical/canonical
 # comparison; generated JSON is compared byte-for-byte.
@@ -25,16 +31,17 @@ python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 
 The tool uses only Python's standard-library `sqlite3`, `json`, `hashlib`,
 `uuid`, and test modules. Android, Gradle, Room, and third-party packages are
-not required. The optional locale-evidence probe uses JDK source-file mode.
+not required, and no SQLite engine is bundled. The locale-evidence probe uses
+JDK source-file mode.
 
-Current counted reality is 18 fixtures and 39 regeneration artifacts: 19
-exact-byte UTF-8/LF JSON artifacts, 14 logical standard databases, and 6
-canonical non-standard SQLite artifacts. The verifier runs 49 defect detectors,
-and the standard-library suite contains 22 tests.
+Current counted reality is 20 fixtures and 44 regeneration artifacts: 22
+exact-byte UTF-8/LF text artifacts, 16 logical standard databases, and 6
+canonical non-standard SQLite artifacts. The verifier runs 56 defect detectors,
+and the standard-library suite contains 24 tests.
 
 ## Layout
 
-- `fixtures/*.db` — 18 SQLite inputs using Android's platform metadata table
+- `fixtures/*.db` — 20 SQLite inputs using Android's platform metadata table
   plus the source-reachable application schema state.
 - `fixtures/active_wal_snapshot.db-{wal,shm}` — the required sidecars for the
   active-WAL case. Its committed rows exist only in the WAL snapshot.
@@ -43,6 +50,9 @@ and the standard-library suite contains 22 tests.
   quarantine row, and distinguish valid empty data from blocked migration.
 - `manifest.json` — expected counts, timestamp ranges, representative values,
   idempotency results, storage-comparison modes, and logical checksums.
+- `LocaleTimestampProbe.expected.tsv` — pinned Temurin `17.0.20+8` formatter
+  matrix, including all 1,017 available locales, 11 unique
+  digit/calendar/output signatures, and 9 unique decimal digit blocks.
 - `test_legacy_fixtures.py` — regression and fault-injection tests.
 - `LocaleTimestampProbe.java` — checked source-mode JDK probe for the exact
   locale digit and calendar semantics committed in the timestamp fixtures.
@@ -71,35 +81,41 @@ non-TEXT, invalid-value, and multi-row metadata states are explicit
 `malformed_schema` diagnostics and block migration before source reads or
 target/receipt writes.
 
-Schema validation uses `PRAGMA table_xinfo`, not only `table_info`, and compares
-canonicalized `sqlite_schema` table SQL. It rejects hidden/generated columns,
-virtual or shadow-table substitutions, extra indexes/views/triggers, changed
-constraints/defaults/order/types, foreign keys, and non-table b-tree records.
-Keyword case, identifier quoting, comments, and whitespace are treated as
-formatting only.
+Schema validation has two exact paths. Modern SQLite uses
+`PRAGMA table_xinfo` plus canonicalized `sqlite_schema` SQL. Android API 26's
+SQLite 3.18.2 path uses `PRAGMA table_info` plus the same exact object/SQL checks
+through `sqlite_master`; it never requires `table_xinfo` or `sqlite_schema`.
+Both reject hidden/generated columns, virtual or shadow substitutions, extra
+constraints/defaults/types/order, foreign keys, and unexpected tables, indexes,
+views, or triggers. Only the literal `sqlite_` prefix is internal, and the
+canonical schema explicitly permits only SQLite's AUTOINCREMENT-owned
+`sqlite_sequence`. User objects named `sqliteX...` remain visible and fail.
 
 ## Locale-sensitive timestamps
 
 Legacy `Config.TimestampFormat` constructs `SimpleDateFormat("yyyyMMddHHmmss")`
 without a locale, so Android uses the device's default format locale for both
-decimal digits **and calendar**. The checked probe reproduces Arabic-Indic,
-Bengali, ASCII, Thai Buddhist, explicit Thai-digit Gregorian, and Thai Buddhist
-with Latin digits:
+decimal digits **and calendar**. The probe must run with pinned Eclipse Temurin
+`17.0.20+8`; it sorts all available locales, hashes every locale observation,
+and compares the result byte-for-byte with the committed matrix:
 
 ```bash
-java tools/legacy-fixtures/LocaleTimestampProbe.java
+"$JAVA_HOME/bin/java" tools/legacy-fixtures/LocaleTimestampProbe.java
 ```
 
-OpenJDK `21.0.11+10-1-24.04.2-Ubuntu` reported:
+The pinned runtime exposes these unique decimal zero digits:
 
 ```text
-ar-EG zero=U+0660 calendar=gregory formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
-bn-BD zero=U+09E6 calendar=gregory formatted=২০২৪০৭০৮০৯১০১১
-en-US zero=U+0030 calendar=gregory formatted=20240708091011
-th-TH-u-nu-thai zero=U+0E50 calendar=buddhist formatted=๒๕๖๗๐๗๐๘๐๙๑๐๑๑
-th-TH-u-ca-gregory-nu-thai zero=U+0E50 calendar=gregory formatted=๒๐๒๔๐๗๐๘๐๙๑๐๑๑
-th-TH-u-nu-latn zero=U+0030 calendar=buddhist formatted=25670708091011
+U+0030 U+0660 U+06F0 U+0966 U+09E6 U+0E50 U+0F20 U+1040 U+1C50
 ```
+
+`formatter_digit_blocks` commits one activity and point for every block:
+ASCII, Arabic-Indic, Extended Arabic-Indic, Devanagari, Bengali, Thai, Tibetan,
+Myanmar, and Ol Chiki. It does not add arbitrary Unicode blocks the pinned
+formatter matrix cannot emit. The omission detector repeatedly accepts eight
+blocks and rejects the ninth, proving that omitting any represented block fails.
+The matrix also records the available Japanese-calendar signature, whose ASCII
+output is not 14 digits and therefore remains invalid under the legacy contract.
 
 Android documents the same locale-sensitive constructor/default-symbol
 contract. The checked strings are deterministic and do not depend on the
@@ -114,10 +130,13 @@ The migration oracle never infers a calendar from digit shape or the current
 `android_metadata` locale. Current metadata can change when Android reopens the
 database and is not durable row-level evidence. The synthetic ready fixtures
 carry explicit per-activity generation evidence. `calendar_semantics` proves
-that Buddhist `๒๕๖๗...` and Gregorian `๒๐๒๔...` Thai-digit values both map to
-2024 only because their calendars are explicitly known. `localized_timestamps`
-models current `ar_EG` metadata plus durably recorded historical `bn-BD` and
-`en-US` evidence.
+that Buddhist `๒๕๖๗...` and Gregorian `๒๐๒๔...` Thai-digit values map to 2024
+only because their calendars are known. It also stores identical ASCII
+`2567...` source text under evidenced Buddhist and Gregorian calendars: one
+maps to 2024, while the valid Gregorian year remains 2567. The reference oracle
+uses the pinned calendar observations, not a year threshold or a fixed
+subtraction. `localized_timestamps` models current `ar_EG` metadata plus
+durably recorded historical `bn-BD` and `en-US` evidence.
 
 `calendar_ambiguous` has current Thai metadata but no durable per-activity
 calendar evidence. Its two activities—one Thai-digit and one ASCII-digit
@@ -125,7 +144,14 @@ Buddhist-year value—are quarantined as one migration unit. The oracle reads on
 to classify and preserve raw rows, performs zero target writes, writes no
 receipt, and requires the original database/text to remain recoverable. A future
 user-assisted flow may persist verified per-activity calendar evidence and
-rerun migration; it must never guess a 543-year adjustment.
+rerun migration; it must never guess an era offset.
+
+`calendar_mixed_evidence` combines one reliably evidenced activity with one
+ambiguous activity. The approved database/migration-unit policy quarantines
+both, preserves diagnostics and raw rows for each, performs zero target writes,
+and writes no receipt. A detector constructs the unsafe row-scoped candidate
+that migrates the evidenced row and quarantines only its ambiguous peer; it
+must fail.
 
 After a calendar is evidenced, validation maps Unicode `Nd` digits to ASCII only
 in a temporary parse buffer, requires exactly 14 digits from one numbering
@@ -133,15 +159,15 @@ system, and applies strict fields in that calendar. Mixed blocks, separators,
 bidi/format controls, non-`Nd` lookalikes, impossible dates, and invalid times
 remain rejected.
 
-Detectors prove that Gregorian-only parsing, automatic Buddhist conversion from
-Thai digit shape, migration of ambiguous rows, ASCII-only/limited-block parsing,
-current-metadata coupling, mixed-block acceptance, and format-control stripping
-all fail.
+Detectors prove that Gregorian-only parsing, digit-shape inference,
+year-magnitude/fixed-offset conversion, row-scoped mixed-evidence migration,
+ASCII-only/finite-block parsing, current-metadata coupling, mixed-block
+acceptance, and format-control stripping all fail.
 
 ## Deterministic regeneration
 
-All 20 SQLite artifacts are marked `exact_bytes_required: false`; none is a
-host-generated byte-for-byte contract. The 14 standard databases compare
+All 22 SQLite artifacts are marked `exact_bytes_required: false`; none is a
+host-generated byte-for-byte contract. The 16 standard databases compare
 integrity, schema, platform metadata, and type-tagged business rows logically.
 The active-WAL trio compares main-only/full logical state, WAL frame shape, and
 required sidecar semantics. The malformed schema compares its exact schema
@@ -156,12 +182,12 @@ counter mismatches are corruption. The SQLite writer-version field alone is
 informational and may vary; structure, schema, page payload, and damage bytes
 remain contractual.
 
-The 18 expected JSON files and `manifest.json` are the 19 true exact-byte
-artifacts. `write_json()` emits UTF-8 bytes with LF and one terminal newline on
-every host, while `.gitattributes` enforces LF for fixture text. Determinism
-tests prove CRLF drift fails and harmless writer-version-only variation passes
-while illegal header semantics, page, schema, payload, WAL, and corruption
-changes fail.
+The 20 expected JSON files, `manifest.json`, and the pinned formatter TSV are
+the 22 true exact-byte artifacts. `write_json()` emits UTF-8 bytes with LF and
+one terminal newline on every host, while `.gitattributes` enforces LF for
+fixture text. Determinism tests prove CRLF drift fails and harmless
+writer-version-only variation passes while illegal header semantics, page,
+schema, payload, WAL, formatter-matrix, and corruption changes fail.
 
 ## Active WAL snapshot
 

@@ -38,9 +38,14 @@
         "android_metadata"
       ],
       "schema_errors": [],
+      "sqlite_internal_schema_objects": [
+        "table:sqlite_sequence"
+      ],
       "state": "partial_business_schema",
       "unexpected_schema_objects": [],
-      "unexpected_tables": []
+      "unexpected_sqlite_internal_schema_objects": [],
+      "unexpected_tables": [],
+      "validation_path": "modern_table_xinfo_sqlite_schema"
     }
   },
   "fixture": "startup_activity_only",

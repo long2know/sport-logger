@@ -1,0 +1,31 @@
+meta	format_version	1
+meta	java_runtime_version	17.0.20+8
+meta	java_vendor	Eclipse Adoptium
+meta	locale_providers	default
+meta	probe_instant_utc	2024-07-08T09:10:11Z
+meta	available_locale_count	1017
+meta	locale_rows_sha256	5f270f635e4600e0fedd1f7501ad2803589bbefd94e83cf26310604608baac28
+signature	U+0030	buddhist	25670708091011	2	th-TH
+signature	U+0030	gregory	20240708091011	924	af
+signature	U+0030	japanese	60708091011	1	ja-JP-u-ca-japanese-x-lvariant-JP
+signature	U+0660	gregory	٢٠٢٤٠٧٠٨٠٩١٠١١	34	ar
+signature	U+06F0	gregory	۲۰۲۴۰۷۰۸۰۹۱۰۱۱	24	fa
+signature	U+0966	gregory	२०२४०७०८०९१०११	10	mr
+signature	U+09E6	gregory	২০২৪০৭০৮০৯১০১১	11	as
+signature	U+0E50	buddhist	๒๕๖๗๐๗๐๘๐๙๑๐๑๑	1	th-TH-u-nu-thai-x-lvariant-TH
+signature	U+0F20	gregory	༢༠༢༤༠༧༠༨༠༩༡༠༡༡	3	dz
+signature	U+1040	gregory	၂၀၂၄၀၇၀၈၀၉၁၀၁၁	3	my
+signature	U+1C50	gregory	᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑	4	sat
+candidate	U+0030	en-US	gregory	2024-07-08T09:10:11Z	20240708091011
+candidate	U+0660	ar-EG	gregory	2024-07-08T09:10:11Z	٢٠٢٤٠٧٠٨٠٩١٠١١
+candidate	U+06F0	fa-IR	gregory	2024-07-08T09:10:11Z	۲۰۲۴۰۷۰۸۰۹۱۰۱۱
+candidate	U+0966	mr-IN	gregory	2024-07-08T09:10:11Z	२०२४०७०८०९१०११
+candidate	U+09E6	bn-BD	gregory	2024-07-08T09:10:11Z	২০২৪০৭০৮০৯১০১১
+candidate	U+0E50	th-TH-u-nu-thai-x-lvariant-TH	buddhist	2024-07-08T09:10:11Z	๒๕๖๗๐๗๐๘๐๙๑๐๑๑
+candidate	U+0F20	dz-BT	gregory	2024-07-08T09:10:11Z	༢༠༢༤༠༧༠༨༠༩༡༠༡༡
+candidate	U+1040	my-MM	gregory	2024-07-08T09:10:11Z	၂၀၂၄၀၇၀၈၀၉၁၀၁၁
+candidate	U+1C50	sat-IN	gregory	2024-07-08T09:10:11Z	᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑
+control	thai_digits_gregorian	th-TH-u-ca-gregory-nu-thai	U+0E50	gregory	2024-07-08T09:10:11Z	๒๐๒๔๐๗๐๘๐๙๑๐๑๑
+control	thai_digits_buddhist	th-TH-u-nu-thai	U+0E50	buddhist	2024-07-08T09:10:11Z	๒๕๖๗๐๗๐๘๐๙๑๐๑๑
+control	latin_digits_buddhist	th-TH-u-nu-latn	U+0030	buddhist	2024-07-08T09:10:11Z	25670708091011
+control	latin_year_2567_gregorian	en-US	U+0030	gregory	2567-07-08T09:10:11Z	25670708091011

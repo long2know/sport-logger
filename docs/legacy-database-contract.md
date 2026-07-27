@@ -175,16 +175,27 @@ affinity is not a constraint: for example, text can physically exist in a
 metadata, which is not application data. Neither `android_metadata` nor
 `sqlite_sequence` is a legacy business table.
 
-Exact preflight uses `PRAGMA table_xinfo` so generated/hidden columns cannot
-disappear as they do from `table_info`. It also validates canonicalized
-`sqlite_schema` records: each required object must be a real table b-tree with
-the expected name, column order/types/defaults/constraints, no hidden/generated
-columns, no foreign keys or indexes, and no extra user tables, views, triggers,
-indexes, virtual tables, or shadow tables. Canonical SQL token comparison
-tolerates only formatting differences such as whitespace, comments, keyword
-case, and identifier quoting. A table-level `CHECK`, changed default/collation,
-virtual/generated column, FTS substitution, or reordered/retitled declaration
-is incompatible even when ordinary `table_info` looks unchanged.
+Exact preflight has two equivalent paths:
+
+1. SQLite versions that support `PRAGMA table_xinfo` use it plus canonicalized
+   `sqlite_schema` records.
+2. Android API 26's SQLite 3.18.2 uses `PRAGMA table_info` plus exact
+   `sqlite_master` object and SQL validation. This path never requires
+   `table_xinfo` or `sqlite_schema`.
+
+Both paths require each table to be a real table b-tree with the expected name,
+column order/types/defaults/constraints, no hidden/generated columns, no
+foreign keys or indexes, and no extra tables, views, triggers, indexes, virtual
+tables, or shadow tables. Exact SQL token comparison is what lets the API-26
+path reject generated columns and extra constraints that `table_info` cannot
+show. It tolerates only formatting differences such as whitespace, comments,
+keyword case, and identifier quoting.
+
+Schema enumeration filters only the literal, case-insensitive `sqlite_` prefix.
+The canonical schema explicitly permits only `sqlite_sequence`, justified by
+the source `AUTOINCREMENT` declarations. Objects named `sqliteX...` are user
+objects, not internals; committed table/index/trigger/view regressions require
+both paths to report and reject them.
 
 ### `ACTIVITY`
 
@@ -247,25 +258,36 @@ timestamp or collapses equal timestamps fails the oracle.
 `SimpleDateFormat("yyyyMMddHHmmss")` using the device's default format locale,
 default time zone, and default lenient parsing (`Config.java:15-18`). The
 one-argument constructor is locale-sensitive: the locale selects both decimal
-digits and a `Calendar`. The committed checked source-mode probe
-(`tools/legacy-fixtures/LocaleTimestampProbe.java`) formats
-`2024-07-08T09:10:11Z` with a UTC formatter and fails if any expected digit,
-calendar, or output changes. OpenJDK
-`21.0.11+10-1-24.04.2-Ubuntu` produced:
+digits and a `Calendar`. The checked source-mode probe
+(`tools/legacy-fixtures/LocaleTimestampProbe.java`) must run on Eclipse Temurin
+`17.0.20+8`. It sorts all 1,017 available locales, formats the fixed UTC
+instant, hashes every locale observation, and compares the stable result with
+`LocaleTimestampProbe.expected.tsv`. The matrix contains 11 unique
+digit/calendar/output signatures and these 9 unique `Nd` zero digits:
 
-```text
-ar-EG zero=U+0660 calendar=gregory formatted=٢٠٢٤٠٧٠٨٠٩١٠١١
-bn-BD zero=U+09E6 calendar=gregory formatted=২০২৪০৭০৮০৯১০১১
-en-US zero=U+0030 calendar=gregory formatted=20240708091011
-th-TH-u-nu-thai zero=U+0E50 calendar=buddhist formatted=๒๕๖๗๐๗๐๘๐๙๑๐๑๑
-th-TH-u-ca-gregory-nu-thai zero=U+0E50 calendar=gregory formatted=๒๐๒๔๐๗๐๘๐๙๑๐๑๑
-th-TH-u-nu-latn zero=U+0030 calendar=buddhist formatted=25670708091011
-```
+| Zero | Candidate locale | Calendar | Checked output |
+|---|---|---|---|
+| `U+0030` | `en-US` | Gregorian | `20240708091011` |
+| `U+0660` | `ar-EG` | Gregorian | `٢٠٢٤٠٧٠٨٠٩١٠١١` |
+| `U+06F0` | `fa-IR` | Gregorian | `۲۰۲۴۰۷۰۸۰۹۱۰۱۱` |
+| `U+0966` | `mr-IN` | Gregorian | `२०२४०७०८०९१०११` |
+| `U+09E6` | `bn-BD` | Gregorian | `২০২৪০৭০৮০৯১০১১` |
+| `U+0E50` | `th-TH-u-nu-thai-x-lvariant-TH` | Buddhist | `๒๕๖๗๐๗๐๘๐๙๑๐๑๑` |
+| `U+0F20` | `dz-BT` | Gregorian | `༢༠༢༤༠༧༠༨༠༩༡༠༡༡` |
+| `U+1040` | `my-MM` | Gregorian | `၂၀၂၄၀၇၀၈၀၉၁၀၁၁` |
+| `U+1C50` | `sat-IN` | Gregorian | `᱒᱐᱒᱔᱐᱗᱐᱘᱐᱙᱑᱐᱑᱑` |
 
-Reproduce it with:
+The available Japanese-calendar signature uses ASCII but emits only 11 digits;
+it adds no digit block and fails the strict 14-digit source contract.
+`formatter_digit_blocks.db` commits one activity and point for every unique
+block above. No arbitrary Unicode block is added merely because Python can
+decode it. A detector tests every nine-way omission: a parser supporting all
+represented blocks except any one of them must fail.
+
+Validate the pinned matrix with:
 
 ```bash
-java tools/legacy-fixtures/LocaleTimestampProbe.java
+"$JAVA_HOME/bin/java" tools/legacy-fixtures/LocaleTimestampProbe.java
 ```
 
 Android documents that the one-argument constructor uses the default `FORMAT`
@@ -295,12 +317,16 @@ user-verified recovery metadata persisted before retry. The synthetic ready
 fixtures carry explicit generation evidence solely to exercise that contract;
 production must not treat fixture provenance as a substitute for real evidence.
 
-`calendar_semantics` proves calendar-aware conversion: checked Buddhist
+`calendar_semantics` proves calendar-aware conversion. Checked Buddhist
 `๒๕๖๗...` and explicit Gregorian `๒๐๒๔...` both become
-`2024-07-08...Z`, while their original text and evidence remain present.
-`localized_timestamps` carries explicit per-activity `ar-EG`, historical
-`bn-BD`, and historical `en-US` Gregorian evidence even though the database's
-current metadata is only `ar_EG`.
+`2024-07-08...Z`. More importantly, identical ASCII `2567...` source text is
+stored under evidenced Buddhist and Gregorian calendars: the Buddhist row maps
+to 2024, while the valid Gregorian year remains 2567. This defeats year
+thresholds, digit-shape inference, and hard-coded `-543` conversion. The
+reference oracle uses the checked calendar mapping for the evidenced locale and
+fails closed when that evidence is absent. `localized_timestamps` carries
+explicit per-activity `ar-EG`, historical `bn-BD`, and historical `en-US`
+Gregorian evidence even though current metadata is only `ar_EG`.
 
 If durable evidence is absent, the activity/database migration unit is
 `calendar_ambiguous`. `calendar_ambiguous` preserves Thai-digit and ASCII-digit
@@ -308,7 +334,15 @@ Buddhist-year rows verbatim, records every raw activity and point, blocks all
 target writes, writes no receipt, and requires retention of the original
 database/text. Recovery is user-assisted: persist verified per-activity
 calendar evidence and rerun. Never infer a calendar from digit shape/current
-metadata or subtract 543 merely because a year looks Buddhist.
+metadata, year magnitude, or a fixed era subtraction.
+
+`calendar_mixed_evidence` contains one durably evidenced Gregorian activity and
+one ambiguous activity in the same source database. The approved migration-unit
+policy quarantines the entire database: both raw activities and both points are
+retained with evidenced/ambiguous diagnostics, target writes remain zero, and
+no receipt is attempted. A row-scoped candidate that migrates the evidenced
+activity while quarantining only the ambiguous activity is an explicit defect
+detector and must fail.
 
 Once a calendar is evidenced, validation maps Unicode `Nd` digits to ASCII only
 in a temporary parse buffer, requires all 14 characters to come from one
@@ -352,10 +386,10 @@ checksums. Logical checksums do **not** hash SQLite file bytes. They hash tables
 metadata is verified separately and excluded from those business-data
 checksums.
 
-All 20 SQLite artifacts are marked `exact_bytes_required: false`; host-generated
+All 22 SQLite artifacts are marked `exact_bytes_required: false`; host-generated
 SQLite and wal-index bytes are not exact-byte contracts:
 
-- 14 standard databases compare integrity, exact schema semantics, platform
+- 16 standard databases compare integrity, exact schema semantics, platform
   metadata, and type-tagged business rows logically;
 - the active-WAL trio compares main-only and consistent logical state, WAL frame
   page/commit shape, canonical salts, and required sidecar usability without
@@ -373,10 +407,10 @@ schema, payload, WAL frames, and the intentional damage location remain
 checked. Tests prove writer-version-only variation passes while invalid header
 semantics and real page, schema, payload, WAL, or corruption drift fail.
 
-The 18 `expected/*.json` files and `manifest.json` are the 19 true exact-byte
-artifacts. Generation writes explicit UTF-8 bytes with LF and one terminal
-newline; `.gitattributes` enforces LF for fixture JSON/source/docs. A CRLF
-mutation is an explicit defect detector.
+The 20 `expected/*.json` files, `manifest.json`, and the pinned formatter TSV
+are the 22 true exact-byte artifacts. Generation writes explicit UTF-8 bytes
+with LF and one terminal newline; `.gitattributes` enforces LF for fixture
+JSON/source/docs. A CRLF mutation is an explicit defect detector.
 
 The committed cases are:
 
@@ -392,8 +426,10 @@ The committed cases are:
 | `timestamp_ordering.db` | Duplicate and non-monotonic timestamps in required ascending 64-bit point-ID order. |
 | `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
 | `localized_timestamps.db` | Current `ar_EG` metadata with durably evidenced Gregorian Arabic-Indic, historical Bengali, and historical ASCII rows preserved losslessly; malformed digit/control/date rows remain rejected. |
-| `calendar_semantics.db` | Checked Thai Buddhist year `2567` and explicit Thai-digit Gregorian year `2024`, each with durable per-activity calendar evidence and the same correct 2024 interpretation. |
+| `formatter_digit_blocks.db` | One activity and point for each of the 9 unique `Nd` blocks emitted by the pinned Temurin 17 available-locale matrix. |
+| `calendar_semantics.db` | Checked Thai calendar controls plus identical ASCII year-2567 text under Buddhist and Gregorian evidence, producing 2024 and 2567 respectively. |
 | `calendar_ambiguous.db` | Current Thai metadata with Thai-digit and ASCII Buddhist-year rows but no durable calendar evidence; raw activities/points are quarantined, with zero target writes and no receipt. |
+| `calendar_mixed_evidence.db` | One evidenced and one ambiguous activity; the entire database is quarantined atomically with zero writes and no receipt. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
 | `malformed_schema.db` | Integrity-valid file whose `ACTIVITY.TIME` declaration is incompatible; exact schema preflight blocks before row reads. |
@@ -444,31 +480,34 @@ python3 tools/legacy-fixtures/legacy_fixtures.py generate
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 python3 tools/legacy-fixtures/legacy_fixtures.py verify \
   --candidate-dir tools/legacy-fixtures/expected
+python3 tools/legacy-fixtures/legacy_fixtures.py verify-legacy-schema-path
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-determinism
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 python3 tools/legacy-fixtures/legacy_fixtures.py large \
   --activities 100 \
   --points-per-activity 1000
 python3 tools/legacy-fixtures/legacy_fixtures.py verify-large
-java tools/legacy-fixtures/LocaleTimestampProbe.java
+"$JAVA_HOME/bin/java" tools/legacy-fixtures/LocaleTimestampProbe.java
 ```
 
-The counted corpus is 18 fixtures and 39 regeneration artifacts: 19 exact-byte
-UTF-8/LF JSON files, 14 logical standard databases, and 6 canonical
-non-standard SQLite artifacts. The standard-library suite contains 22 tests.
+The counted corpus is 20 fixtures and 44 regeneration artifacts: 22 exact-byte
+UTF-8/LF text files, 16 logical standard databases, and 6 canonical
+non-standard SQLite artifacts. The standard-library suite contains 24 tests.
 
-The verifier runs 49 detectors covering integer and double narrowing,
+The verifier runs 56 detectors covering integer and double narrowing,
 swapped/missing fields, timestamp drift/sorting/deduplication, duplicate
 deterministic IDs, orphan handling, start-only/point-driven loss, active-WAL
 sidecar omission and torn snapshots, interrupted-rerun drift/loss (including
 committed-prefix omission), receipt-gap completion, Android metadata readiness,
 illegal page-size/read/write versions, mismatched header counters, logical
-database drift, generated/hidden columns, constraint and virtual/shadow schema
-substitutions, Gregorian-only calendar parsing, unsafe Thai-digit Buddhist
-conversion, migration of calendar-ambiguous rows, ASCII-only localized
-timestamp loss, current-metadata coupling, destructive timestamp normalization,
-mixed-numbering acceptance, Unicode format-control stripping, CRLF JSON drift,
-and malformed/truncated/corrupt preflight side-effect prevention.
+database drift, modern/API-26 generated-column and virtual/shadow rejection,
+literal `sqlite_` filtering with `sqliteX...` table/index/trigger/view controls,
+Gregorian-only parsing, digit-shape and year-magnitude/fixed-offset calendar
+heuristics, migration of ambiguous or mixed-evidence rows, omission of any
+source-emittable digit block, current-metadata coupling, destructive timestamp
+normalization, mixed-numbering acceptance, Unicode format-control stripping,
+CRLF JSON drift, and malformed/truncated/corrupt preflight side-effect
+prevention.
 See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

@@ -1,22 +1,27 @@
 {
-  "database_identity": "synthetic:sport-logger:legacy:calendar_ambiguous:v1",
+  "database_identity": "synthetic:sport-logger:legacy:calendar_mixed_evidence:v1",
   "diagnostics": {
     "calendar": {
       "ambiguous_activity_ids": [
-        1,
         2
       ],
       "current_android_locale": "th_TH_#u-nu-thai",
       "current_locale_used_as_row_evidence": false,
       "database_migration_unit_policy": "any_ambiguous_activity_quarantines_entire_source_database",
-      "evidenced_activity_ids": [],
+      "evidenced_activity_ids": [
+        1
+      ],
       "historical_locale_changes_possible": true,
       "migration_readiness": "blocked",
       "per_activity": [
         {
-          "evidence": null,
+          "evidence": {
+            "calendar": "gregory",
+            "locale_tag": "en-US",
+            "source": "pinned_temurin_17_formatter_matrix"
+          },
           "legacy_activity_id": 1,
-          "state": "calendar_ambiguous"
+          "state": "durably_evidenced"
         },
         {
           "evidence": null,
@@ -59,7 +64,7 @@
       "validation_path": "modern_table_xinfo_sqlite_schema"
     }
   },
-  "fixture": "calendar_ambiguous",
+  "fixture": "calendar_mixed_evidence",
   "format_version": 1,
   "migration_expectations": {
     "reason": "calendar_ambiguous",
@@ -76,16 +81,20 @@
   "output_kind": "calendar_quarantine",
   "quarantined_activities": [
     {
-      "calendar_evidence": null,
-      "calendar_state": "calendar_ambiguous",
+      "calendar_evidence": {
+        "calendar": "gregory",
+        "locale_tag": "en-US",
+        "source": "pinned_temurin_17_formatter_matrix"
+      },
+      "calendar_state": "durably_evidenced",
       "legacy_activity_id": 1,
       "raw_activity": {
-        "DESCRIPTION": "Current locale metadata is not durable evidence for this historical row.",
+        "DESCRIPTION": "Durable en-US Gregorian evidence exists, but another row blocks the whole migration unit.",
         "DISTANCE": null,
         "GMTEND": null,
-        "GMTSTART": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+        "GMTSTART": "20240708091011",
         "ID": 1,
-        "NAME": "Synthetic Ambiguous Thai-Digit Session",
+        "NAME": "Synthetic Evidenced Control Session",
         "PACE": null,
         "TIME": null
       },
@@ -95,27 +104,27 @@
           "ACTIVITYID": 1,
           "ALTITUDE": null,
           "BEARING": null,
-          "GMTTIMESTAMP": "๒๕๖๗๐๗๐๘๐๙๑๐๑๑",
+          "GMTTIMESTAMP": "20240708091011",
           "HEARTRATE": 120.0,
           "ID": 1,
-          "LATITUDE": 13.7563,
-          "LONGITUDE": 100.5018,
+          "LATITUDE": 47.6062,
+          "LONGITUDE": -122.3321,
           "SPEED": null
         }
       ],
-      "reason": "calendar_ambiguous"
+      "reason": "database_migration_unit_calendar_ambiguity"
     },
     {
       "calendar_evidence": null,
       "calendar_state": "calendar_ambiguous",
       "legacy_activity_id": 2,
       "raw_activity": {
-        "DESCRIPTION": "A Buddhist locale can emit Latin digits, so ASCII is not Gregorian evidence.",
+        "DESCRIPTION": "The same source database lacks durable calendar evidence for this row.",
         "DISTANCE": null,
         "GMTEND": null,
         "GMTSTART": "25670708091011",
         "ID": 2,
-        "NAME": "Synthetic Ambiguous ASCII-Digit Session",
+        "NAME": "Synthetic Ambiguous Peer Session",
         "PACE": null,
         "TIME": null
       },
@@ -128,8 +137,8 @@
           "GMTTIMESTAMP": "25670708091011",
           "HEARTRATE": 121.0,
           "ID": 2,
-          "LATITUDE": 13.7564,
-          "LONGITUDE": 100.5019,
+          "LATITUDE": 13.7563,
+          "LONGITUDE": 100.5018,
           "SPEED": null
         }
       ],
@@ -138,8 +147,8 @@
   ],
   "quarantined_orphan_track_points": [],
   "summary": {
-    "ambiguous_activities": 2,
-    "evidenced_activities": 0,
+    "ambiguous_activities": 1,
+    "evidenced_activities": 1,
     "quarantined_activities": 2,
     "quarantined_track_points": 2,
     "source_activity_rows": 2,

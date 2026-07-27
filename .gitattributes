@@ -8,6 +8,7 @@
 
 # Legacy fixture text artifacts are generated and reviewed as UTF-8 with LF.
 tools/legacy-fixtures/manifest.json text eol=lf
+tools/legacy-fixtures/LocaleTimestampProbe.expected.tsv text eol=lf
 tools/legacy-fixtures/expected/*.json text eol=lf
 tools/legacy-fixtures/*.py text eol=lf
 tools/legacy-fixtures/*.java text eol=lf

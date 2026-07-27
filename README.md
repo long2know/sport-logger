@@ -21,13 +21,13 @@ Tagged v0.11
 ## Legacy migration oracle
 
 `tools/legacy-fixtures/` contains the synthetic, executable contract for the
-watch SQLite database. Its 18 fixtures cover calendar-safe timestamps,
-calendar-ambiguity quarantine, WAL snapshots, exact schema/header validation,
-corruption, precision, ordering, and idempotent replay. The oracle requires
-durable per-activity calendar evidence; otherwise it retains the source and
-performs no target write or receipt.
+watch SQLite database. Its 20 fixtures cover every digit block emitted by the
+pinned Temurin 17 formatter matrix, evidence-based calendar interpretation,
+database-wide ambiguity quarantine, WAL snapshots, exact modern/API-26 schema
+preflight, corruption, precision, ordering, and idempotent replay. Any
+calendar-ambiguous row retains and quarantines the whole source migration with
+zero target writes and no receipt.
 
 See [the legacy database contract](docs/legacy-database-contract.md) and
 [`tools/legacy-fixtures/README.md`](tools/legacy-fixtures/README.md) for all
 generation, verification, detector, determinism, unit, and 100,000-point gates.
-

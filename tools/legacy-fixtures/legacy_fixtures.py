@@ -18,11 +18,13 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 
 TOOL_ROOT = Path(__file__).resolve().parent
+FORMATTER_MATRIX_PATH = TOOL_ROOT / "LocaleTimestampProbe.expected.tsv"
 FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
 ANDROID_METADATA_LOCALE = "en_US"
@@ -49,8 +51,13 @@ SQLITE_WAL_FORMAT_VERSIONS = (2, 2)
 
 CALENDAR_GREGORIAN = "gregory"
 CALENDAR_BUDDHIST = "buddhist"
-BUDDHIST_ERA_GREGORIAN_YEAR_DELTA = 543
 CALENDAR_EVIDENCE_SOURCE = "synthetic_fixture_generation_record"
+FORMATTER_MATRIX_EVIDENCE_SOURCE = "pinned_temurin_17_formatter_matrix"
+
+SCHEMA_PATH_AUTO = "auto"
+SCHEMA_PATH_MODERN = "modern_table_xinfo_sqlite_schema"
+SCHEMA_PATH_ANDROID_API_26 = "android_api_26_table_info_sqlite_master"
+SCHEMA_PATHS = (SCHEMA_PATH_MODERN, SCHEMA_PATH_ANDROID_API_26)
 
 STORAGE_STANDARD = "standard"
 STORAGE_ACTIVE_WAL = "active_wal"
@@ -139,6 +146,10 @@ EXPECTED_TABLE_XINFO = {
         (9, "HEARTRATE", "REAL", 0, None, 0, 0),
     ),
 }
+EXPECTED_TABLE_INFO = {
+    table: tuple(row[:6] for row in rows)
+    for table, rows in EXPECTED_TABLE_XINFO.items()
+}
 
 EXPECTED_SCHEMA_SQL = {
     "android_metadata": "CREATE TABLE android_metadata (locale TEXT)",
@@ -156,9 +167,39 @@ EXPECTED_SCHEMA_SQL = {
     ),
 }
 
+EXPECTED_SQLITE_INTERNAL_OBJECTS = {
+    ("table", "sqlite_sequence", "sqlite_sequence")
+}
+
 
 class FixtureValidationError(RuntimeError):
     """Raised when a fixture or expected output violates the contract."""
+
+
+class SchemaSqlGuard:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        forbidden_tokens: Sequence[str] = (),
+    ) -> None:
+        self.connection = connection
+        self.forbidden_tokens = tuple(
+            token.casefold() for token in forbidden_tokens
+        )
+        self.statements: List[str] = []
+
+    def execute(
+        self,
+        sql: str,
+        parameters: Sequence[Any] = (),
+    ) -> sqlite3.Cursor:
+        normalized = sql.casefold()
+        if any(token in normalized for token in self.forbidden_tokens):
+            raise FixtureValidationError(
+                "Legacy schema path executed forbidden SQL {!r}".format(sql)
+            )
+        self.statements.append(sql)
+        return self.connection.execute(sql, parameters)
 
 
 @dataclass(frozen=True)
@@ -189,7 +230,9 @@ class FixtureCase:
     default_calendar_evidence: Optional[
         CalendarEvidence
     ] = DEFAULT_GREGORIAN_CALENDAR_EVIDENCE
-    activity_calendar_evidence: Tuple[Tuple[int, CalendarEvidence], ...] = ()
+    activity_calendar_evidence: Tuple[
+        Tuple[int, Optional[CalendarEvidence]], ...
+    ] = ()
     calendar_ambiguous: bool = False
 
     @property
@@ -236,9 +279,198 @@ def point(
     )
 
 
+def parse_code_point(value: str) -> int:
+    if not re.fullmatch(r"U\+[0-9A-F]{4,6}", value):
+        raise FixtureValidationError(
+            "Invalid formatter-matrix code point {!r}".format(value)
+        )
+    return int(value[2:], 16)
+
+
+def matrix_timestamp_source_year(value: str, zero_code_point: int) -> int:
+    if len(value) != 14:
+        raise FixtureValidationError(
+            "Formatter-matrix candidate timestamp must contain 14 digits"
+        )
+    normalized: List[str] = []
+    for character in value:
+        if unicodedata.category(character) != "Nd":
+            raise FixtureValidationError(
+                "Formatter-matrix timestamp contains non-Nd text"
+            )
+        decimal = unicodedata.decimal(character)
+        if ord(character) - decimal != zero_code_point:
+            raise FixtureValidationError(
+                "Formatter-matrix timestamp mixes numbering systems"
+            )
+        normalized.append(str(decimal))
+    return int("".join(normalized[:4]))
+
+
+@lru_cache(maxsize=1)
+def formatter_probe_matrix() -> Mapping[str, Any]:
+    if not FORMATTER_MATRIX_PATH.is_file():
+        raise FixtureValidationError(
+            "Missing pinned formatter matrix {}".format(FORMATTER_MATRIX_PATH)
+        )
+    metadata: Dict[str, str] = {}
+    signatures: List[Mapping[str, Any]] = []
+    candidates: List[Mapping[str, Any]] = []
+    controls: List[Mapping[str, Any]] = []
+    for line_number, line in enumerate(
+        FORMATTER_MATRIX_PATH.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        fields = line.split("\t")
+        if fields[0] == "meta" and len(fields) == 3:
+            if fields[1] in metadata:
+                raise FixtureValidationError(
+                    "Duplicate formatter-matrix metadata key {!r}".format(
+                        fields[1]
+                    )
+                )
+            metadata[fields[1]] = fields[2]
+            continue
+        if fields[0] == "signature" and len(fields) == 6:
+            signatures.append(
+                {
+                    "zero_code_point": parse_code_point(fields[1]),
+                    "calendar": fields[2],
+                    "formatted": fields[3],
+                    "locale_count": int(fields[4]),
+                    "first_locale": fields[5],
+                }
+            )
+            continue
+        if fields[0] == "candidate" and len(fields) == 6:
+            zero_code_point = parse_code_point(fields[1])
+            source_year = matrix_timestamp_source_year(
+                fields[5],
+                zero_code_point,
+            )
+            candidates.append(
+                {
+                    "zero_code_point": zero_code_point,
+                    "locale_tag": fields[2],
+                    "calendar": fields[3],
+                    "instant_utc": fields[4],
+                    "formatted": fields[5],
+                    "source_year": source_year,
+                    "gregorian_year": int(fields[4][0:4]),
+                }
+            )
+            continue
+        if fields[0] == "control" and len(fields) == 7:
+            zero_code_point = parse_code_point(fields[3])
+            source_year = matrix_timestamp_source_year(
+                fields[6],
+                zero_code_point,
+            )
+            controls.append(
+                {
+                    "name": fields[1],
+                    "locale_tag": fields[2],
+                    "zero_code_point": zero_code_point,
+                    "calendar": fields[4],
+                    "instant_utc": fields[5],
+                    "formatted": fields[6],
+                    "source_year": source_year,
+                    "gregorian_year": int(fields[5][0:4]),
+                }
+            )
+            continue
+        raise FixtureValidationError(
+            "Invalid formatter-matrix record at line {}".format(line_number)
+        )
+
+    expected_metadata = {
+        "format_version": "1",
+        "java_runtime_version": "17.0.20+8",
+        "java_vendor": "Eclipse Adoptium",
+        "locale_providers": "default",
+        "probe_instant_utc": "2024-07-08T09:10:11Z",
+        "available_locale_count": "1017",
+        "locale_rows_sha256": (
+            "5f270f635e4600e0fedd1f7501ad2803589bbefd94e83cf26310604608baac28"
+        ),
+    }
+    if metadata != expected_metadata:
+        raise FixtureValidationError("Pinned formatter-matrix metadata changed")
+    candidate_zeroes = [row["zero_code_point"] for row in candidates]
+    signature_zeroes = {row["zero_code_point"] for row in signatures}
+    if (
+        candidate_zeroes != sorted(candidate_zeroes)
+        or len(candidate_zeroes) != len(set(candidate_zeroes))
+        or set(candidate_zeroes) != signature_zeroes
+    ):
+        raise FixtureValidationError(
+            "Formatter candidates must cover every unique emitted digit block once"
+        )
+    if any(
+        row["calendar"] not in (CALENDAR_GREGORIAN, CALENDAR_BUDDHIST)
+        for row in candidates
+    ):
+        raise FixtureValidationError(
+            "Formatter candidate uses an unsupported calendar"
+        )
+    return {
+        "metadata": metadata,
+        "signatures": tuple(signatures),
+        "candidate_digit_blocks": tuple(candidates),
+        "calendar_controls": tuple(controls),
+    }
+
+
+def formatter_candidate_digit_blocks() -> Tuple[Mapping[str, Any], ...]:
+    return tuple(formatter_probe_matrix()["candidate_digit_blocks"])
+
+
+def formatter_calendar_year_mappings() -> Mapping[Tuple[str, str, int], int]:
+    mappings: Dict[Tuple[str, str, int], int] = {}
+    rows = (
+        tuple(formatter_probe_matrix()["candidate_digit_blocks"])
+        + tuple(formatter_probe_matrix()["calendar_controls"])
+    )
+    for row in rows:
+        key = (
+            row["calendar"],
+            row["locale_tag"],
+            row["source_year"],
+        )
+        gregorian_year = row["gregorian_year"]
+        previous = mappings.get(key)
+        if previous is not None and previous != gregorian_year:
+            raise FixtureValidationError(
+                "Formatter matrix has conflicting calendar-year mappings"
+            )
+        mappings[key] = gregorian_year
+    return mappings
+
+
+def formatter_oracle_manifest() -> Mapping[str, Any]:
+    matrix = formatter_probe_matrix()
+    metadata = matrix["metadata"]
+    return {
+        "matrix": FORMATTER_MATRIX_PATH.name,
+        "matrix_sha256": hashlib.sha256(
+            FORMATTER_MATRIX_PATH.read_bytes()
+        ).hexdigest(),
+        "java_runtime_version": metadata["java_runtime_version"],
+        "java_vendor": metadata["java_vendor"],
+        "available_locale_count": int(metadata["available_locale_count"]),
+        "locale_rows_sha256": metadata["locale_rows_sha256"],
+        "source_emittable_digit_zero_code_points": [
+            "U+{:04X}".format(row["zero_code_point"])
+            for row in matrix["candidate_digit_blocks"]
+        ],
+        "candidate_fixture": "formatter_digit_blocks",
+    }
+
+
 def fixture_cases() -> Tuple[FixtureCase, ...]:
     exact = "exact"
     epsilon = "epsilon"
+    formatter_blocks = formatter_candidate_digit_blocks()
     return (
         FixtureCase(
             key="empty",
@@ -1037,11 +1269,75 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             ),
         ),
         FixtureCase(
+            key="formatter_digit_blocks",
+            description=(
+                "One durably evidenced activity and point for every unique Unicode "
+                "Nd digit block emitted by the pinned Temurin 17 "
+                "SimpleDateFormat/DecimalFormatSymbols available-locale matrix."
+            ),
+            activities=tuple(
+                activity(
+                    index,
+                    block["formatted"],
+                    None,
+                    "Synthetic Formatter Block U+{:04X}".format(
+                        block["zero_code_point"]
+                    ),
+                    (
+                        "Source-backed by the pinned Temurin 17 formatter matrix "
+                        "for {}."
+                    ).format(block["locale_tag"]),
+                    None,
+                    None,
+                    None,
+                )
+                for index, block in enumerate(formatter_blocks, start=1)
+            ),
+            track_points=tuple(
+                point(
+                    index,
+                    index,
+                    block["formatted"],
+                    10.0 + index,
+                    20.0 + index,
+                    None,
+                    None,
+                    None,
+                    None,
+                    100.0 + index,
+                )
+                for index, block in enumerate(formatter_blocks, start=1)
+            ),
+            representative_values=tuple(
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": index,
+                    "column": "GMTSTART",
+                    "expected": block["formatted"],
+                    "comparison": exact,
+                }
+                for index, block in enumerate(formatter_blocks, start=1)
+            ),
+            default_calendar_evidence=None,
+            activity_calendar_evidence=tuple(
+                (
+                    index,
+                    CalendarEvidence(
+                        calendar=block["calendar"],
+                        locale_tag=block["locale_tag"],
+                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                    ),
+                )
+                for index, block in enumerate(formatter_blocks, start=1)
+            ),
+        ),
+        FixtureCase(
             key="calendar_semantics",
             description=(
                 "Checked Thai-digit timestamps with durable per-activity evidence "
                 "distinguishing the default Buddhist calendar from an explicit "
-                "historical Gregorian calendar."
+                "historical Gregorian calendar, plus identical ASCII year-2567 "
+                "text under Buddhist and Gregorian calendars."
             ),
             activities=(
                 activity(
@@ -1063,6 +1359,29 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     121.0,
                     2.0,
                     16.52892561983471,
+                ),
+                activity(
+                    3,
+                    "25670708091011",
+                    "25670708091013",
+                    "Synthetic Latin-Digit Buddhist Session",
+                    "The checked th-TH-u-nu-latn formatter emits Buddhist year 2567.",
+                    122.0,
+                    2.0,
+                    16.39344262295082,
+                ),
+                activity(
+                    4,
+                    "25670708091011",
+                    "25670708091013",
+                    "Synthetic Gregorian Year 2567 Session",
+                    (
+                        "The checked en-US formatter emits the same source text for "
+                        "valid Gregorian year 2567."
+                    ),
+                    123.0,
+                    2.0,
+                    16.260162601626018,
                 ),
             ),
             track_points=(
@@ -1090,6 +1409,30 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     91.0,
                     121.0,
                 ),
+                point(
+                    3,
+                    3,
+                    "25670708091011",
+                    13.7565,
+                    100.5020,
+                    5.25,
+                    3.25,
+                    2.25,
+                    92.0,
+                    122.0,
+                ),
+                point(
+                    4,
+                    4,
+                    "25670708091011",
+                    13.7566,
+                    100.5021,
+                    5.375,
+                    3.375,
+                    2.375,
+                    93.0,
+                    123.0,
+                ),
             ),
             representative_values=(
                 {
@@ -1106,11 +1449,26 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "expected": "๒๐๒๔๐๗๐๘๐๙๑๑๑๑",
                     "comparison": exact,
                 },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 3,
+                    "column": "GMTSTART",
+                    "expected": "25670708091011",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 4,
+                    "column": "GMTSTART",
+                    "expected": "25670708091011",
+                    "comparison": exact,
+                },
             ),
             android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
             default_calendar_evidence=CalendarEvidence(
                 calendar=CALENDAR_BUDDHIST,
                 locale_tag="th-TH-u-nu-thai",
+                source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
             ),
             activity_calendar_evidence=(
                 (
@@ -1118,6 +1476,23 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     CalendarEvidence(
                         calendar=CALENDAR_GREGORIAN,
                         locale_tag="th-TH-u-ca-gregory-nu-thai",
+                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                    ),
+                ),
+                (
+                    3,
+                    CalendarEvidence(
+                        calendar=CALENDAR_BUDDHIST,
+                        locale_tag="th-TH-u-nu-latn",
+                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                    ),
+                ),
+                (
+                    4,
+                    CalendarEvidence(
+                        calendar=CALENDAR_GREGORIAN,
+                        locale_tag="en-US",
+                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
                     ),
                 ),
             ),
@@ -1195,6 +1570,97 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             ),
             android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
             default_calendar_evidence=None,
+            calendar_ambiguous=True,
+        ),
+        FixtureCase(
+            key="calendar_mixed_evidence",
+            description=(
+                "One durably evidenced Gregorian activity and one calendar-ambiguous "
+                "activity in the same source database; database-wide policy "
+                "quarantines both with zero target writes and no receipt."
+            ),
+            activities=(
+                activity(
+                    1,
+                    "20240708091011",
+                    None,
+                    "Synthetic Evidenced Control Session",
+                    (
+                        "Durable en-US Gregorian evidence exists, but another row "
+                        "blocks the whole migration unit."
+                    ),
+                    None,
+                    None,
+                    None,
+                ),
+                activity(
+                    2,
+                    "25670708091011",
+                    None,
+                    "Synthetic Ambiguous Peer Session",
+                    (
+                        "The same source database lacks durable calendar evidence "
+                        "for this row."
+                    ),
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            track_points=(
+                point(
+                    1,
+                    1,
+                    "20240708091011",
+                    47.6062,
+                    -122.3321,
+                    None,
+                    None,
+                    None,
+                    None,
+                    120.0,
+                ),
+                point(
+                    2,
+                    2,
+                    "25670708091011",
+                    13.7563,
+                    100.5018,
+                    None,
+                    None,
+                    None,
+                    None,
+                    121.0,
+                ),
+            ),
+            representative_values=(
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 1,
+                    "column": "GMTSTART",
+                    "expected": "20240708091011",
+                    "comparison": exact,
+                },
+                {
+                    "table": "ACTIVITY",
+                    "legacy_id": 2,
+                    "column": "GMTSTART",
+                    "expected": "25670708091011",
+                    "comparison": exact,
+                },
+            ),
+            android_locale=TH_TH_THAI_ANDROID_METADATA_LOCALE,
+            default_calendar_evidence=None,
+            activity_calendar_evidence=(
+                (
+                    1,
+                    CalendarEvidence(
+                        calendar=CALENDAR_GREGORIAN,
+                        locale_tag="en-US",
+                        source=FORMATTER_MATRIX_EVIDENCE_SOURCE,
+                    ),
+                ),
+            ),
             calendar_ambiguous=True,
         ),
         FixtureCase(
@@ -1989,10 +2455,13 @@ def table_info(
     connection: sqlite3.Connection,
     table: str,
 ) -> Tuple[Tuple[Any, ...], ...]:
-    return tuple(
-        tuple(row)
-        for row in connection.execute('PRAGMA table_info("{}")'.format(table))
-    )
+    rows = []
+    for row in connection.execute('PRAGMA table_info("{}")'.format(table)):
+        materialized = list(row)
+        if isinstance(materialized[2], str):
+            materialized[2] = materialized[2].upper()
+        rows.append(tuple(materialized))
+    return tuple(rows)
 
 
 def table_xinfo(
@@ -2006,6 +2475,41 @@ def table_xinfo(
             materialized[2] = materialized[2].upper()
         rows.append(tuple(materialized))
     return tuple(rows)
+
+
+def table_xinfo_supported(connection: sqlite3.Connection) -> bool:
+    rows = tuple(
+        tuple(row)
+        for row in connection.execute('PRAGMA table_xinfo("sqlite_master")')
+    )
+    return bool(rows) and all(len(row) == 7 for row in rows)
+
+
+def resolve_schema_path(
+    connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> str:
+    if schema_path == SCHEMA_PATH_AUTO:
+        return (
+            SCHEMA_PATH_MODERN
+            if table_xinfo_supported(connection)
+            else SCHEMA_PATH_ANDROID_API_26
+        )
+    if schema_path not in SCHEMA_PATHS:
+        raise FixtureValidationError(
+            "Unknown schema validation path {!r}".format(schema_path)
+        )
+    return schema_path
+
+
+def schema_catalog(schema_path: str) -> str:
+    if schema_path == SCHEMA_PATH_MODERN:
+        return "sqlite_schema"
+    if schema_path == SCHEMA_PATH_ANDROID_API_26:
+        return "sqlite_master"
+    raise FixtureValidationError(
+        "Schema catalog requested for unresolved path {!r}".format(schema_path)
+    )
 
 
 def canonical_schema_sql_tokens(sql: Any) -> Tuple[str, ...]:
@@ -2098,11 +2602,14 @@ def canonical_schema_sql_tokens(sql: Any) -> Tuple[str, ...]:
 def sqlite_schema_record(
     connection: sqlite3.Connection,
     name: str,
+    schema_path: str = SCHEMA_PATH_AUTO,
 ) -> Optional[Mapping[str, Any]]:
+    resolved_path = resolve_schema_path(connection, schema_path)
+    catalog = schema_catalog(resolved_path)
     rows = tuple(
         connection.execute(
             "SELECT type, name, tbl_name, rootpage, sql "
-            "FROM sqlite_schema WHERE name = ?",
+            "FROM {} WHERE name = ?".format(catalog),
             (name,),
         )
     )
@@ -2121,13 +2628,18 @@ def sqlite_schema_record(
 def table_schema_errors(
     connection: sqlite3.Connection,
     table: str,
+    schema_path: str = SCHEMA_PATH_AUTO,
 ) -> List[str]:
+    resolved_path = resolve_schema_path(connection, schema_path)
     errors: List[str] = []
-    if table_xinfo(connection, table) != EXPECTED_TABLE_XINFO[table]:
-        errors.append("{}:table_xinfo".format(table))
-    record = sqlite_schema_record(connection, table)
+    if resolved_path == SCHEMA_PATH_MODERN:
+        if table_xinfo(connection, table) != EXPECTED_TABLE_XINFO[table]:
+            errors.append("{}:table_xinfo".format(table))
+    elif table_info(connection, table) != EXPECTED_TABLE_INFO[table]:
+        errors.append("{}:table_info".format(table))
+    record = sqlite_schema_record(connection, table, resolved_path)
     if record is None:
-        errors.append("{}:sqlite_schema_record".format(table))
+        errors.append("{}:schema_record".format(table))
     else:
         if (
             record["type"] != "table"
@@ -2140,7 +2652,12 @@ def table_schema_errors(
         if canonical_schema_sql_tokens(
             record["sql"]
         ) != canonical_schema_sql_tokens(EXPECTED_SCHEMA_SQL[table]):
-            errors.append("{}:sqlite_schema_sql".format(table))
+            errors.append(
+                "{}:{}_sql".format(
+                    table,
+                    schema_catalog(resolved_path),
+                )
+            )
     if tuple(
         connection.execute('PRAGMA foreign_key_list("{}")'.format(table))
     ):
@@ -2150,38 +2667,115 @@ def table_schema_errors(
     return errors
 
 
-def user_table_names(connection: sqlite3.Connection) -> Tuple[str, ...]:
+def schema_object_rows(
+    connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> Tuple[Tuple[str, str, str], ...]:
+    resolved_path = resolve_schema_path(connection, schema_path)
+    return tuple(
+        tuple(row)
+        for row in connection.execute(
+            "SELECT type, name, tbl_name FROM {} ORDER BY type, name".format(
+                schema_catalog(resolved_path)
+            )
+        )
+    )
+
+
+def sqlite_internal_object_name(name: Any) -> bool:
+    return isinstance(name, str) and name.casefold().startswith("sqlite_")
+
+
+def user_table_names(
+    connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> Tuple[str, ...]:
     return tuple(
         sorted(
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_schema "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            name
+            for object_type, name, _ in schema_object_rows(
+                connection,
+                schema_path,
             )
+            if object_type == "table" and not sqlite_internal_object_name(name)
         )
     )
 
 
 def user_schema_objects(
     connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
 ) -> Tuple[Tuple[str, str, str], ...]:
     return tuple(
-        tuple(row)
-        for row in connection.execute(
-            "SELECT type, name, tbl_name FROM sqlite_schema "
-            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
-        )
+        row
+        for row in schema_object_rows(connection, schema_path)
+        if not sqlite_internal_object_name(row[1])
     )
 
 
+def sqlite_internal_schema_objects(
+    connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> Tuple[Tuple[str, str, str], ...]:
+    return tuple(
+        row
+        for row in schema_object_rows(connection, schema_path)
+        if sqlite_internal_object_name(row[1])
+    )
+
+
+def expected_sqlite_internal_objects(
+    present_tables: Iterable[str],
+) -> set[Tuple[str, str, str]]:
+    return (
+        set(EXPECTED_SQLITE_INTERNAL_OBJECTS)
+        if set(present_tables) & set(BUSINESS_TABLES)
+        else set()
+    )
+
+
+def sqlite_internal_schema_errors(
+    connection: sqlite3.Connection,
+    present_tables: Iterable[str],
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> List[str]:
+    resolved_path = resolve_schema_path(connection, schema_path)
+    actual = set(sqlite_internal_schema_objects(connection, resolved_path))
+    expected = expected_sqlite_internal_objects(present_tables)
+    errors: List[str] = []
+    if actual != expected:
+        errors.append("database:sqlite_internal_schema_objects")
+    if ("table", "sqlite_sequence", "sqlite_sequence") in actual:
+        record = sqlite_schema_record(
+            connection,
+            "sqlite_sequence",
+            resolved_path,
+        )
+        if (
+            record is None
+            or record["type"] != "table"
+            or record["name"] != "sqlite_sequence"
+            or record["table_name"] != "sqlite_sequence"
+            or not isinstance(record["root_page"], int)
+            or record["root_page"] <= 0
+            or canonical_schema_sql_tokens(record["sql"])
+            != canonical_schema_sql_tokens(
+                "CREATE TABLE sqlite_sequence(name,seq)"
+            )
+        ):
+            errors.append("database:sqlite_sequence_schema")
+    return errors
+
+
 def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
-    present_tables = set(user_table_names(connection))
+    present_tables = set(user_table_names(connection, SCHEMA_PATH_MODERN))
     table_payload: Dict[str, Any] = {}
     for table in PLATFORM_TABLES + BUSINESS_TABLES:
         if table not in present_tables:
             continue
-        record = sqlite_schema_record(connection, table)
+        record = sqlite_schema_record(connection, table, SCHEMA_PATH_MODERN)
         table_payload[table] = {
+            "table_info": [list(row) for row in table_info(connection, table)],
             "table_xinfo": [list(row) for row in table_xinfo(connection, table)],
             "sqlite_schema": (
                 None
@@ -2225,8 +2819,22 @@ def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
             if table in present_tables
         },
         "user_schema_objects": [
-            list(row) for row in user_schema_objects(connection)
+            list(row)
+            for row in user_schema_objects(connection, SCHEMA_PATH_MODERN)
         ],
+        "sqlite_internal_schema_objects": [
+            list(row)
+            for row in sqlite_internal_schema_objects(
+                connection,
+                SCHEMA_PATH_MODERN,
+            )
+        ],
+        "schema_path_decisions": {
+            schema_path: schema_decision_payload(
+                schema_diagnostics(connection, schema_path)
+            )
+            for schema_path in SCHEMA_PATHS
+        },
         "user_version": connection.execute("PRAGMA user_version").fetchone()[0],
     }
 
@@ -2259,11 +2867,13 @@ def valid_android_locale(value: Any) -> bool:
 def android_metadata_diagnostics(
     connection: sqlite3.Connection,
     user_tables: Optional[Iterable[str]] = None,
+    schema_path: str = SCHEMA_PATH_AUTO,
 ) -> Mapping[str, Any]:
+    resolved_path = resolve_schema_path(connection, schema_path)
     tables = (
         set(user_tables)
         if user_tables is not None
-        else set(user_table_names(connection))
+        else set(user_table_names(connection, resolved_path))
     )
     if "android_metadata" not in tables:
         return {
@@ -2274,7 +2884,11 @@ def android_metadata_diagnostics(
             "storage_types": [],
             "schema_errors": ["android_metadata:missing_table"],
         }
-    schema_errors = table_schema_errors(connection, "android_metadata")
+    schema_errors = table_schema_errors(
+        connection,
+        "android_metadata",
+        resolved_path,
+    )
     if schema_errors:
         return {
             "state": "invalid_schema",
@@ -2318,19 +2932,36 @@ def android_metadata_diagnostics(
     }
 
 
-def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
-    user_tables = set(user_table_names(connection))
+def schema_diagnostics(
+    connection: sqlite3.Connection,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> Mapping[str, Any]:
+    resolved_path = resolve_schema_path(connection, schema_path)
+    user_tables = set(user_table_names(connection, resolved_path))
     business_tables_present = [
         table for table in BUSINESS_TABLES if table in user_tables
     ]
     missing_business_tables = [
         table for table in BUSINESS_TABLES if table not in user_tables
     ]
-    metadata_diagnostics = android_metadata_diagnostics(connection, user_tables)
+    metadata_diagnostics = android_metadata_diagnostics(
+        connection,
+        user_tables,
+        resolved_path,
+    )
     schema_errors: List[str] = list(metadata_diagnostics["schema_errors"])
     for table in BUSINESS_TABLES:
         if table in user_tables:
-            schema_errors.extend(table_schema_errors(connection, table))
+            schema_errors.extend(
+                table_schema_errors(connection, table, resolved_path)
+            )
+    schema_errors.extend(
+        sqlite_internal_schema_errors(
+            connection,
+            user_tables,
+            resolved_path,
+        )
+    )
     if connection.execute("PRAGMA user_version").fetchone()[0] != 0:
         schema_errors.append("database:user_version")
     unexpected_tables = sorted(
@@ -2341,12 +2972,31 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
     expected_object_names = set(BUSINESS_TABLES) | set(PLATFORM_TABLES)
     unexpected_schema_objects = sorted(
         "{}:{}".format(object_type, name)
-        for object_type, name, _ in user_schema_objects(connection)
+        for object_type, name, _ in user_schema_objects(
+            connection,
+            resolved_path,
+        )
         if name not in expected_object_names
         or object_type != "table"
     )
     if unexpected_schema_objects:
         schema_errors.append("database:unexpected_schema_objects")
+    internal_schema_objects = [
+        "{}:{}".format(object_type, name)
+        for object_type, name, _ in sqlite_internal_schema_objects(
+            connection,
+            resolved_path,
+        )
+    ]
+    expected_internal_schema_objects = sorted(
+        "{}:{}".format(object_type, name)
+        for object_type, name, _ in expected_sqlite_internal_objects(
+            user_tables
+        )
+    )
+    unexpected_internal_schema_objects = sorted(
+        set(internal_schema_objects) - set(expected_internal_schema_objects)
+    )
 
     if schema_errors:
         state = "malformed_schema"
@@ -2357,6 +3007,7 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
     else:
         state = "partial_business_schema"
     return {
+        "validation_path": resolved_path,
         "state": state,
         "migration_readiness": "ready" if state == "complete" else "blocked",
         "business_tables_present": business_tables_present,
@@ -2367,7 +3018,30 @@ def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
         "android_metadata": metadata_diagnostics,
         "unexpected_tables": unexpected_tables,
         "unexpected_schema_objects": unexpected_schema_objects,
+        "sqlite_internal_schema_objects": sorted(internal_schema_objects),
+        "unexpected_sqlite_internal_schema_objects": (
+            unexpected_internal_schema_objects
+        ),
         "schema_errors": sorted(set(schema_errors)),
+    }
+
+
+def schema_decision_payload(
+    diagnostics: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    return {
+        "state": diagnostics["state"],
+        "migration_readiness": diagnostics["migration_readiness"],
+        "business_tables_present": diagnostics["business_tables_present"],
+        "missing_business_tables": diagnostics["missing_business_tables"],
+        "platform_tables_present": diagnostics["platform_tables_present"],
+        "unexpected_tables": diagnostics["unexpected_tables"],
+        "unexpected_schema_objects": diagnostics["unexpected_schema_objects"],
+        "unexpected_sqlite_internal_schema_objects": diagnostics[
+            "unexpected_sqlite_internal_schema_objects"
+        ],
+        "android_metadata_state": diagnostics["android_metadata"]["state"],
+        "accepted": diagnostics["migration_readiness"] == "ready",
     }
 
 
@@ -2375,7 +3049,9 @@ def validate_schema(
     connection: sqlite3.Connection,
     label: str,
     expected_business_tables: Sequence[str] = BUSINESS_TABLES,
+    schema_path: str = SCHEMA_PATH_AUTO,
 ) -> str:
+    resolved_path = resolve_schema_path(connection, schema_path)
     expected_business_table_set = set(expected_business_tables)
     unknown_expected_tables = expected_business_table_set - set(BUSINESS_TABLES)
     if unknown_expected_tables:
@@ -2386,7 +3062,7 @@ def validate_schema(
             )
         )
     expected_tables = expected_business_table_set | set(PLATFORM_TABLES)
-    user_tables = set(user_table_names(connection))
+    user_tables = set(user_table_names(connection, resolved_path))
     if user_tables != expected_tables:
         raise FixtureValidationError(
             "{} tables mismatch: expected {}, found {}".format(
@@ -2398,7 +3074,7 @@ def validate_schema(
     expected_objects = {
         ("table", table, table) for table in expected_tables
     }
-    actual_objects = set(user_schema_objects(connection))
+    actual_objects = set(user_schema_objects(connection, resolved_path))
     if actual_objects != expected_objects:
         raise FixtureValidationError(
             "{} user schema objects mismatch: expected {}, found {}".format(
@@ -2407,7 +3083,35 @@ def validate_schema(
                 sorted(actual_objects),
             )
         )
-    metadata_diagnostics = android_metadata_diagnostics(connection, user_tables)
+    actual_internal_objects = set(
+        sqlite_internal_schema_objects(connection, resolved_path)
+    )
+    expected_internal_objects = expected_sqlite_internal_objects(user_tables)
+    if actual_internal_objects != expected_internal_objects:
+        raise FixtureValidationError(
+            "{} SQLite internal schema objects mismatch: expected {}, found {}".format(
+                label,
+                sorted(expected_internal_objects),
+                sorted(actual_internal_objects),
+            )
+        )
+    internal_errors = sqlite_internal_schema_errors(
+        connection,
+        user_tables,
+        resolved_path,
+    )
+    if internal_errors:
+        raise FixtureValidationError(
+            "{} SQLite internal schema semantics mismatch: {}".format(
+                label,
+                internal_errors,
+            )
+        )
+    metadata_diagnostics = android_metadata_diagnostics(
+        connection,
+        user_tables,
+        resolved_path,
+    )
     if metadata_diagnostics["state"] != "valid":
         raise FixtureValidationError(
             "{} android_metadata is invalid: state {}, errors {}".format(
@@ -2417,7 +3121,7 @@ def validate_schema(
             )
         )
     for table in sorted(expected_tables):
-        errors = table_schema_errors(connection, table)
+        errors = table_schema_errors(connection, table, resolved_path)
         if errors:
             raise FixtureValidationError(
                 "{} {} schema semantics mismatch: {}".format(
@@ -2431,7 +3135,108 @@ def validate_schema(
         raise FixtureValidationError(
             "{} user_version must be 0, found {}".format(label, user_version)
         )
-    return hash_value(schema_payload(connection))
+    return hash_value(
+        {
+            "tables": {
+                table: {
+                    "table_xinfo": [
+                        list(row) for row in EXPECTED_TABLE_XINFO[table]
+                    ],
+                    "sql_tokens": list(
+                        canonical_schema_sql_tokens(
+                            EXPECTED_SCHEMA_SQL[table]
+                        )
+                    ),
+                }
+                for table in sorted(expected_tables)
+            },
+            "sqlite_internal_schema_objects": [
+                list(row) for row in sorted(expected_internal_objects)
+            ],
+            "user_version": user_version,
+        }
+    )
+
+
+def validate_schema_all_paths(
+    connection: sqlite3.Connection,
+    label: str,
+    expected_business_tables: Sequence[str] = BUSINESS_TABLES,
+) -> str:
+    checksums: Dict[str, str] = {}
+    decisions: Dict[str, Mapping[str, Any]] = {}
+    for schema_path in SCHEMA_PATHS:
+        checksums[schema_path] = validate_schema(
+            connection,
+            "{} [{}]".format(label, schema_path),
+            expected_business_tables,
+            schema_path,
+        )
+        decisions[schema_path] = schema_decision_payload(
+            schema_diagnostics(connection, schema_path)
+        )
+    if len(set(checksums.values())) != 1:
+        raise FixtureValidationError(
+            "{} schema checksums differ between validation paths".format(label)
+        )
+    if (
+        decisions[SCHEMA_PATH_MODERN]
+        != decisions[SCHEMA_PATH_ANDROID_API_26]
+    ):
+        raise FixtureValidationError(
+            "{} schema decisions differ between modern and API-26 paths".format(
+                label
+            )
+        )
+    return checksums[SCHEMA_PATH_MODERN]
+
+
+def schema_path_outcome(
+    connection: sqlite3.Connection,
+    label: str,
+    expected_business_tables: Sequence[str] = BUSINESS_TABLES,
+    schema_path: str = SCHEMA_PATH_AUTO,
+) -> Mapping[str, Any]:
+    diagnostics = schema_diagnostics(connection, schema_path)
+    try:
+        validate_schema(
+            connection,
+            label,
+            expected_business_tables,
+            schema_path,
+        )
+    except FixtureValidationError:
+        exact_schema_valid = False
+    else:
+        exact_schema_valid = True
+    return {
+        "decision": schema_decision_payload(diagnostics),
+        "exact_schema_valid": exact_schema_valid,
+    }
+
+
+def require_equivalent_schema_path_outcomes(
+    connection: sqlite3.Connection,
+    label: str,
+    expected_business_tables: Sequence[str] = BUSINESS_TABLES,
+) -> Mapping[str, Any]:
+    outcomes = {
+        schema_path: schema_path_outcome(
+            connection,
+            "{} [{}]".format(label, schema_path),
+            expected_business_tables,
+            schema_path,
+        )
+        for schema_path in SCHEMA_PATHS
+    }
+    if (
+        outcomes[SCHEMA_PATH_MODERN]
+        != outcomes[SCHEMA_PATH_ANDROID_API_26]
+    ):
+        raise FixtureValidationError(
+            "{} has different modern and API-26 schema outcomes".format(label)
+        )
+    return outcomes[SCHEMA_PATH_MODERN]
 
 
 def sqlite_file_structure_diagnostics(database: Path) -> Mapping[str, Any]:
@@ -2582,12 +3387,6 @@ def build_calendar_quarantine_output(
         raise FixtureValidationError(
             "{} is not configured as calendar-ambiguous".format(case.key)
         )
-    if case.default_calendar_evidence is not None or case.activity_calendar_evidence:
-        raise FixtureValidationError(
-            "{} calendar quarantine must not invent calendar evidence".format(
-                case.key
-            )
-        )
     if source_schema_diagnostics["migration_readiness"] != "ready":
         raise FixtureValidationError(
             "{} calendar quarantine requires an otherwise migration-ready schema".format(
@@ -2606,10 +3405,58 @@ def build_calendar_quarantine_output(
     for row in point_rows:
         points_by_activity.setdefault(row["ACTIVITYID"], []).append(dict(row))
     activity_ids = {row["ID"] for row in activity_rows}
+    per_activity: List[Mapping[str, Any]] = []
+    evidence_by_activity: Dict[Any, Optional[CalendarEvidence]] = {}
+    for row in activity_rows:
+        evidence = activity_calendar_evidence(case, row["ID"])
+        evidence_by_activity[row["ID"]] = evidence
+        per_activity.append(
+            {
+                "legacy_activity_id": row["ID"],
+                "state": (
+                    "durably_evidenced"
+                    if evidence is not None
+                    else "calendar_ambiguous"
+                ),
+                "evidence": (
+                    calendar_evidence_payload(evidence)
+                    if evidence is not None
+                    else None
+                ),
+            }
+        )
+    evidenced_activity_ids = [
+        row["legacy_activity_id"]
+        for row in per_activity
+        if row["state"] == "durably_evidenced"
+    ]
+    ambiguous_activity_ids = [
+        row["legacy_activity_id"]
+        for row in per_activity
+        if row["state"] == "calendar_ambiguous"
+    ]
+    if not ambiguous_activity_ids:
+        raise FixtureValidationError(
+            "{} calendar quarantine lacks an ambiguous activity".format(case.key)
+        )
     quarantined_activities = [
         {
             "legacy_activity_id": row["ID"],
-            "reason": "calendar_ambiguous",
+            "calendar_state": (
+                "durably_evidenced"
+                if evidence_by_activity[row["ID"]] is not None
+                else "calendar_ambiguous"
+            ),
+            "calendar_evidence": (
+                calendar_evidence_payload(evidence_by_activity[row["ID"]])
+                if evidence_by_activity[row["ID"]] is not None
+                else None
+            ),
+            "reason": (
+                "database_migration_unit_calendar_ambiguity"
+                if evidence_by_activity[row["ID"]] is not None
+                else "calendar_ambiguous"
+            ),
             "raw_activity": dict(row),
             "raw_track_points": points_by_activity.get(row["ID"], []),
         }
@@ -2635,8 +3482,13 @@ def build_calendar_quarantine_output(
                 "current_android_locale": case.android_locale,
                 "current_locale_used_as_row_evidence": False,
                 "historical_locale_changes_possible": True,
-                "ambiguous_activity_ids": [row["ID"] for row in activity_rows],
-                "reason": "no_durable_per_activity_calendar_evidence",
+                "database_migration_unit_policy": (
+                    "any_ambiguous_activity_quarantines_entire_source_database"
+                ),
+                "evidenced_activity_ids": evidenced_activity_ids,
+                "ambiguous_activity_ids": ambiguous_activity_ids,
+                "per_activity": per_activity,
+                "reason": "at_least_one_activity_lacks_durable_calendar_evidence",
             },
         },
         "quarantined_activities": quarantined_activities,
@@ -2646,6 +3498,8 @@ def build_calendar_quarantine_output(
             "source_track_point_rows": len(point_rows),
             "quarantined_activities": len(quarantined_activities),
             "quarantined_track_points": len(point_rows),
+            "evidenced_activities": len(evidenced_activity_ids),
+            "ambiguous_activities": len(ambiguous_activity_ids),
         },
         "migration_expectations": calendar_quarantine_migration_expectations(
             source_rows_read
@@ -3001,9 +3855,15 @@ def parse_evidenced_legacy_timestamp(
     if evidence.calendar == CALENDAR_GREGORIAN:
         gregorian_year = source_year
     elif evidence.calendar == CALENDAR_BUDDHIST:
-        if source_year <= BUDDHIST_ERA_GREGORIAN_YEAR_DELTA:
+        gregorian_year = formatter_calendar_year_mappings().get(
+            (
+                evidence.calendar,
+                evidence.locale_tag,
+                source_year,
+            )
+        )
+        if gregorian_year is None:
             return None
-        gregorian_year = source_year - BUDDHIST_ERA_GREGORIAN_YEAR_DELTA
     else:
         raise AssertionError("Calendar evidence validation did not fail closed")
     try:
@@ -4133,7 +4993,11 @@ def manifest_entry(
             "diagnostics": output["diagnostics"],
             "calendar_evidence": output["diagnostics"]["calendar"],
             "platform_metadata": platform_metadata_payload(connection),
-            "schema_logical_checksum": hash_value(schema_payload(connection)),
+            "schema_logical_checksum": validate_schema_all_paths(
+                connection,
+                "{} manifest".format(case.key),
+                case.business_tables,
+            ),
             "logical_checksums": logical_checksums(connection),
             "canonical_output_logical_checksum": hash_value(output),
             "representative_values": representative_values(connection, case),
@@ -4174,7 +5038,11 @@ def calendar_quarantine_manifest_entry(
             "diagnostics": output["diagnostics"],
             "migration_expectations": output["migration_expectations"],
             "platform_metadata": platform_metadata_payload(connection),
-            "schema_logical_checksum": hash_value(schema_payload(connection)),
+            "schema_logical_checksum": validate_schema_all_paths(
+                connection,
+                "{} manifest".format(case.key),
+                case.business_tables,
+            ),
             "logical_checksums": logical_checksums(connection),
             "canonical_output_logical_checksum": hash_value(output),
             "representative_values": representative_values(connection, case),
@@ -4215,6 +5083,11 @@ def blocked_manifest_entry(
 
 def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     root = root.resolve()
+    formatter_probe_matrix()
+    matrix_destination = root / FORMATTER_MATRIX_PATH.name
+    if matrix_destination.resolve() != FORMATTER_MATRIX_PATH.resolve():
+        matrix_destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(FORMATTER_MATRIX_PATH, matrix_destination)
     fixtures_dir = root / "fixtures"
     expected_dir = root / "expected"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
@@ -4239,7 +5112,11 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             )
             continue
         with open_readonly(database) as connection:
-            validate_schema(connection, case.key, case.business_tables)
+            validate_schema_all_paths(
+                connection,
+                case.key,
+                case.business_tables,
+            )
             rows_by_table = read_all_rows(connection)
             source_schema_diagnostics = schema_diagnostics(connection)
             if case.calendar_ambiguous:
@@ -4305,13 +5182,15 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
                 CALENDAR_BUDDHIST,
                 CALENDAR_GREGORIAN,
             ],
-            "buddhist_era_gregorian_year_delta": (
-                BUDDHIST_ERA_GREGORIAN_YEAR_DELTA
+            "calendar_interpretation": (
+                "pinned_formatter_calendar_evidence_without_year_magnitude_or_"
+                "fixed_offset_heuristics"
             ),
             "ambiguous_unit_policy": (
                 "quarantine_source_database_with_zero_target_writes_and_no_receipt"
             ),
         },
+        "formatter_oracle": formatter_oracle_manifest(),
         "source_schema": {
             "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
             "android_metadata_business_data": False,
@@ -4322,6 +5201,9 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             "gps_points_ddl": CREATE_GPS_POINTS_SQL,
             "user_version": 0,
             "foreign_keys_declared": False,
+            "schema_validation_paths": list(SCHEMA_PATHS),
+            "android_api_26_sqlite_version": "3.18.2",
+            "sqlite_catalog_fallback": "sqlite_master",
         },
         "fixtures": entries,
     }
@@ -4469,16 +5351,36 @@ def validate_output_invariants(
                 summary.get("source_activity_rows", 0)
                 + summary.get("source_track_point_rows", 0)
             )
+            per_activity = calendar.get("per_activity", [])
+            evidenced_activity_ids = calendar.get(
+                "evidenced_activity_ids",
+                [],
+            )
+            ambiguous_activity_ids = calendar.get(
+                "ambiguous_activity_ids",
+                [],
+            )
             expectations = output.get("migration_expectations")
             if (
                 schema_diagnostic.get("migration_readiness") != "ready"
+                or schema_diagnostic.get("validation_path")
+                != SCHEMA_PATH_MODERN
+                or schema_diagnostic.get(
+                    "unexpected_sqlite_internal_schema_objects"
+                )
                 or diagnostics.get("data_state") != "calendar_ambiguous"
                 or calendar.get("state") != "calendar_ambiguous"
                 or calendar.get("migration_readiness") != "blocked"
                 or calendar.get("current_locale_used_as_row_evidence") is not False
-                or not calendar.get("ambiguous_activity_ids")
+                or calendar.get("database_migration_unit_policy")
+                != "any_ambiguous_activity_quarantines_entire_source_database"
+                or not ambiguous_activity_ids
                 or summary.get("quarantined_activities")
                 != len(quarantined_activities)
+                or summary.get("evidenced_activities")
+                != len(evidenced_activity_ids)
+                or summary.get("ambiguous_activities")
+                != len(ambiguous_activity_ids)
                 or summary.get("quarantined_track_points")
                 != sum(
                     len(activity["raw_track_points"])
@@ -4499,23 +5401,55 @@ def validate_output_invariants(
                 activity["raw_activity"]["ID"]
                 for activity in quarantined_activities
             ]
+            classified_activity_ids = [
+                activity["legacy_activity_id"] for activity in per_activity
+            ]
+            states_by_activity = {
+                activity["legacy_activity_id"]: activity
+                for activity in per_activity
+            }
             if (
-                raw_activity_ids != calendar["ambiguous_activity_ids"]
+                raw_activity_ids != classified_activity_ids
                 or raw_activity_ids
                 != [
                     activity["legacy_activity_id"]
                     for activity in quarantined_activities
                 ]
-                or any(
-                    activity["reason"] != "calendar_ambiguous"
-                    for activity in quarantined_activities
-                )
+                or evidenced_activity_ids
+                != [
+                    activity["legacy_activity_id"]
+                    for activity in per_activity
+                    if activity["state"] == "durably_evidenced"
+                ]
+                or ambiguous_activity_ids
+                != [
+                    activity["legacy_activity_id"]
+                    for activity in per_activity
+                    if activity["state"] == "calendar_ambiguous"
+                ]
             ):
                 raise FixtureValidationError(
                     "{} calendar quarantine lost raw activity identity".format(
                         fixture_name
                     )
                 )
+            for activity in quarantined_activities:
+                classification = states_by_activity[activity["legacy_activity_id"]]
+                expected_reason = (
+                    "database_migration_unit_calendar_ambiguity"
+                    if classification["state"] == "durably_evidenced"
+                    else "calendar_ambiguous"
+                )
+                if (
+                    activity["calendar_state"] != classification["state"]
+                    or activity["calendar_evidence"] != classification["evidence"]
+                    or activity["reason"] != expected_reason
+                ):
+                    raise FixtureValidationError(
+                        "{} calendar quarantine lost row-level diagnostics".format(
+                            fixture_name
+                        )
+                    )
             continue
         if output.get("output_kind") == "blocked_preflight":
             expectations = output.get("migration_expectations")
@@ -4615,6 +5549,12 @@ def validate_output_invariants(
         if schema_diagnostic["platform_tables_present"] != ["android_metadata"]:
             raise FixtureValidationError(
                 "{} must report verified android_metadata".format(fixture_name)
+            )
+        if schema_diagnostic["validation_path"] != SCHEMA_PATH_MODERN:
+            raise FixtureValidationError(
+                "{} committed oracle must use the modern schema path".format(
+                    fixture_name
+                )
             )
         if schema_diagnostic["unexpected_tables"]:
             raise FixtureValidationError(
@@ -4796,6 +5736,24 @@ def validate_output_invariants(
         ):
             raise FixtureValidationError(
                 "{} source rows are not in required 64-bit ID order".format(
+                    fixture_name
+                )
+            )
+        expected_internal_objects = sorted(
+            "{}:{}".format(object_type, name)
+            for object_type, name, _ in expected_sqlite_internal_objects(
+                present_business_tables
+            )
+        )
+        if (
+            schema_diagnostic["sqlite_internal_schema_objects"]
+            != expected_internal_objects
+            or schema_diagnostic[
+                "unexpected_sqlite_internal_schema_objects"
+            ]
+        ):
+            raise FixtureValidationError(
+                "{} reports unexpected SQLite internal objects".format(
                     fixture_name
                 )
             )
@@ -5365,6 +6323,45 @@ def run_storage_detection_tests(
                     "Validator self-test did not detect {}".format(detector_name)
                 )
 
+        formatter_case = cases["formatter_digit_blocks"]
+        formatter_database = root / "fixtures" / "formatter_digit_blocks.db"
+        with open_readonly(formatter_database) as connection:
+            formatter_rows = read_all_rows(connection)
+            formatter_schema = schema_diagnostics(connection)
+        formatter_zeroes = {
+            row["zero_code_point"] for row in formatter_candidate_digit_blocks()
+        }
+        for omitted_zero in sorted(formatter_zeroes):
+            allowed_zeroes = formatter_zeroes - {omitted_zero}
+
+            def parse_all_matrix_blocks_except_one(
+                value: Any,
+                evidence: CalendarEvidence,
+                allowed: set[int] = allowed_zeroes,
+            ) -> Optional[datetime]:
+                zero_code_point = timestamp_digit_zero_code_point(value)
+                if zero_code_point not in allowed:
+                    return None
+                return parse_evidenced_legacy_timestamp(value, evidence)
+
+            candidate = copy.deepcopy(expected_outputs)
+            candidate["formatter_digit_blocks"] = build_canonical_output(
+                formatter_case,
+                formatter_rows,
+                formatter_schema,
+                parse_all_matrix_blocks_except_one,
+            )
+            try:
+                validate_candidate_outputs(expected_outputs, candidate)
+            except FixtureValidationError:
+                continue
+            raise FixtureValidationError(
+                "Validator self-test accepted a parser omitting U+{:04X}".format(
+                    omitted_zero
+                )
+            )
+        passed.append("source_emittable_digit_block_omitted")
+
         calendar_case = cases["calendar_semantics"]
         calendar_database = root / "fixtures" / "calendar_semantics.db"
         with open_readonly(calendar_database) as connection:
@@ -5393,6 +6390,35 @@ def run_storage_detection_tests(
                 )
             return parse_evidenced_legacy_timestamp(value, evidence)
 
+        def parse_year_magnitude_with_fixed_offset(
+            value: Any,
+            evidence: CalendarEvidence,
+        ) -> Optional[datetime]:
+            del evidence
+            normalized = normalized_legacy_timestamp_digits(
+                value,
+                require_single_numbering_system=True,
+            )
+            if normalized is None:
+                return None
+            source_year = int(normalized[0:4])
+            guessed_year = (
+                source_year - 543
+                if source_year >= 2400
+                else source_year
+            )
+            try:
+                return datetime(
+                    guessed_year,
+                    int(normalized[4:6]),
+                    int(normalized[6:8]),
+                    int(normalized[8:10]),
+                    int(normalized[10:12]),
+                    int(normalized[12:14]),
+                )
+            except ValueError:
+                return None
+
         for detector_name, timestamp_parser in (
             (
                 "calendar_gregorian_only_parser",
@@ -5401,6 +6427,10 @@ def run_storage_detection_tests(
             (
                 "calendar_thai_digits_auto_buddhist_conversion",
                 parse_thai_digits_as_buddhist,
+            ),
+            (
+                "calendar_year_magnitude_fixed_offset_heuristic",
+                parse_year_magnitude_with_fixed_offset,
             ),
         ):
             candidate = copy.deepcopy(expected_outputs)
@@ -5446,6 +6476,68 @@ def run_storage_detection_tests(
         else:
             raise FixtureValidationError(
                 "Validator self-test did not detect calendar_ambiguous_rows_migrated"
+            )
+
+        mixed_case = cases["calendar_mixed_evidence"]
+        mixed_database = root / "fixtures" / "calendar_mixed_evidence.db"
+        with open_readonly(mixed_database) as connection:
+            mixed_rows = read_all_rows(connection)
+            mixed_schema = schema_diagnostics(connection)
+        evidenced_activity_ids = {
+            row_id
+            for row_id, evidence in mixed_case.activity_calendar_evidence
+            if evidence is not None
+        }
+        row_scoped_rows = {
+            "ACTIVITY": tuple(
+                row
+                for row in mixed_rows["ACTIVITY"]
+                if row_mapping(ACTIVITY_COLUMNS, row)["ID"]
+                in evidenced_activity_ids
+            ),
+            "GPS_POINTS": tuple(
+                row
+                for row in mixed_rows["GPS_POINTS"]
+                if row_mapping(GPS_POINT_COLUMNS, row)["ACTIVITYID"]
+                in evidenced_activity_ids
+            ),
+        }
+        row_scoped_case = replace(
+            mixed_case,
+            calendar_ambiguous=False,
+        )
+        row_scoped_candidate = dict(
+            build_canonical_output(
+                row_scoped_case,
+                row_scoped_rows,
+                mixed_schema,
+            )
+        )
+        expected_mixed = expected_outputs["calendar_mixed_evidence"]
+        row_scoped_candidate["output_kind"] = "row_scoped_calendar_migration"
+        row_scoped_candidate["quarantined_activities"] = [
+            copy.deepcopy(activity)
+            for activity in expected_mixed["quarantined_activities"]
+            if activity["calendar_state"] == "calendar_ambiguous"
+        ]
+        row_scoped_candidate["migration_expectations"] = {
+            "status": "partially_migrated",
+            "reason": "calendar_ambiguous_rows_skipped",
+            "source_rows_read": 4,
+            "target_write_attempted": True,
+            "target_rows_written": 2,
+            "receipt_write_attempted": False,
+            "receipt_written": False,
+        }
+        candidate = copy.deepcopy(expected_outputs)
+        candidate["calendar_mixed_evidence"] = row_scoped_candidate
+        try:
+            validate_candidate_outputs(expected_outputs, candidate)
+        except FixtureValidationError:
+            passed.append("calendar_mixed_evidence_row_scoped_migration")
+        else:
+            raise FixtureValidationError(
+                "Validator self-test accepted row-scoped calendar quarantine"
             )
 
         crlf_json = work_dir / "localized-timestamps-crlf.json"
@@ -5795,33 +6887,57 @@ def run_storage_detection_tests(
             ),
         )
         with open_readonly(formatting_only) as connection:
-            validate_schema(connection, "schema formatting-only equivalence")
+            validate_schema_all_paths(
+                connection,
+                "schema formatting-only equivalence",
+            )
 
         def require_schema_detector(
             detector_name: str,
             database: Path,
-            required_error: str,
+            required_errors: Mapping[str, str],
         ) -> None:
             with open_readonly(database) as connection:
-                diagnostics = schema_diagnostics(connection)
-                if (
-                    diagnostics["state"] != "malformed_schema"
-                    or diagnostics["migration_readiness"] != "blocked"
-                    or required_error not in diagnostics["schema_errors"]
-                ):
-                    raise FixtureValidationError(
-                        "{} did not report {}".format(
-                            detector_name,
-                            required_error,
-                        )
+                decisions = []
+                for schema_path in SCHEMA_PATHS:
+                    diagnostics = schema_diagnostics(
+                        connection,
+                        schema_path,
                     )
-                try:
-                    validate_schema(connection, detector_name)
-                except FixtureValidationError:
-                    pass
-                else:
+                    required_error = required_errors[schema_path]
+                    if (
+                        diagnostics["state"] != "malformed_schema"
+                        or diagnostics["migration_readiness"] != "blocked"
+                        or required_error not in diagnostics["schema_errors"]
+                    ):
+                        raise FixtureValidationError(
+                            "{} [{}] did not report {}".format(
+                                detector_name,
+                                schema_path,
+                                required_error,
+                            )
+                        )
+                    decisions.append(schema_decision_payload(diagnostics))
+                    try:
+                        validate_schema(
+                            connection,
+                            detector_name,
+                            schema_path=schema_path,
+                        )
+                    except FixtureValidationError:
+                        pass
+                    else:
+                        raise FixtureValidationError(
+                            "{} [{}] escaped exact schema validation".format(
+                                detector_name,
+                                schema_path,
+                            )
+                        )
+                if decisions[0] != decisions[1]:
                     raise FixtureValidationError(
-                        "{} escaped exact schema validation".format(detector_name)
+                        "{} schema paths made different decisions".format(
+                            detector_name
+                        )
                     )
             blocked = build_blocked_preflight_output(
                 cases["malformed_schema"],
@@ -5830,6 +6946,93 @@ def run_storage_detection_tests(
             if (
                 blocked["migration_expectations"]
                 != blocked_migration_expectations("malformed_schema")
+            ):
+                raise FixtureValidationError(
+                    "{} did not fail closed".format(detector_name)
+                )
+            passed.append(detector_name)
+
+        sqlite_x_mutations = (
+            (
+                "sqliteX_user_table_not_hidden",
+                "CREATE TABLE sqliteX_user_table (value TEXT)",
+                "table:sqliteX_user_table",
+            ),
+            (
+                "sqliteX_user_index_not_hidden",
+                "CREATE INDEX sqliteX_user_index ON ACTIVITY(NAME)",
+                "index:sqliteX_user_index",
+            ),
+            (
+                "sqliteX_user_trigger_not_hidden",
+                (
+                    "CREATE TRIGGER sqliteX_user_trigger AFTER INSERT ON ACTIVITY "
+                    "BEGIN SELECT 1; END"
+                ),
+                "trigger:sqliteX_user_trigger",
+            ),
+            (
+                "sqliteX_user_view_not_hidden",
+                (
+                    "CREATE VIEW sqliteX_user_view AS "
+                    "SELECT ID, GMTSTART FROM ACTIVITY"
+                ),
+                "view:sqliteX_user_view",
+            ),
+        )
+        for detector_name, statement, expected_object in sqlite_x_mutations:
+            database = work_dir / "{}.db".format(detector_name)
+            shutil.copyfile(metadata_source, database)
+            connection = sqlite3.connect(str(database))
+            try:
+                with connection:
+                    connection.execute(statement)
+            finally:
+                connection.close()
+            with open_readonly(database) as connection:
+                decisions = []
+                for schema_path in SCHEMA_PATHS:
+                    diagnostics = schema_diagnostics(connection, schema_path)
+                    if (
+                        diagnostics["state"] != "malformed_schema"
+                        or expected_object
+                        not in diagnostics["unexpected_schema_objects"]
+                    ):
+                        raise FixtureValidationError(
+                            "{} [{}] hid {}".format(
+                                detector_name,
+                                schema_path,
+                                expected_object,
+                            )
+                        )
+                    decisions.append(schema_decision_payload(diagnostics))
+                    try:
+                        validate_schema(
+                            connection,
+                            detector_name,
+                            schema_path=schema_path,
+                        )
+                    except FixtureValidationError:
+                        pass
+                    else:
+                        raise FixtureValidationError(
+                            "{} [{}] escaped exact schema validation".format(
+                                detector_name,
+                                schema_path,
+                            )
+                        )
+                if decisions[0] != decisions[1]:
+                    raise FixtureValidationError(
+                        "{} schema paths made different decisions".format(
+                            detector_name
+                        )
+                    )
+            blocked = build_blocked_preflight_output(
+                cases["malformed_schema"],
+                database,
+            )
+            if blocked["migration_expectations"] != blocked_migration_expectations(
+                "malformed_schema"
             ):
                 raise FixtureValidationError(
                     "{} did not fail closed".format(detector_name)
@@ -5857,7 +7060,10 @@ def run_storage_detection_tests(
         require_schema_detector(
             "generated_column_hidden_from_table_info",
             generated_column,
-            "ACTIVITY:table_xinfo",
+            {
+                SCHEMA_PATH_MODERN: "ACTIVITY:table_xinfo",
+                SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
+            },
         )
 
         constraint_substitution = work_dir / "constraint-substitution.db"
@@ -5882,7 +7088,10 @@ def run_storage_detection_tests(
         require_schema_detector(
             "sqlite_schema_constraint_substitution",
             constraint_substitution,
-            "ACTIVITY:sqlite_schema_sql",
+            {
+                SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_sql",
+                SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_master_sql",
+            },
         )
 
         virtual_substitution = work_dir / "virtual-substitution.db"
@@ -5896,7 +7105,10 @@ def run_storage_detection_tests(
         require_schema_detector(
             "virtual_table_shadow_substitution",
             virtual_substitution,
-            "ACTIVITY:sqlite_schema_table_kind",
+            {
+                SCHEMA_PATH_MODERN: "ACTIVITY:sqlite_schema_table_kind",
+                SCHEMA_PATH_ANDROID_API_26: "ACTIVITY:sqlite_schema_table_kind",
+            },
         )
 
         logical_drift = work_dir / "standard-logical-drift.db"
@@ -5929,6 +7141,201 @@ def run_storage_detection_tests(
     return tuple(passed)
 
 
+def verify_legacy_schema_path(
+    root: Path = TOOL_ROOT,
+) -> Mapping[str, Any]:
+    root = root.resolve()
+    canonical_database = root / "fixtures" / "empty.db"
+    malformed_database = root / "fixtures" / "malformed_schema.db"
+    checked = 0
+
+    with open_readonly(canonical_database) as connection:
+        outcome = require_equivalent_schema_path_outcomes(
+            connection,
+            "canonical committed schema",
+        )
+        if not outcome["exact_schema_valid"] or not outcome["decision"]["accepted"]:
+            raise FixtureValidationError(
+                "Canonical schema was not accepted by both validation paths"
+            )
+        legacy_guard = SchemaSqlGuard(
+            connection,
+            forbidden_tokens=("table_xinfo", "sqlite_schema"),
+        )
+        legacy_outcome = schema_path_outcome(
+            legacy_guard,
+            "canonical API-26 guard",
+            schema_path=SCHEMA_PATH_ANDROID_API_26,
+        )
+        if legacy_outcome != outcome:
+            raise FixtureValidationError(
+                "Guarded API-26 path changed the canonical schema decision"
+            )
+        legacy_sql = "\n".join(legacy_guard.statements).casefold()
+        if "table_info" not in legacy_sql or "sqlite_master" not in legacy_sql:
+            raise FixtureValidationError(
+                "API-26 schema path did not use table_info plus sqlite_master"
+            )
+
+        modern_guard = SchemaSqlGuard(connection)
+        modern_outcome = schema_path_outcome(
+            modern_guard,
+            "canonical modern guard",
+            schema_path=SCHEMA_PATH_MODERN,
+        )
+        modern_sql = "\n".join(modern_guard.statements).casefold()
+        if (
+            modern_outcome != outcome
+            or "table_xinfo" not in modern_sql
+            or "sqlite_schema" not in modern_sql
+        ):
+            raise FixtureValidationError(
+                "Modern schema path did not use table_xinfo plus sqlite_schema"
+            )
+        checked += 1
+
+    with open_readonly(malformed_database) as connection:
+        outcome = require_equivalent_schema_path_outcomes(
+            connection,
+            "committed malformed schema",
+        )
+        if outcome["exact_schema_valid"] or outcome["decision"]["accepted"]:
+            raise FixtureValidationError(
+                "Committed malformed schema was accepted by a validation path"
+            )
+        checked += 1
+
+    variants = (
+        (
+            "generated column",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                "HIDDEN_COPY TEXT GENERATED ALWAYS AS (GMTSTART) VIRTUAL)"
+            ),
+            (),
+        ),
+        (
+            "extra check constraint",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL, "
+                "CHECK (DISTANCE IS NULL OR DISTANCE >= 0))"
+            ),
+            (),
+        ),
+        (
+            "extra default",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR DEFAULT '', "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+            ),
+            (),
+        ),
+        (
+            "reordered columns",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, DESCRIPTION VARCHAR, "
+                "NAME VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+            ),
+            (),
+        ),
+        (
+            "changed declared type",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME TEXT, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+            ),
+            (),
+        ),
+        (
+            "extra collation",
+            (
+                "CREATE TABLE ACTIVITY "
+                "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                "GMTSTART VARCHAR, GMTEND VARCHAR, NAME VARCHAR COLLATE NOCASE, "
+                "DESCRIPTION VARCHAR, DISTANCE REAL, TIME REAL, PACE REAL)"
+            ),
+            (),
+        ),
+        (
+            "virtual shadow substitution",
+            (
+                "CREATE VIRTUAL TABLE ACTIVITY USING fts5("
+                "ID, GMTSTART, GMTEND, NAME, DESCRIPTION, DISTANCE, TIME, PACE)"
+            ),
+            (),
+        ),
+        (
+            "sqliteX user objects",
+            CREATE_ACTIVITY_SQL,
+            (
+                "CREATE TABLE sqliteX_user_table (value TEXT)",
+                "CREATE INDEX sqliteX_user_index ON ACTIVITY(NAME)",
+                (
+                    "CREATE TRIGGER sqliteX_user_trigger AFTER INSERT ON ACTIVITY "
+                    "BEGIN SELECT 1; END"
+                ),
+                (
+                    "CREATE VIEW sqliteX_user_view AS "
+                    "SELECT ID, GMTSTART FROM ACTIVITY"
+                ),
+            ),
+        ),
+    )
+    for label, activity_sql, extra_sql in variants:
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE android_metadata (locale TEXT)")
+            connection.execute(
+                "INSERT INTO android_metadata (locale) VALUES ('en_US')"
+            )
+            connection.execute(activity_sql)
+            connection.execute(CREATE_GPS_POINTS_SQL)
+            for statement in extra_sql:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 0")
+            outcome = require_equivalent_schema_path_outcomes(
+                connection,
+                label,
+            )
+            if outcome["exact_schema_valid"] or outcome["decision"]["accepted"]:
+                raise FixtureValidationError(
+                    "{} was accepted by a schema path".format(label)
+                )
+            legacy_guard = SchemaSqlGuard(
+                connection,
+                forbidden_tokens=("table_xinfo", "sqlite_schema"),
+            )
+            legacy_outcome = schema_path_outcome(
+                legacy_guard,
+                "{} API-26 guard".format(label),
+                schema_path=SCHEMA_PATH_ANDROID_API_26,
+            )
+            if legacy_outcome != outcome:
+                raise FixtureValidationError(
+                    "{} changed under the guarded API-26 path".format(label)
+                )
+            checked += 1
+        finally:
+            connection.close()
+    return {
+        "schemas_checked": checked,
+        "modern_path": SCHEMA_PATH_MODERN,
+        "legacy_path": SCHEMA_PATH_ANDROID_API_26,
+    }
+
+
 def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
     if manifest.get("format_version") != FORMAT_VERSION:
         raise FixtureValidationError("Unsupported manifest format version")
@@ -5953,14 +7360,17 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
             CALENDAR_BUDDHIST,
             CALENDAR_GREGORIAN,
         ],
-        "buddhist_era_gregorian_year_delta": (
-            BUDDHIST_ERA_GREGORIAN_YEAR_DELTA
+        "calendar_interpretation": (
+            "pinned_formatter_calendar_evidence_without_year_magnitude_or_"
+            "fixed_offset_heuristics"
         ),
         "ambiguous_unit_policy": (
             "quarantine_source_database_with_zero_target_writes_and_no_receipt"
         ),
     }:
         raise FixtureValidationError("Manifest calendar oracle mismatch")
+    if manifest.get("formatter_oracle") != formatter_oracle_manifest():
+        raise FixtureValidationError("Manifest formatter oracle mismatch")
     source_schema = manifest.get("source_schema", {})
     expected_schema = {
         "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
@@ -5972,6 +7382,9 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
         "gps_points_ddl": CREATE_GPS_POINTS_SQL,
         "user_version": 0,
         "foreign_keys_declared": False,
+        "schema_validation_paths": list(SCHEMA_PATHS),
+        "android_api_26_sqlite_version": "3.18.2",
+        "sqlite_catalog_fallback": "sqlite_master",
     }
     if source_schema != expected_schema:
         raise FixtureValidationError("Manifest source schema mismatch")
@@ -5983,6 +7396,16 @@ def verify_corpus(
     run_mutations: bool = True,
 ) -> Mapping[str, Any]:
     root = root.resolve()
+    matrix_path = root / FORMATTER_MATRIX_PATH.name
+    if not matrix_path.is_file():
+        raise FixtureValidationError(
+            "Missing formatter matrix {}".format(matrix_path)
+        )
+    compare_exact_artifact_bytes(
+        "pinned formatter matrix",
+        FORMATTER_MATRIX_PATH,
+        matrix_path,
+    )
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FixtureValidationError("Missing manifest {}".format(manifest_path))
@@ -6038,7 +7461,7 @@ def verify_corpus(
             )
             continue
         with open_readonly(database) as connection:
-            schema_checksum = validate_schema(
+            schema_checksum = validate_schema_all_paths(
                 connection,
                 name,
                 case.business_tables,
@@ -6120,7 +7543,10 @@ def verify_corpus(
 
 
 def corpus_artifact_paths(root: Path) -> Mapping[str, Path]:
-    paths = [root / "manifest.json"]
+    paths = [
+        root / "manifest.json",
+        root / FORMATTER_MATRIX_PATH.name,
+    ]
     paths.extend(sorted((root / "expected").glob("*.json")))
     paths.extend(sorted(path for path in (root / "fixtures").iterdir() if path.is_file()))
     return {
@@ -6195,7 +7621,11 @@ def standard_database_logical_snapshot(
             "{} failed SQLite integrity validation".format(database)
         )
     with open_readonly(database) as connection:
-        validate_schema(connection, str(database), case.business_tables)
+        validate_schema_all_paths(
+            connection,
+            str(database),
+            case.business_tables,
+        )
         rows_by_table = read_all_rows(connection)
         compare_rows_to_case(case, rows_by_table)
         return database_content_snapshot(connection, rows_by_table)
@@ -6259,7 +7689,10 @@ def active_wal_storage_snapshot(
     )
     main_only = sqlite3.connect(immutable_uri, uri=True)
     try:
-        validate_schema(main_only, "{} main-only".format(case.key))
+        validate_schema_all_paths(
+            main_only,
+            "{} main-only".format(case.key),
+        )
         main_rows = read_all_rows(main_only)
         if any(main_rows[table] for table in BUSINESS_TABLES):
             raise FixtureValidationError(
@@ -6270,7 +7703,10 @@ def active_wal_storage_snapshot(
         main_only.close()
 
     with open_readonly(database) as connection:
-        validate_schema(connection, "{} consistent".format(case.key))
+        validate_schema_all_paths(
+            connection,
+            "{} consistent".format(case.key),
+        )
         rows_by_table = read_all_rows(connection)
         compare_rows_to_case(case, rows_by_table)
         consistent_snapshot = database_content_snapshot(connection, rows_by_table)
@@ -6592,6 +8028,7 @@ def verify_deterministic_regeneration(
         expected_exact_artifact_paths = {"manifest.json"} | {
             "expected/{}.json".format(case.key) for case in fixture_cases()
         }
+        expected_exact_artifact_paths.add(FORMATTER_MATRIX_PATH.name)
         if exact_artifact_paths != expected_exact_artifact_paths:
             raise FixtureValidationError(
                 "Exact-byte text artifact set mismatch; expected {}, found {}".format(
@@ -6765,7 +8202,7 @@ def generate_large_fixture(
         connection.close()
 
     with open_readonly(database) as connection:
-        schema_checksum = validate_schema(connection, "large")
+        schema_checksum = validate_schema_all_paths(connection, "large")
         total_points = activities * points_per_activity_count
         first_point = connection.execute(
             "SELECT LATITUDE, LONGITUDE, GMTTIMESTAMP FROM GPS_POINTS "
@@ -6815,7 +8252,7 @@ def verify_large_fixture(database: Path, manifest_path: Path) -> Mapping[str, An
         raise FixtureValidationError("Large fixture must be synthetic")
     expected = manifest["expected"]
     with open_readonly(database) as connection:
-        schema_checksum = validate_schema(connection, "large")
+        schema_checksum = validate_schema_all_paths(connection, "large")
         activity_count = connection.execute(
             "SELECT COUNT(*) FROM ACTIVITY"
         ).fetchone()[0]
@@ -6903,6 +8340,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     ).add_argument("--root", type=Path, default=TOOL_ROOT)
 
+    subparsers.add_parser(
+        "verify-legacy-schema-path",
+        help=(
+            "Prove modern table_xinfo/sqlite_schema and Android API-26 "
+            "table_info/sqlite_master paths make equivalent schema decisions."
+        ),
+    ).add_argument("--root", type=Path, default=TOOL_ROOT)
+
     large_parser = subparsers.add_parser(
         "large", help="Generate an uncommitted deterministic stress fixture."
     )
@@ -6969,6 +8414,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     result["exact_byte_artifact_count"],
                     result["logical_database_artifact_count"],
                     result["canonical_storage_artifact_count"],
+                )
+            )
+            return 0
+        if args.command == "verify-legacy-schema-path":
+            result = verify_legacy_schema_path(args.root)
+            print(
+                "Verified {} schemas through modern and Android API-26 paths".format(
+                    result["schemas_checked"]
                 )
             )
             return 0
