@@ -9,8 +9,8 @@ android {
         applicationId 'com.long2know.sportlogger'
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName '1.0'
+        versionCode rootProject.ext.phoneVersionCode
+        versionName rootProject.ext.productVersionName
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 

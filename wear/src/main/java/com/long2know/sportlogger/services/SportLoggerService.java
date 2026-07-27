@@ -21,6 +21,7 @@ import androidx.core.app.ServiceCompat;
 import com.long2know.utilities.models.Config;
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
+import com.long2know.sportlogger.RecordingPermissions;
 import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.data_access.SqlLogger;
 
@@ -43,6 +44,7 @@ public class SportLoggerService extends Service {
     private GpsListener _locationListener;
     private ScheduledExecutorService _scheduler;
     private StopWatch _stopWatch = new StopWatch();
+    private boolean _permissionLossHandled;
 
     // Below is the service framework methods
     @Override
@@ -62,13 +64,29 @@ public class SportLoggerService extends Service {
         };
 
         _notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        showNotification();
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss();
+            return;
+        }
 
-        _sensorListener = new SensorListener();
+        try {
+            showNotification();
+        } catch (SecurityException exception) {
+            Log.e(TAG, "Recording permissions were revoked before foreground startup.", exception);
+            handleRecordingPermissionLoss();
+            return;
+        }
+
+        _sensorListener = new SensorListener(new Runnable() {
+            @Override
+            public void run() {
+                handleRecordingPermissionLoss();
+            }
+        });
         _locationListener = new GpsListener();
 
-        _sensorThread = new Thread(new SensorListener());
-        _locationThread = new Thread(new GpsListener());
+        _sensorThread = new Thread(_sensorListener);
+        _locationThread = new Thread(_locationListener);
         _sensorThread.start();
         _locationThread.start();
     }
@@ -76,6 +94,10 @@ public class SportLoggerService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i("LocalService", "Received start id " + startId + ": " + intent);
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss();
+            return START_NOT_STICKY;
+        }
         return START_STICKY;
     }
 
@@ -98,14 +120,24 @@ public class SportLoggerService extends Service {
             });
         }
 
-        Message lmsg = _sensorListener.WorkerHandler.obtainMessage(0);
-        _sensorListener.WorkerHandler.sendMessage(lmsg);
+        Handler sensorHandler = SensorListener.WorkerHandler;
+        if (sensorHandler != null) {
+            Message lmsg = sensorHandler.obtainMessage(0);
+            sensorHandler.sendMessage(lmsg);
+        }
 
-        Message gmsg = _locationListener.WorkerHandler.obtainMessage(0);
-        _locationListener.WorkerHandler.sendMessage(gmsg);
+        Handler locationHandler = GpsListener.WorkerHandler;
+        if (locationHandler != null) {
+            Message gmsg = locationHandler.obtainMessage(0);
+            locationHandler.sendMessage(gmsg);
+        }
 
-        _sensorThread.interrupt();
-        _locationThread.interrupt();
+        if (_sensorThread != null) {
+            _sensorThread.interrupt();
+        }
+        if (_locationThread != null) {
+            _locationThread.interrupt();
+        }
 
         _serviceClient = null;
         super.onDestroy();
@@ -162,7 +194,12 @@ public class SportLoggerService extends Service {
         }
     }
 
-    public void startNewActivity() {
+    public boolean startNewActivity() {
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss();
+            return false;
+        }
+
         // We can force reading at specific intervals like this
         _scheduler = Executors.newScheduledThreadPool(1);
         _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
@@ -173,6 +210,7 @@ public class SportLoggerService extends Service {
         SharedData.getInstance().IsPaused = false;
         CharSequence text = "Starting new activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        return true;
     }
 
     public void stopActivity() {
@@ -216,7 +254,12 @@ public class SportLoggerService extends Service {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
     }
 
-    public void resumeActivity() {
+    public boolean resumeActivity() {
+        if (!RecordingPermissions.allRequiredForRecordingGranted(this)) {
+            handleRecordingPermissionLoss();
+            return false;
+        }
+
         // We can force reading at specific intervals like this
         _scheduler = Executors.newScheduledThreadPool(1);
         _scheduler.scheduleAtFixedRate(new SqlLogger(), 0, 1, TimeUnit.SECONDS);
@@ -224,6 +267,7 @@ public class SportLoggerService extends Service {
         _stopWatch.startTImer();
         CharSequence text = "Resuming activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        return true;
     }
 
     public void discardActivity() {
@@ -251,5 +295,26 @@ public class SportLoggerService extends Service {
 
         CharSequence text = "Discarded activity";
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+    }
+
+    private synchronized void handleRecordingPermissionLoss() {
+        if (_permissionLossHandled) {
+            return;
+        }
+        _permissionLossHandled = true;
+
+        SharedData shared = SharedData.getInstance();
+        shared.IsRecording = false;
+        shared.IsPaused = false;
+
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                if (_serviceClient != null) {
+                    _serviceClient.onRecordingPermissionLost();
+                }
+                stopSelf();
+            }
+        });
     }
 }

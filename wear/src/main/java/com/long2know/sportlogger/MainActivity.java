@@ -17,11 +17,13 @@ import android.util.Log;
 import android.view.MenuItem;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
 import androidx.fragment.app.FragmentManager;
+import androidx.lifecycle.Lifecycle;
 import androidx.wear.ambient.AmbientModeSupport;
 import androidx.wear.widget.drawer.WearableActionDrawerView;
 import androidx.wear.widget.drawer.WearableNavigationDrawerView;
@@ -64,6 +66,8 @@ public class MainActivity extends FragmentActivity implements
     private SportLoggerService _loggingService;
     private ServiceConnection _loggingServiceConnection;
     private static Intent _serviceIntent;
+    private boolean _permissionRequestInFlight;
+    private boolean _permissionLossMessagePending;
 
 //    private SensorListener _sensorListener;
 //    private GpsListener _locationListener;
@@ -175,7 +179,7 @@ public class MainActivity extends FragmentActivity implements
     @Override
     protected void onResume() {
         super.onResume();
-        startAndBindServiceIfPermitted();
+        reconcileRecordingPermissions();
     }
 
     @Override
@@ -189,11 +193,22 @@ public class MainActivity extends FragmentActivity implements
             stopAndUnbindServiceIfRequired();
         }
 
+        SportLoggerService.setServiceClient(null);
         super.onDestroy();
     }
 
     public void onLoggerUpdate(SharedData data) {
 
+    }
+
+    @Override
+    public void onRecordingPermissionLost() {
+        boolean canPresentPermissionUi = canPresentPermissionUi();
+        _permissionLossMessagePending = !canPresentPermissionUi;
+        handleMissingRecordingPermissions(canPresentPermissionUi);
+        if (canPresentPermissionUi) {
+            requestMissingPermissions();
+        }
     }
 
     // Start the logger service and bind the activity to the service
@@ -234,7 +249,9 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        _loggingService.startNewActivity();
+        if (!_loggingService.startNewActivity()) {
+            return;
+        }
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
         _wearableActionDrawer.getController().peekDrawer();
@@ -289,7 +306,9 @@ public class MainActivity extends FragmentActivity implements
         if (!ensureLoggingService()) {
             return;
         }
-        _loggingService.resumeActivity();
+        if (!_loggingService.resumeActivity()) {
+            return;
+        }
         _sensorFragment.startTImer();
         _fragmentManager.beginTransaction().replace(R.id.content_frame, _sensorFragment).commit();
         _wearableActionDrawer.getController().peekDrawer();
@@ -309,34 +328,38 @@ public class MainActivity extends FragmentActivity implements
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE && hasRequiredRecordingPermissions()) {
-            startAndBindServiceIfPermitted();
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            _permissionRequestInFlight = false;
+            if (hasRequiredRecordingPermissions()) {
+                startAndBindServiceIfPermitted();
+            } else {
+                handleMissingRecordingPermissions(true);
+            }
         }
     }
 
     private boolean hasRequiredRecordingPermissions() {
-        for (String permission :
-                RecordingPermissions.requiredForRecording(
-                        Build.VERSION.SDK_INT,
-                        getApplicationInfo().targetSdkVersion)) {
-            if (ContextCompat.checkSelfPermission(this, permission)
-                    != PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
-        }
-        return true;
+        return RecordingPermissions.allRequiredForRecordingGranted(this);
     }
 
     private boolean ensureLoggingService() {
+        if (!hasRequiredRecordingPermissions()) {
+            handleMissingRecordingPermissions(true);
+            requestMissingPermissions();
+            return false;
+        }
         if (_loggingService != null) {
             return true;
         }
-        requestMissingPermissions();
         startAndBindServiceIfPermitted();
         return false;
     }
 
     private void requestMissingPermissions() {
+        if (_permissionRequestInFlight) {
+            return;
+        }
+
         List<String> missingPermissions = new ArrayList<>();
         for (String permission :
                 RecordingPermissions.requestedOnStartup(
@@ -349,10 +372,81 @@ public class MainActivity extends FragmentActivity implements
         }
 
         if (!missingPermissions.isEmpty()) {
+            _permissionRequestInFlight = true;
             ActivityCompat.requestPermissions(
                     this,
                     missingPermissions.toArray(new String[0]),
                     PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    private void reconcileRecordingPermissions() {
+        if (hasRequiredRecordingPermissions()) {
+            startAndBindServiceIfPermitted();
+            return;
+        }
+
+        boolean requestAfterPermissionLoss = _permissionLossMessagePending;
+        _permissionLossMessagePending = false;
+        handleMissingRecordingPermissions(requestAfterPermissionLoss);
+        if (requestAfterPermissionLoss) {
+            requestMissingPermissions();
+        }
+    }
+
+    private void handleMissingRecordingPermissions(boolean showMessage) {
+        SharedData shared = SharedData.getInstance();
+        boolean recordingWasActive = shared.IsRecording || shared.IsPaused;
+        shared.IsRecording = false;
+        shared.IsPaused = false;
+
+        if (_sensorFragment != null) {
+            _sensorFragment.pauseTimer();
+            if (recordingWasActive) {
+                _sensorFragment.resetTimer();
+            }
+        }
+
+        stopLoggingServiceForMissingPermissions();
+        showStartScreenIfPossible();
+
+        if (showMessage) {
+            Toast.makeText(
+                    this,
+                    R.string.recording_permissions_required,
+                    Toast.LENGTH_SHORT)
+                    .show();
+        }
+    }
+
+    private void stopLoggingServiceForMissingPermissions() {
+        SportLoggerService.setServiceClient(null);
+        if (Session.isBoundToService() && _loggingServiceConnection != null) {
+            unbindService(_loggingServiceConnection);
+            Session.setBoundToService(false);
+        }
+        _loggingService = null;
+
+        if (_serviceIntent != null) {
+            stopService(_serviceIntent);
+            _serviceIntent = null;
+        }
+    }
+
+    private boolean canPresentPermissionUi() {
+        return !isFinishing()
+                && !isDestroyed()
+                && getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED);
+    }
+
+    private void showStartScreenIfPossible() {
+        if (_fragmentManager != null && !_fragmentManager.isStateSaved()) {
+            _fragmentManager.beginTransaction()
+                    .replace(R.id.content_frame, _startFragment)
+                    .commit();
+        }
+        if (_wearableActionDrawer != null) {
+            _wearableActionDrawer.getController().closeDrawer();
         }
     }
 

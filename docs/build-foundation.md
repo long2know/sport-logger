@@ -34,6 +34,52 @@ sensor validation. The manifest declares the future `READ_HEART_RATE` permission
 continues requesting `BODY_SENSORS` while target SDK is 35. The permission helper and tests define
 the target-36 transition without claiming that unperformed device validation.
 
+## Play publication versioning
+
+Google's Wear OS packaging documentation says that phone and watch APKs are uploaded and updated
+independently, and that a watch version code must be unique across all form factors. Google's
+multiple-APK rules additionally require the same package name and signing key, a different version
+code for every APK, and a higher code for the preferred APK when device coverage overlaps.
+
+The two application modules therefore share one user-visible product version name, `1.0`, but use
+separate monotonically increasing version-code ranges:
+
+| Artifact | Formula | Current sequence | Current code | Reserved codes |
+|---|---:|---:|---:|---:|
+| Phone | `1,000,000 + phoneReleaseSequence` | `1` | `1,000,001` | `1,000,001`–`1,999,999` |
+| Wear | `2,000,000 + wearReleaseSequence` | `1` | `2,000,001` | `2,000,001`–`2,999,999` |
+
+For a release, increment only the sequence for the artifact being published; never reuse or
+decrease either sequence. The disjoint ranges allow phone-only or watch-only fixes without
+renumbering the other artifact, and every Wear code remains higher than every phone code so a
+watch receives the Wear artifact if manifest coverage ever overlaps. A sequence must remain between
+`1` and `999,999`; exhausting a range requires a deliberate scheme migration before publishing.
+
+The root `verifyPublishedVersioning` task reads the application modules' configured Gradle metadata
+and fails on a package-name mismatch, product-version-name mismatch, equality, wrong range, wrong
+formula, reversed overlap preference, or a code above Google Play's `2,100,000,000` limit. Both
+application `preBuild` tasks depend on it, so normal assemblies also enforce the scheme.
+
+## Recording permission gate
+
+Android 10 (API 29) introduced the `ACTIVITY_RECOGNITION` runtime permission for physical-activity
+data. Android's privacy documentation identifies the step counter and step detector as the built-in
+sensors that require it, and the current step-counter guide requires the grant before sensor access.
+The Wear manifest now declares that permission and the existing startup request follows this matrix:
+
+- API 29 and newer require `ACTIVITY_RECOGNITION`; older devices do not request it.
+- Heart rate uses `BODY_SENSORS` unless both the device and target SDK are API 36 or newer, when it
+  uses `READ_HEART_RATE`.
+- Coarse and fine location remain required for recording.
+- `POST_NOTIFICATIONS` is requested on API 33 and newer but remains optional for recording.
+
+The activity starts and binds the recorder service only after every recording permission is granted.
+The service checks again before foreground startup and before starting or resuming a recording, and
+the sensor thread handles a permission-race `SecurityException`. Denial leaves the start screen in a
+non-recording state and explains that recording permissions are required. Revocation stops and
+unbinds the recorder, clears recording/paused state, returns to the start screen, and requests the
+missing permissions again instead of presenting a successful recording UI with disabled steps.
+
 ## Pinned direct dependencies
 
 | Dependency | Version | Modules |
@@ -84,11 +130,14 @@ foundation.
 6. Added notification permission/channel handling, immutable `PendingIntent` use, and explicit
    `health|location` foreground-service permissions, manifest types, and runtime types.
 7. Added the API 36 `READ_HEART_RATE` manifest foundation while retaining `BODY_SENSORS` runtime
-   behavior for the selected Wear target 35. Permission selection is target-aware, and
-   heart-rate and location permissions are granted before the recorder service starts.
+   behavior for the selected Wear target 35. Permission selection is target/API-aware, and
+   heart-rate, activity-recognition, and location permissions are granted before the recorder
+   service or its step sensors start.
 8. Replaced the removed `wearApp` packaging configuration. `mobile` and `wear` remain independently
    installable APKs with the unchanged application ID `com.long2know.sportlogger`.
-9. Adapted the legacy resource-ID switch for AGP's non-final resource IDs, restored colors formerly
+9. Added disjoint, independently incremented phone/Wear version-code ranges and wired their
+   publication invariant check into application builds.
+10. Adapted the legacy resource-ID switch for AGP's non-final resource IDs, restored colors formerly
    supplied transitively by the old Wear library, and corrected the SQLite open mode constant that
    blocked modern lint.
 
@@ -104,11 +153,12 @@ export ANDROID_HOME=/home/long2know/.local/share/android-sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
 ./gradlew --version --no-daemon
+./gradlew verifyPublishedVersioning :wear:testDebugUnitTest --no-daemon
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 201 actionable tasks. Six unit-test reports
-contained 10 tests with zero failures, errors, or skips. Lint completed with zero errors and 83
+The final clean local run completed successfully with 202 actionable tasks. Six unit-test reports
+contained 18 tests with zero failures, errors, or skips. Lint completed with zero errors and 83
 unsuppressed warnings (6 mobile, 72 Wear, and 5 utilities).
 
 The clean build produces:
@@ -145,6 +195,11 @@ Actions 6.2.0.
 - [Gradle 8.11.1 release notes](https://docs.gradle.org/8.11.1/release-notes.html)
 - [Gradle 8.11.1 distribution checksum](https://services.gradle.org/distributions/gradle-8.11.1-bin.zip.sha256)
 - [Google Play target API requirements](https://developer.android.com/google/play/requirements/target-sdk)
+- [Package and distribute Wear OS apps](https://developer.android.com/training/wearables/packaging)
+- [Google Play multiple-APK rules and version-code schemes](https://developer.android.com/google/play/publishing/multiple-apks)
+- [Set app version information](https://developer.android.com/studio/publish/versioning#appversioning)
+- [Android 10 physical activity recognition](https://developer.android.com/about/versions/10/privacy/changes#physical-activity-recognition)
+- [Read step-count data with SensorManager](https://developer.android.com/health-and-fitness/fitness/basic-app/read-step-count-data)
 - [Wear Health Services API 36 permission migration](https://developer.android.com/health-and-fitness/health-services/permissions)
 - [Android 14 foreground-service type requirements](https://developer.android.com/about/versions/14/changes/fgs-types-required)
 - [AndroidX AppCompat releases](https://developer.android.com/jetpack/androidx/releases/appcompat)

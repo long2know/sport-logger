@@ -30,6 +30,11 @@ public class SensorListener implements Runnable {
     private boolean _isStarted = true;
 
     private int _stepCount;
+    private final Runnable _permissionFailureCallback;
+
+    public SensorListener(Runnable permissionFailureCallback) {
+        _permissionFailureCallback = permissionFailureCallback;
+    }
 
     // Defines the code to run for this task.
     @Override
@@ -53,52 +58,81 @@ public class SensorListener implements Runnable {
                     }
                 } else {
                     if (!_isStarted) {
-                        startListeners();
-                        _isStarted = true;
+                        _isStarted = startListeners();
+                        if (!_isStarted) {
+                            Looper.myLooper().quit();
+                        }
                     }
                 }
             }
         };
 
-        startListeners();
-        Looper.loop();
+        _isStarted = startListeners();
+        if (_isStarted) {
+            Looper.loop();
+        }
+        WorkerHandler = null;
     }
 
-    public void startListeners() {
-        _sensorManager = ((SensorManager) Config.context.getSystemService(SENSOR_SERVICE));
-        _heartRateSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE);
-        _stepCountSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
-        _stepDetectSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
+    private boolean startListeners() {
+        try {
+            _sensorManager = ((SensorManager) Config.context.getSystemService(SENSOR_SERVICE));
+            _heartRateSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE);
+            _stepCountSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+            _stepDetectSensor = _sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
 
-        _eventListener = new SensorEventListener() {
-            @Override
-            public void onSensorChanged(SensorEvent event) {
-                Log.d(TAG, event.toString());
+            _eventListener = new SensorEventListener() {
+                @Override
+                public void onSensorChanged(SensorEvent event) {
+                    Log.d(TAG, event.toString());
 
-                SharedData singleton = SharedData.getInstance();
-                int sensorType = event.sensor.getType();
+                    SharedData singleton = SharedData.getInstance();
+                    int sensorType = event.sensor.getType();
 
-                if (sensorType == Sensor.TYPE_STEP_DETECTOR) {
-                    _stepCount++;
-                    singleton.setSteps(_stepCount);
+                    if (sensorType == Sensor.TYPE_STEP_DETECTOR) {
+                        _stepCount++;
+                        singleton.setSteps(_stepCount);
+                    }
+
+                    if (sensorType == Sensor.TYPE_HEART_RATE) {
+                        singleton.setHeartRate(event.values[0]);
+                    }
+
+                    Message completeMessage = _handler.obtainMessage(1, sensorType, 0, event);
+                    completeMessage.sendToTarget();
                 }
 
-                if (sensorType == Sensor.TYPE_HEART_RATE) {
-                    singleton.setHeartRate(event.values[0]);
+                @Override
+                public void onAccuracyChanged(Sensor sensor, int accuracy) {
+                    Log.d("MY_APP", sensor.toString() + " - " + accuracy);
                 }
+            };
 
-                Message completeMessage = _handler.obtainMessage(1, sensorType, 0, event);
-                completeMessage.sendToTarget();
+            if (_heartRateSensor != null) {
+                _sensorManager.registerListener(
+                        _eventListener, _heartRateSensor, SensorManager.SENSOR_DELAY_FASTEST);
             }
 
-            @Override
-            public void onAccuracyChanged(Sensor sensor, int accuracy) {
-                Log.d("MY_APP", sensor.toString() + " - " + accuracy);
+            if (_stepCountSensor != null) {
+                _sensorManager.registerListener(
+                        _eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
+                _sensorManager.unregisterListener(_eventListener, _stepCountSensor);
+                _sensorManager.registerListener(
+                        _eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
             }
-        };
 
-        if (_heartRateSensor != null) {
-            _sensorManager.registerListener(_eventListener, _heartRateSensor, SensorManager.SENSOR_DELAY_FASTEST);
+            if (_stepDetectSensor != null) {
+                _sensorManager.registerListener(
+                        _eventListener, _stepDetectSensor, SensorManager.SENSOR_DELAY_GAME);
+            }
+            return true;
+        } catch (SecurityException exception) {
+            Log.e(TAG, "Recording sensor permission was denied or revoked.", exception);
+            stopListeners();
+            if (_permissionFailureCallback != null) {
+                _permissionFailureCallback.run();
+            }
+            return false;
         }
 
 //        // We can force reading at specific intervals like this
@@ -129,28 +163,18 @@ public class SensorListener implements Runnable {
 //            Log.d(TAG, "No Heartrate Sensor found");
 //        }
 
-        if (_stepCountSensor != null) {
-            // Try registering and unregistering to clear the count
-            _sensorManager.registerListener(_eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
-            _sensorManager.unregisterListener(_eventListener, _stepCountSensor);
-            _sensorManager.registerListener(_eventListener, _stepCountSensor, SensorManager.SENSOR_DELAY_GAME);
-        }
-
-        if (_stepDetectSensor != null) {
-            _sensorManager.registerListener(_eventListener, _stepDetectSensor, SensorManager.SENSOR_DELAY_GAME);
-        }
     }
 
     public void stopListeners() {
-        if (_heartRateSensor != null) {
+        if (_sensorManager != null && _eventListener != null && _heartRateSensor != null) {
             _sensorManager.unregisterListener(_eventListener, _heartRateSensor);
         }
 
-        if (_stepCountSensor != null) {
+        if (_sensorManager != null && _eventListener != null && _stepCountSensor != null) {
             _sensorManager.unregisterListener(_eventListener, _stepCountSensor);
         }
 
-        if (_stepDetectSensor != null) {
+        if (_sensorManager != null && _eventListener != null && _stepDetectSensor != null) {
             _sensorManager.unregisterListener(_eventListener, _stepDetectSensor);
         }
 
