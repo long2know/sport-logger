@@ -24,14 +24,25 @@ contract.
 - **Versioning:** there is no `SQLiteOpenHelper`, Room schema, upgrade callback,
   schema identity, or assigned `PRAGMA user_version`. Runtime SQLite therefore
   reports `user_version = 0`.
+- **Android platform metadata:** each writable framework open registers localized
+  collators, creates `android_metadata (locale TEXT)` when needed, and leaves one
+  row containing the device locale. This table is platform-managed metadata, not
+  legacy business data. The source opens normally (without
+  `NO_LOCALIZED_COLLATORS`), so validation must permit and verify the table while
+  excluding it from activity/point counts and logical data checksums. See AOSP
+  Android 9
+  [`SQLiteConnection.setLocaleFromConfiguration()`](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r46/core/java/android/database/sqlite/SQLiteConnection.java#403).
 - **Initialization:** `initDatabase()` issues two independent `CREATE TABLE IF
   NOT EXISTS` statements and closes that one handle
   (`SqlLogger.java:106-119`). There is no transaction around the pair and no
   validation that an already-existing table has the expected shape.
-- **Recording start:** the service schedules a `SqlLogger` immediately, then
-  initializes the tables, then creates the activity row and publishes its ID
-  (`SportLoggerService.java:162-170`). The zero-delay writer can therefore race
-  table creation or write with the default `ActivityId == 0`.
+- **Recording start:** constructing the scheduled `SqlLogger` first opens or
+  creates the database (`SqlLogger.java:53-56`), then the service schedules it,
+  initializes the two tables, creates the activity row, and publishes its ID
+  (`SportLoggerService.java:162-170`). Deterministic source-reachable snapshots
+  therefore include: only `android_metadata`, `android_metadata` plus
+  `ACTIVITY`, and a complete schema containing a `GPS_POINTS` row whose
+  `ACTIVITYID == 0`.
 - **During recording:** a scheduled writer snapshots the latest shared
   location/heart-rate values once per second
   (`SportLoggerService.java:164-165`, `SqlLogger.java:65-103`). It is not one
@@ -51,10 +62,24 @@ contract.
 
 Room cannot auto-migrate this unversioned raw file. Migration must run on the
 watch, open this file read-only, and write a separately named target database.
+Preflight must report `no_business_tables` and `partial_business_schema` as
+blocked schema states. A complete schema with zero rows is instead valid empty
+data and must report ready.
 
 ## Runtime application DDL
 
-The generator executes these source statements verbatim:
+Before application DDL, Android creates this platform table and maintains its
+single locale row:
+
+```sql
+CREATE TABLE IF NOT EXISTS android_metadata (locale TEXT);
+```
+
+The committed fixtures use deterministic locale `en_US`; production locale text
+is device-dependent and must not become a source-database identity or migrated
+business row.
+
+The generator then executes these source statements verbatim:
 
 ```sql
 CREATE TABLE IF NOT EXISTS ACTIVITY
@@ -86,7 +111,8 @@ Only `ID` is `NOT NULL`; every other column has no explicit default and
 therefore defaults to SQL `NULL`. These are non-`STRICT` SQLite tables, so type
 affinity is not a constraint: for example, text can physically exist in a
 `REAL` column. `AUTOINCREMENT` creates SQLite's internal `sqlite_sequence`
-metadata, which is not application data.
+metadata, which is not application data. Neither `android_metadata` nor
+`sqlite_sequence` is a legacy business table.
 
 ### `ACTIVITY`
 
@@ -131,7 +157,9 @@ There is no declared foreign key, index, uniqueness constraint, cascade, or
 check constraint. Orphans are legal SQLite rows and are source-reachable
 through the start/discard races. A migration must count and report them rather
 than silently attach or drop them. Null `ACTIVITYID` is malformed ownership,
-not the same case as a non-null missing parent.
+not the same case as a non-null missing parent. The default non-null value `0`
+is a distinct, source-reachable missing-parent case covered by the startup
+fixture.
 
 Legacy reads specify no `ORDER BY` (`SqlLogger.java:187,233,320`). Extraction
 must explicitly order activities and points by their 64-bit `ID`; timestamp
@@ -167,8 +195,8 @@ current offset again.
 | Nullable numeric columns are loaded into Java primitives without checking `Cursor.isNull()`. | `SqlLogger.java:213-215,348-354`; model fields are primitive doubles | SQL `NULL` presence is lost. Read nullability before numeric conversion. |
 | Parse errors are ignored. | `SqlLogger.java:205-211,253-259,344-346` | Invalid timestamps can silently become null model dates; reject/report them explicitly. |
 | Reads have no stable ordering. | `SqlLogger.java:187,233,320` | Checksums and ETL iteration must use explicit `ORDER BY ID`. |
-| SQLite 64-bit IDs are read/cast to Java `int`. | `SqlLogger.java:151,173-174,341-342,376-377` | Use 64-bit legacy keys. The precision fixture includes `2147483648`. |
-| The writer is scheduled before schema/activity creation. | `SportLoggerService.java:162-170` | Handle missing/partial schema and points whose owner is `0` or absent. |
+| SQLite 64-bit IDs are read/cast to Java `int`. | `SqlLogger.java:151,173-174,341-342,376-377` | Use 64-bit legacy keys. The precision fixture includes exact integer `9007199254740993`, above both Java `int` and JSON's interoperable `2^53` safe range. |
+| The database is opened and the writer is scheduled before schema/activity creation. | `SqlLogger.java:53-56`; `SportLoggerService.java:162-170` | Distinguish Android-metadata-only, partial application schema, valid empty complete schema, and points whose owner is `0`. |
 | Stop does not finalize the activity summary. | `SportLoggerService.java:175-195` | A row with only `GMTSTART` is valid source-reachable partial data, not corruption. |
 | Stop asynchronously shuts down the writer while the UI immediately queries the database. | `SportLoggerService.java:175-186`; `wear/.../MainActivity.java:237-255` | Extract from a quiescent/copied database or a consistent read transaction; do not treat the transmitted model as authoritative. |
 | Discard is asynchronous and its two deletes are not transactional. | `SportLoggerService.java:226-244`; `SqlLogger.java:297-310` | Count/report orphans and make target writes idempotent. |
@@ -185,27 +213,37 @@ counts, per-activity point counts, orphan counts, strict timestamp ranges,
 representative exact/epsilon values, schema checksums, and logical data
 checksums. Checksums do **not** hash SQLite file bytes. They hash tables in
 `ACTIVITY`, `GPS_POINTS` order, rows by `ID`, and type-tagged column values;
-`REAL` values use exact IEEE-754 `float.hex()` representations.
+`REAL` values use exact IEEE-754 `float.hex()` representations. Platform
+metadata is verified separately and excluded from those business-data
+checksums.
 
 The committed cases are:
 
 | Fixture | Purpose |
 |---|---|
-| `empty.db` | Exact schema with no rows. |
+| `empty.db` | Complete schema with no rows: valid empty data, ready for migration. |
+| `startup_no_business_tables.db` | Android metadata only, before either application table exists; migration is blocked. |
+| `startup_activity_only.db` | Snapshot between the two independent application `CREATE TABLE` statements; migration is blocked as partial schema. |
+| `startup_activity_id_zero.db` | Complete schema with a startup point owned by default `ACTIVITYID=0`; reported as an orphan. |
 | `representative.db` | Multi-activity data, multiple points, optional nulls, zero/default coordinates, and a normal partial live row. |
-| `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and 64-bit IDs. |
+| `precision.db` | Fractional coordinates/altitude/accuracy/speed/bearing/heart rate/distance, leap day, and exact 64-bit ID `9007199254740993`. |
 | `orphan.db` | One valid orphan alongside a valid parent/point control. |
 | `malformed_null_partial.db` | Strictly invalid dates, text in `REAL` columns, invalid ranges, null ownership, and a source-reachable partial row. |
-| `interrupted_idempotency.db` | Partial first-pass plus deterministic duplicate-free rerun simulation. |
+| `interrupted_idempotency.db` | Actual insert-attempt accounting for interruption after a session row and after a point prefix, full replay, same-run duplicates, prevented duplicate attempts, computed final duplicate-row counts, and exact final equality. |
 
 `expected/*.json` is a test interchange oracle, not a proposed production
 schema. Every physical row is accounted for as a session, point, orphan, or
 rejected row. Fixture deterministic IDs are UUIDv5 values derived from the
 manifest's explicit database identity, table name, and 64-bit legacy ID.
+Canonical JSON compares integer fields as exact integers (including values above
+`2^53`); epsilon comparison applies only when the expected value is a JSON
+floating-point number.
 
 The legacy file has no intrinsic database UUID. **Tank must define the stable
 production source-database/install identity before production ETL is frozen**;
-using the row ID alone can collide across watches or restored databases.
+using the row ID alone can collide across watches or restored databases. This
+gate remains intentionally open; the fixture-only synthetic identities and
+source-backed filename do not invent a production install identity.
 
 Run from the repository root:
 
@@ -215,8 +253,9 @@ python3 tools/legacy-fixtures/legacy_fixtures.py verify
 python3 -m unittest discover -s tools/legacy-fixtures -p 'test_*.py' -v
 ```
 
-The verifier fault-injects integer truncation, swapped/missing fields,
-timestamp drift, duplicate deterministic IDs, orphan mishandling, and
-interrupted-rerun identity drift. See
+The verifier fault-injects integer truncation, one-unit integer drift above
+`2^53`, swapped/missing fields, timestamp drift, duplicate deterministic IDs,
+orphan mishandling, interrupted-rerun identity drift, and a missing replay row.
+See
 `tools/legacy-fixtures/README.md` for candidate-output and large-fixture
 commands.

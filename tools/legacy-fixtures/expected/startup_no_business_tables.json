@@ -1,22 +1,22 @@
 {
-  "database_identity": "synthetic:sport-logger:legacy:empty:v1",
+  "database_identity": "synthetic:sport-logger:legacy:startup_no_business_tables:v1",
   "diagnostics": {
     "data_state": "empty",
     "schema": {
-      "business_tables_present": [
+      "business_tables_present": [],
+      "migration_readiness": "blocked",
+      "missing_business_tables": [
         "ACTIVITY",
         "GPS_POINTS"
       ],
-      "migration_readiness": "ready",
-      "missing_business_tables": [],
       "platform_tables_present": [
         "android_metadata"
       ],
-      "state": "complete",
+      "state": "no_business_tables",
       "unexpected_tables": []
     }
   },
-  "fixture": "empty",
+  "fixture": "startup_no_business_tables",
   "format_version": 1,
   "idempotency": null,
   "orphan_track_points": [],

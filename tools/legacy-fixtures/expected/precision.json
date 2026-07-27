@@ -1,5 +1,21 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:precision:v1",
+  "diagnostics": {
+    "data_state": "contains_business_rows",
+    "schema": {
+      "business_tables_present": [
+        "ACTIVITY",
+        "GPS_POINTS"
+      ],
+      "migration_readiness": "ready",
+      "missing_business_tables": [],
+      "platform_tables_present": [
+        "android_metadata"
+      ],
+      "state": "complete",
+      "unexpected_tables": []
+    }
+  },
   "fixture": "precision",
   "format_version": 1,
   "idempotency": null,
@@ -20,16 +36,16 @@
       "time": 987.654321098765
     },
     {
-      "description": "Exercises SQLite INTEGER values above Java int range.",
-      "deterministic_id": "e7f40c3b-bb5c-5d77-a307-803767b38cc9",
+      "description": "Exercises SQLite INTEGER values above Java int and JSON safe ranges.",
+      "deterministic_id": "b7c51a49-7c69-520f-b562-fd2d4e5bbd86",
       "distance": 1.23456789e-07,
       "gmt_end": "20240301000001",
       "gmt_start": "20240301000000",
-      "legacy_id": 2147483648,
+      "legacy_id": 9007199254740993,
       "name": "Synthetic 64-bit ID Session",
       "pace": 1.234567889e-07,
       "partial": false,
-      "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:2147483648",
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:ACTIVITY:9007199254740993",
       "time": 1.000000000000001
     }
   ],
@@ -61,17 +77,17 @@
     },
     {
       "accuracy": 1.00000011920929,
-      "activity_legacy_id": 2147483648,
+      "activity_legacy_id": 9007199254740993,
       "altitude": 8848.860123456,
       "bearing": 0.0001220703125,
-      "deterministic_id": "b128817d-69d7-591c-a051-566651aeade9",
+      "deterministic_id": "23a0b0f7-bfb7-5464-9b58-f5c13d3e8d75",
       "gmt_timestamp": "20240301000000",
       "heart_rate": 63.875,
       "latitude": -45.1234567890123,
-      "legacy_id": 2147483648,
+      "legacy_id": 9007199254740993,
       "longitude": 170.9876543210987,
-      "session_id": "e7f40c3b-bb5c-5d77-a307-803767b38cc9",
-      "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:2147483648",
+      "session_id": "b7c51a49-7c69-520f-b562-fd2d4e5bbd86",
+      "source_key": "synthetic:sport-logger:legacy:precision:v1:GPS_POINTS:9007199254740993",
       "speed": 0.0009765625
     }
   ]

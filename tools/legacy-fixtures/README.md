@@ -12,7 +12,7 @@ From the repository root:
 python3 tools/legacy-fixtures/legacy_fixtures.py generate
 
 # Verify schema, rows, logical checksums, expected outputs, idempotency, and
-# all seven fault-injection detectors.
+# all nine fault-injection detectors.
 python3 tools/legacy-fixtures/legacy_fixtures.py verify
 
 # Run the standard-library unit tests.
@@ -25,14 +25,20 @@ not required.
 
 ## Layout
 
-- `fixtures/*.db` — SQLite inputs using the exact application DDL.
+- `fixtures/*.db` — nine SQLite inputs using Android's platform metadata table
+  plus the source-reachable application schema state.
 - `expected/*.json` — canonical test outputs. These classify every source row
-  as a session, attached point, orphan, or rejected row.
+  as a session, attached point, orphan, or rejected row, and distinguish valid
+  empty data from blocked missing/partial schema.
 - `manifest.json` — expected counts, timestamp ranges, representative values,
   idempotency results, and logical checksums.
 - `test_legacy_fixtures.py` — regression and fault-injection tests.
 
 The JSON output is a test interchange format, not a production Room schema.
+Integer comparison is exact above `2^53`; epsilon comparison applies only to
+JSON floating-point values. The idempotency oracle counts every attempted,
+inserted, and prevented duplicate insert, computes final duplicate rows, and
+requires exact final-state equality.
 To validate an ETL test export, emit matching files named `<fixture>.json` and
 run:
 

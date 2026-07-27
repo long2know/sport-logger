@@ -1,0 +1,53 @@
+{
+  "database_identity": "synthetic:sport-logger:legacy:startup_activity_id_zero:v1",
+  "diagnostics": {
+    "data_state": "contains_business_rows",
+    "schema": {
+      "business_tables_present": [
+        "ACTIVITY",
+        "GPS_POINTS"
+      ],
+      "migration_readiness": "ready",
+      "missing_business_tables": [],
+      "platform_tables_present": [
+        "android_metadata"
+      ],
+      "state": "complete",
+      "unexpected_tables": []
+    }
+  },
+  "fixture": "startup_activity_id_zero",
+  "format_version": 1,
+  "idempotency": null,
+  "orphan_track_points": [
+    {
+      "accuracy": null,
+      "activity_legacy_id": 0,
+      "altitude": null,
+      "bearing": null,
+      "deterministic_id": "0f765772-27c6-5061-8234-908b7be2bb63",
+      "gmt_timestamp": "20240101000000",
+      "heart_rate": 0.0,
+      "latitude": 0.0,
+      "legacy_id": 1,
+      "longitude": 0.0,
+      "reason": "missing_activity",
+      "session_id": null,
+      "source_key": "synthetic:sport-logger:legacy:startup_activity_id_zero:v1:GPS_POINTS:1",
+      "speed": null
+    }
+  ],
+  "rejected_rows": [],
+  "sessions": [],
+  "summary": {
+    "orphan_track_points": 1,
+    "partial_sessions": 0,
+    "rejected_activity_rows": 0,
+    "rejected_track_point_rows": 0,
+    "sessions": 0,
+    "source_activity_rows": 0,
+    "source_track_point_rows": 1,
+    "track_points": 0
+  },
+  "track_points": []
+}

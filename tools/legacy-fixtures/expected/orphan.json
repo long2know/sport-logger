@@ -1,5 +1,21 @@
 {
   "database_identity": "synthetic:sport-logger:legacy:orphan:v1",
+  "diagnostics": {
+    "data_state": "contains_business_rows",
+    "schema": {
+      "business_tables_present": [
+        "ACTIVITY",
+        "GPS_POINTS"
+      ],
+      "migration_readiness": "ready",
+      "missing_business_tables": [],
+      "platform_tables_present": [
+        "android_metadata"
+      ],
+      "state": "complete",
+      "unexpected_tables": []
+    }
+  },
   "fixture": "orphan",
   "format_version": 1,
   "idempotency": null,

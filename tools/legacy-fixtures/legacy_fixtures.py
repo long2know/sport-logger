@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Seque
 TOOL_ROOT = Path(__file__).resolve().parent
 FORMAT_VERSION = 1
 DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW"
+ANDROID_METADATA_LOCALE = "en_US"
 FIXTURE_NAMESPACE = uuid.uuid5(
     uuid.NAMESPACE_URL,
     "https://github.com/long2know/sport-logger/legacy-fixtures/v1",
@@ -54,7 +55,12 @@ TABLE_COLUMNS = {
     "ACTIVITY": ACTIVITY_COLUMNS,
     "GPS_POINTS": GPS_POINT_COLUMNS,
 }
+BUSINESS_TABLES = ("ACTIVITY", "GPS_POINTS")
+PLATFORM_TABLES = ("android_metadata",)
 
+CREATE_ANDROID_METADATA_SQL = (
+    "CREATE TABLE IF NOT EXISTS android_metadata (locale TEXT);"
+)
 CREATE_ACTIVITY_SQL = (
     "CREATE TABLE IF NOT EXISTS ACTIVITY "
     "(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, GMTSTART VARCHAR, "
@@ -69,6 +75,9 @@ CREATE_GPS_POINTS_SQL = (
 )
 
 EXPECTED_TABLE_INFO = {
+    "android_metadata": (
+        (0, "locale", "TEXT", 0, None, 0),
+    ),
     "ACTIVITY": (
         (0, "ID", "INTEGER", 1, None, 1),
         (1, "GMTSTART", "VARCHAR", 0, None, 0),
@@ -104,8 +113,9 @@ class FixtureCase:
     description: str
     activities: Tuple[Tuple[Any, ...], ...]
     track_points: Tuple[Tuple[Any, ...], ...]
+    business_tables: Tuple[str, ...] = BUSINESS_TABLES
     representative_values: Tuple[Mapping[str, Any], ...] = ()
-    interrupt_after_sessions: Optional[int] = None
+    exercise_idempotency: bool = False
 
     @property
     def database_identity(self) -> str:
@@ -157,9 +167,63 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
     return (
         FixtureCase(
             key="empty",
-            description="Schema-only database with no activities or track points.",
+            description=(
+                "Complete Android/application schema with no activities or track "
+                "points; this is valid empty data."
+            ),
             activities=(),
             track_points=(),
+        ),
+        FixtureCase(
+            key="startup_no_business_tables",
+            description=(
+                "Startup snapshot after Android created platform metadata but before "
+                "either application table was created."
+            ),
+            activities=(),
+            track_points=(),
+            business_tables=(),
+        ),
+        FixtureCase(
+            key="startup_activity_only",
+            description=(
+                "Startup snapshot interrupted between the independent ACTIVITY and "
+                "GPS_POINTS CREATE TABLE statements."
+            ),
+            activities=(),
+            track_points=(),
+            business_tables=("ACTIVITY",),
+        ),
+        FixtureCase(
+            key="startup_activity_id_zero",
+            description=(
+                "Complete schema with a scheduled startup point written before the "
+                "new activity ID replaced the shared default value 0."
+            ),
+            activities=(),
+            track_points=(
+                point(
+                    1,
+                    0,
+                    "20240101000000",
+                    0.0,
+                    0.0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0.0,
+                ),
+            ),
+            representative_values=(
+                {
+                    "table": "GPS_POINTS",
+                    "legacy_id": 1,
+                    "column": "ACTIVITYID",
+                    "expected": 0,
+                    "comparison": exact,
+                },
+            ),
         ),
         FixtureCase(
             key="representative",
@@ -301,7 +365,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
             key="precision",
             description=(
                 "Precision-sensitive REAL values, leap-day timestamps, fractional "
-                "heart rate, and IDs beyond signed 32-bit range."
+                "heart rate, and an exact 64-bit ID above the JSON safe-integer range."
             ),
             activities=(
                 activity(
@@ -315,11 +379,11 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     4.3210987654321,
                 ),
                 activity(
-                    2147483648,
+                    9007199254740993,
                     "20240301000000",
                     "20240301000001",
                     "Synthetic 64-bit ID Session",
-                    "Exercises SQLite INTEGER values above Java int range.",
+                    "Exercises SQLite INTEGER values above Java int and JSON safe ranges.",
                     0.000000123456789,
                     1.000000000000001,
                     0.0000001234567889,
@@ -339,8 +403,8 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     147.625,
                 ),
                 point(
-                    2147483648,
-                    2147483648,
+                    9007199254740993,
+                    9007199254740993,
                     "20240301000000",
                     -45.1234567890123,
                     170.9876543210987,
@@ -362,9 +426,9 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                 },
                 {
                     "table": "ACTIVITY",
-                    "legacy_id": 2147483648,
+                    "legacy_id": 9007199254740993,
                     "column": "ID",
-                    "expected": 2147483648,
+                    "expected": 9007199254740993,
                     "comparison": exact,
                 },
                 {
@@ -614,7 +678,7 @@ def fixture_cases() -> Tuple[FixtureCase, ...]:
                     "comparison": exact,
                 },
             ),
-            interrupt_after_sessions=1,
+            exercise_idempotency=True,
         ),
     )
 
@@ -687,9 +751,26 @@ def remove_database_artifacts(database: Path) -> None:
             path.unlink()
 
 
-def create_schema(connection: sqlite3.Connection) -> None:
-    connection.execute(CREATE_ACTIVITY_SQL)
-    connection.execute(CREATE_GPS_POINTS_SQL)
+def create_schema(
+    connection: sqlite3.Connection,
+    business_tables: Sequence[str] = BUSINESS_TABLES,
+) -> None:
+    requested_tables = set(business_tables)
+    unknown_tables = requested_tables - set(BUSINESS_TABLES)
+    if unknown_tables:
+        raise FixtureValidationError(
+            "Unknown business tables requested: {}".format(sorted(unknown_tables))
+        )
+    connection.execute(CREATE_ANDROID_METADATA_SQL)
+    connection.execute("DELETE FROM android_metadata")
+    connection.execute(
+        "INSERT INTO android_metadata (locale) VALUES (?)",
+        (ANDROID_METADATA_LOCALE,),
+    )
+    if "ACTIVITY" in requested_tables:
+        connection.execute(CREATE_ACTIVITY_SQL)
+    if "GPS_POINTS" in requested_tables:
+        connection.execute(CREATE_GPS_POINTS_SQL)
     connection.execute("PRAGMA user_version = 0")
 
 
@@ -697,7 +778,17 @@ def create_database(
     database: Path,
     activities: Sequence[Sequence[Any]],
     track_points: Sequence[Sequence[Any]],
+    business_tables: Sequence[str] = BUSINESS_TABLES,
 ) -> None:
+    requested_tables = set(business_tables)
+    if activities and "ACTIVITY" not in requested_tables:
+        raise FixtureValidationError(
+            "Cannot insert ACTIVITY rows when the ACTIVITY table is absent"
+        )
+    if track_points and "GPS_POINTS" not in requested_tables:
+        raise FixtureValidationError(
+            "Cannot insert GPS_POINTS rows when the GPS_POINTS table is absent"
+        )
     database.parent.mkdir(parents=True, exist_ok=True)
     remove_database_artifacts(database)
     connection = sqlite3.connect(str(database))
@@ -706,21 +797,23 @@ def create_database(
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA foreign_keys = OFF")
         with connection:
-            create_schema(connection)
-            connection.executemany(
-                "INSERT INTO ACTIVITY ({}) VALUES ({})".format(
-                    ", ".join(ACTIVITY_COLUMNS),
-                    ", ".join("?" for _ in ACTIVITY_COLUMNS),
-                ),
-                activities,
-            )
-            connection.executemany(
-                "INSERT INTO GPS_POINTS ({}) VALUES ({})".format(
-                    ", ".join(GPS_POINT_COLUMNS),
-                    ", ".join("?" for _ in GPS_POINT_COLUMNS),
-                ),
-                track_points,
-            )
+            create_schema(connection, business_tables)
+            if "ACTIVITY" in requested_tables:
+                connection.executemany(
+                    "INSERT INTO ACTIVITY ({}) VALUES ({})".format(
+                        ", ".join(ACTIVITY_COLUMNS),
+                        ", ".join("?" for _ in ACTIVITY_COLUMNS),
+                    ),
+                    activities,
+                )
+            if "GPS_POINTS" in requested_tables:
+                connection.executemany(
+                    "INSERT INTO GPS_POINTS ({}) VALUES ({})".format(
+                        ", ".join(GPS_POINT_COLUMNS),
+                        ", ".join("?" for _ in GPS_POINT_COLUMNS),
+                    ),
+                    track_points,
+                )
         connection.execute("VACUUM")
     finally:
         connection.close()
@@ -730,11 +823,25 @@ def table_info(connection: sqlite3.Connection, table: str) -> Tuple[Tuple[Any, .
     return tuple(tuple(row) for row in connection.execute('PRAGMA table_info("{}")'.format(table)))
 
 
+def user_table_names(connection: sqlite3.Connection) -> Tuple[str, ...]:
+    return tuple(
+        sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        )
+    )
+
+
 def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
+    present_tables = set(user_table_names(connection))
     return {
         "tables": {
             table: [list(row) for row in table_info(connection, table)]
-            for table in ("ACTIVITY", "GPS_POINTS")
+            for table in PLATFORM_TABLES + BUSINESS_TABLES
+            if table in present_tables
         },
         "foreign_keys": {
             table: [
@@ -743,28 +850,91 @@ def schema_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
                     'PRAGMA foreign_key_list("{}")'.format(table)
                 )
             ]
-            for table in ("ACTIVITY", "GPS_POINTS")
+            for table in BUSINESS_TABLES
+            if table in present_tables
         },
         "user_version": connection.execute("PRAGMA user_version").fetchone()[0],
     }
 
 
-def validate_schema(connection: sqlite3.Connection, label: str) -> str:
-    user_tables = {
-        row[0]
+def platform_metadata_payload(connection: sqlite3.Connection) -> Mapping[str, Any]:
+    rows = [
+        {"locale": row[0], "storage_type": row[1]}
         for row in connection.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            "SELECT locale, typeof(locale) FROM android_metadata ORDER BY rowid"
         )
+    ]
+    return {
+        "android_metadata": {
+            "business_data": False,
+            "rows": rows,
+        }
     }
-    expected_tables = {"ACTIVITY", "GPS_POINTS"}
+
+
+def schema_diagnostics(connection: sqlite3.Connection) -> Mapping[str, Any]:
+    user_tables = set(user_table_names(connection))
+    business_tables_present = [
+        table for table in BUSINESS_TABLES if table in user_tables
+    ]
+    missing_business_tables = [
+        table for table in BUSINESS_TABLES if table not in user_tables
+    ]
+    if not missing_business_tables:
+        state = "complete"
+    elif not business_tables_present:
+        state = "no_business_tables"
+    else:
+        state = "partial_business_schema"
+    return {
+        "state": state,
+        "migration_readiness": "ready" if state == "complete" else "blocked",
+        "business_tables_present": business_tables_present,
+        "missing_business_tables": missing_business_tables,
+        "platform_tables_present": [
+            table for table in PLATFORM_TABLES if table in user_tables
+        ],
+        "unexpected_tables": sorted(
+            user_tables - set(BUSINESS_TABLES) - set(PLATFORM_TABLES)
+        ),
+    }
+
+
+def validate_schema(
+    connection: sqlite3.Connection,
+    label: str,
+    expected_business_tables: Sequence[str] = BUSINESS_TABLES,
+) -> str:
+    expected_business_table_set = set(expected_business_tables)
+    unknown_expected_tables = expected_business_table_set - set(BUSINESS_TABLES)
+    if unknown_expected_tables:
+        raise FixtureValidationError(
+            "{} has unknown expected business tables {}".format(
+                label, sorted(unknown_expected_tables)
+            )
+        )
+    user_tables = set(user_table_names(connection))
+    expected_tables = expected_business_table_set | set(PLATFORM_TABLES)
     if user_tables != expected_tables:
         raise FixtureValidationError(
             "{} tables mismatch: expected {}, found {}".format(
                 label, sorted(expected_tables), sorted(user_tables)
             )
         )
-    for table, expected in EXPECTED_TABLE_INFO.items():
+    metadata_rows = tuple(
+        connection.execute(
+            "SELECT locale, typeof(locale) FROM android_metadata ORDER BY rowid"
+        )
+    )
+    if len(metadata_rows) != 1 or metadata_rows[0][1] != "text":
+        raise FixtureValidationError(
+            "{} android_metadata must contain exactly one TEXT locale row; "
+            "found {!r}".format(label, metadata_rows)
+        )
+    for table in PLATFORM_TABLES + BUSINESS_TABLES:
+        if table not in expected_tables:
+            continue
+        expected = EXPECTED_TABLE_INFO[table]
         actual = table_info(connection, table)
         if actual != expected:
             raise FixtureValidationError(
@@ -772,10 +942,10 @@ def validate_schema(connection: sqlite3.Connection, label: str) -> str:
                     label, table, expected, actual
                 )
             )
-        foreign_keys = tuple(
-            connection.execute('PRAGMA foreign_key_list("{}")'.format(table))
-        )
-        if foreign_keys:
+        foreign_keys = tuple(connection.execute(
+            'PRAGMA foreign_key_list("{}")'.format(table)
+        ))
+        if table in BUSINESS_TABLES and foreign_keys:
             raise FixtureValidationError(
                 "{} unexpectedly declares foreign keys on {}".format(label, table)
             )
@@ -801,9 +971,14 @@ def read_table_rows(
 def read_all_rows(
     connection: sqlite3.Connection,
 ) -> Mapping[str, Tuple[Tuple[Any, ...], ...]]:
+    present_tables = set(user_table_names(connection))
     return {
-        table: read_table_rows(connection, table)
-        for table in ("ACTIVITY", "GPS_POINTS")
+        table: (
+            read_table_rows(connection, table)
+            if table in present_tables
+            else ()
+        )
+        for table in BUSINESS_TABLES
     }
 
 
@@ -831,15 +1006,27 @@ def table_logical_checksum(
     return hasher.hexdigest()
 
 
-def logical_checksums(connection: sqlite3.Connection) -> Mapping[str, str]:
+def logical_checksums(
+    connection: sqlite3.Connection,
+) -> Mapping[str, Optional[str]]:
+    present_tables = set(user_table_names(connection))
     table_checksums = {
-        table: table_logical_checksum(connection, table)
-        for table in ("ACTIVITY", "GPS_POINTS")
+        table: (
+            table_logical_checksum(connection, table)
+            if table in present_tables
+            else None
+        )
+        for table in BUSINESS_TABLES
     }
     database_hasher = hashlib.sha256()
-    for table in ("ACTIVITY", "GPS_POINTS"):
+    for table in BUSINESS_TABLES:
         database_hasher.update(
-            "{}:{}\n".format(table, table_checksums[table]).encode("ascii")
+            "{}:{}\n".format(
+                table,
+                table_checksums[table]
+                if table_checksums[table] is not None
+                else "MISSING",
+            ).encode("ascii")
         )
     return {
         "activity": table_checksums["ACTIVITY"],
@@ -1037,6 +1224,7 @@ def rejected_row(
 def build_canonical_output(
     case: FixtureCase,
     rows_by_table: Mapping[str, Sequence[Sequence[Any]]],
+    source_schema_diagnostics: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     activity_rows = [
         row_mapping(ACTIVITY_COLUMNS, row) for row in rows_by_table["ACTIVITY"]
@@ -1103,6 +1291,14 @@ def build_canonical_output(
         "format_version": FORMAT_VERSION,
         "fixture": case.key,
         "database_identity": case.database_identity,
+        "diagnostics": {
+            "schema": dict(source_schema_diagnostics),
+            "data_state": (
+                "empty"
+                if not activity_rows and not point_rows
+                else "contains_business_rows"
+            ),
+        },
         "sessions": sessions,
         "track_points": track_points,
         "orphan_track_points": orphan_track_points,
@@ -1121,104 +1317,276 @@ def build_canonical_output(
         },
         "idempotency": None,
     }
-    if case.interrupt_after_sessions is not None:
-        output["idempotency"] = simulate_interrupted_migration(
-            output,
-            case.interrupt_after_sessions,
-        )
+    if case.exercise_idempotency:
+        output["idempotency"] = simulate_idempotent_migration(output)
     return output
 
 
-def records_for_sessions(
-    output: Mapping[str, Any], session_count: Optional[int] = None
+def ordered_migration_records(
+    output: Mapping[str, Any],
 ) -> List[Tuple[str, Mapping[str, Any]]]:
-    sessions = list(output["sessions"])
-    if session_count is not None:
-        sessions = sessions[:session_count]
-    session_ids = {session["deterministic_id"] for session in sessions}
-    records: List[Tuple[str, Mapping[str, Any]]] = [
-        ("session", session) for session in sessions
-    ]
-    records.extend(
-        ("track_point", point)
-        for point in output["track_points"]
-        if point["session_id"] in session_ids
-    )
+    points_by_session: Dict[str, List[Mapping[str, Any]]] = {}
+    for track_point in output["track_points"]:
+        points_by_session.setdefault(track_point["session_id"], []).append(track_point)
+
+    records: List[Tuple[str, Mapping[str, Any]]] = []
+    for session in output["sessions"]:
+        records.append(("session", session))
+        records.extend(
+            ("track_point", track_point)
+            for track_point in points_by_session.get(
+                session["deterministic_id"],
+                (),
+            )
+        )
     return records
 
 
-def simulate_interrupted_migration(
+def duplicate_row_count(
+    by_source: Mapping[str, Mapping[str, Any]],
+) -> int:
+    rows = list(by_source.values())
+    duplicate_source_rows = len(rows) - len(
+        {row["source_key"] for row in rows}
+    )
+    duplicate_id_rows = len(rows) - len(
+        {row["deterministic_id"] for row in rows}
+    )
+    return max(duplicate_source_rows, duplicate_id_rows)
+
+
+def apply_insert_attempts(
+    by_source: Dict[str, Mapping[str, Any]],
+    by_id: Dict[str, str],
+    records: Iterable[Tuple[str, Mapping[str, Any]]],
+) -> Mapping[str, Any]:
+    attempted_by_kind = {"session": 0, "track_point": 0}
+    inserted_by_kind = {"session": 0, "track_point": 0}
+
+    for kind, record in records:
+        if kind not in attempted_by_kind:
+            raise FixtureValidationError(
+                "Unknown migration record kind {!r}".format(kind)
+            )
+        attempted_by_kind[kind] += 1
+        key = record["source_key"]
+        record_id = record["deterministic_id"]
+        payload_sha256 = hashlib.sha256(canonical_json_bytes(record)).hexdigest()
+        existing = by_source.get(key)
+        if existing is not None:
+            if (
+                existing["kind"] != kind
+                or existing["deterministic_id"] != record_id
+                or existing["payload_sha256"] != payload_sha256
+            ):
+                raise FixtureValidationError(
+                    "Duplicate insert attempt changed deterministic identity or "
+                    "payload for {}".format(key)
+                )
+            continue
+
+        other_source = by_id.get(record_id)
+        if other_source is not None and other_source != key:
+            raise FixtureValidationError(
+                "Duplicate deterministic ID {} for {} and {}".format(
+                    record_id, other_source, key
+                )
+            )
+        by_source[key] = {
+            "source_key": key,
+            "kind": kind,
+            "deterministic_id": record_id,
+            "payload_sha256": payload_sha256,
+            "record": copy.deepcopy(record),
+        }
+        by_id[record_id] = key
+        inserted_by_kind[kind] += 1
+
+    attempted_rows = sum(attempted_by_kind.values())
+    inserted_rows = sum(inserted_by_kind.values())
+    duplicate_attempts = attempted_rows - inserted_rows
+    return {
+        "attempted_rows": attempted_rows,
+        "inserted_rows": inserted_rows,
+        "duplicate_attempts": duplicate_attempts,
+        "duplicate_rows": duplicate_row_count(by_source),
+        "attempted_sessions": attempted_by_kind["session"],
+        "inserted_sessions": inserted_by_kind["session"],
+        "duplicate_session_attempts": (
+            attempted_by_kind["session"] - inserted_by_kind["session"]
+        ),
+        "attempted_track_points": attempted_by_kind["track_point"],
+        "inserted_track_points": inserted_by_kind["track_point"],
+        "duplicate_track_point_attempts": (
+            attempted_by_kind["track_point"]
+            - inserted_by_kind["track_point"]
+        ),
+        "attempts_fully_accounted": (
+            attempted_rows == inserted_rows + duplicate_attempts
+        ),
+    }
+
+
+def migration_state_payload(
+    by_source: Mapping[str, Mapping[str, Any]],
+) -> List[Mapping[str, Any]]:
+    return [by_source[key] for key in sorted(by_source)]
+
+
+def migration_state_counts(
+    by_source: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, int]:
+    return {
+        "sessions": sum(
+            1 for value in by_source.values() if value["kind"] == "session"
+        ),
+        "track_points": sum(
+            1 for value in by_source.values() if value["kind"] == "track_point"
+        ),
+    }
+
+
+def expected_migration_state(
+    records: Sequence[Tuple[str, Mapping[str, Any]]],
+) -> List[Mapping[str, Any]]:
+    by_source: Dict[str, Mapping[str, Any]] = {}
+    by_id: Dict[str, str] = {}
+    stats = apply_insert_attempts(by_source, by_id, records)
+    if (
+        stats["inserted_rows"] != len(records)
+        or stats["duplicate_attempts"] != 0
+        or stats["duplicate_rows"] != 0
+    ):
+        raise FixtureValidationError(
+            "Canonical migration records are not unique insert attempts"
+        )
+    return migration_state_payload(by_source)
+
+
+def assert_exact_final_state(
+    label: str,
+    actual_state: Sequence[Mapping[str, Any]],
+    expected_state: Sequence[Mapping[str, Any]],
+) -> None:
+    if canonical_json_bytes(actual_state) != canonical_json_bytes(expected_state):
+        raise FixtureValidationError(
+            "{} did not produce exact canonical final state".format(label)
+        )
+
+
+def simulate_interrupted_insert_attempts(
     first_output: Mapping[str, Any],
-    interrupt_after_sessions: int,
+    interruption_after_attempts: int,
+    interruption_point: str,
     rerun_output: Optional[Mapping[str, Any]] = None,
 ) -> Mapping[str, Any]:
-    if interrupt_after_sessions < 0:
-        raise FixtureValidationError("interrupt_after_sessions cannot be negative")
+    first_records = ordered_migration_records(first_output)
+    if (
+        interruption_after_attempts <= 0
+        or interruption_after_attempts >= len(first_records)
+    ):
+        raise FixtureValidationError(
+            "Interruption must occur after a non-empty strict prefix of attempts"
+        )
     rerun = rerun_output if rerun_output is not None else first_output
-    by_source: Dict[str, Tuple[str, str, str]] = {}
+    rerun_records = ordered_migration_records(rerun)
+    expected_state = expected_migration_state(first_records)
+    by_source: Dict[str, Mapping[str, Any]] = {}
     by_id: Dict[str, str] = {}
 
-    def apply(records: Iterable[Tuple[str, Mapping[str, Any]]]) -> int:
-        reused = 0
-        for kind, record in records:
-            key = record["source_key"]
-            record_id = record["deterministic_id"]
-            payload = hashlib.sha256(canonical_json_bytes(record)).hexdigest()
-            existing = by_source.get(key)
-            if existing is not None:
-                if existing != (kind, record_id, payload):
-                    raise FixtureValidationError(
-                        "Interrupted rerun changed deterministic identity or payload "
-                        "for {}".format(key)
-                    )
-                reused += 1
-                continue
-            other_source = by_id.get(record_id)
-            if other_source is not None and other_source != key:
-                raise FixtureValidationError(
-                    "Duplicate deterministic ID {} for {} and {}".format(
-                        record_id, other_source, key
-                    )
-                )
-            by_source[key] = (kind, record_id, payload)
-            by_id[record_id] = key
-        return reused
+    first_attempt = apply_insert_attempts(
+        by_source,
+        by_id,
+        first_records[:interruption_after_attempts],
+    )
+    first_attempt = dict(first_attempt)
+    first_attempt.update(migration_state_counts(by_source))
+    first_attempt["migration_complete"] = False
 
-    apply(records_for_sessions(first_output, interrupt_after_sessions))
-    first_counts = {
-        "sessions": sum(1 for kind, _, _ in by_source.values() if kind == "session"),
-        "track_points": sum(
-            1 for kind, _, _ in by_source.values() if kind == "track_point"
-        ),
-        "migration_complete": False,
-    }
+    replay = apply_insert_attempts(by_source, by_id, rerun_records)
+    replay = dict(replay)
+    replay.update(migration_state_counts(by_source))
+    replay["migration_complete"] = True
 
-    reused = apply(records_for_sessions(rerun))
-    final_counts = {
-        "sessions": sum(1 for kind, _, _ in by_source.values() if kind == "session"),
-        "track_points": sum(
-            1 for kind, _, _ in by_source.values() if kind == "track_point"
-        ),
-    }
-    state_payload = [
-        {
-            "source_key": key,
-            "kind": value[0],
-            "deterministic_id": value[1],
-            "payload_sha256": value[2],
-        }
-        for key, value in sorted(by_source.items())
-    ]
+    final_state = migration_state_payload(by_source)
+    assert_exact_final_state(interruption_point, final_state, expected_state)
+    duplicate_attempts_prevented = (
+        first_attempt["duplicate_attempts"] + replay["duplicate_attempts"]
+    )
     return {
-        "interrupt_after_sessions": interrupt_after_sessions,
-        "first_attempt": first_counts,
-        "rerun": {
-            "sessions": final_counts["sessions"],
-            "track_points": final_counts["track_points"],
+        "interruption_point": interruption_point,
+        "interruption_after_attempts": interruption_after_attempts,
+        "first_attempt": first_attempt,
+        "replay": replay,
+        "duplicate_attempts_prevented": duplicate_attempts_prevented,
+        "duplicate_rows": duplicate_row_count(by_source),
+        "exact_final_equality": True,
+        "state_logical_checksum": hash_value(final_state),
+    }
+
+
+def simulate_same_run_duplicates(
+    output: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    records = ordered_migration_records(output)
+    expected_state = expected_migration_state(records)
+    duplicate_attempts = [
+        record
+        for record in records
+        for _ in range(2)
+    ]
+    by_source: Dict[str, Mapping[str, Any]] = {}
+    by_id: Dict[str, str] = {}
+    attempt = apply_insert_attempts(by_source, by_id, duplicate_attempts)
+    final_state = migration_state_payload(by_source)
+    assert_exact_final_state("same_run_duplicates", final_state, expected_state)
+    result = dict(attempt)
+    result.update(migration_state_counts(by_source))
+    result.update(
+        {
             "migration_complete": True,
-            "duplicate_rows": 0,
-            "reused_deterministic_ids": reused,
-            "state_logical_checksum": hash_value(state_payload),
+            "exact_final_equality": True,
+            "state_logical_checksum": hash_value(final_state),
+        }
+    )
+    return result
+
+
+def simulate_idempotent_migration(
+    output: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    records = ordered_migration_records(output)
+    if (
+        len(records) < 3
+        or records[0][0] != "session"
+        or records[1][0] != "track_point"
+        or records[2][0] != "track_point"
+    ):
+        raise FixtureValidationError(
+            "Idempotency fixture must start with a session and at least two points"
+        )
+    expected_state = expected_migration_state(records)
+    return {
+        "canonical_insert_rows": len(records),
+        "expected_sessions": sum(1 for kind, _ in records if kind == "session"),
+        "expected_track_points": sum(
+            1 for kind, _ in records if kind == "track_point"
+        ),
+        "expected_state_logical_checksum": hash_value(expected_state),
+        "scenarios": {
+            "interrupt_after_session_row": simulate_interrupted_insert_attempts(
+                output,
+                interruption_after_attempts=1,
+                interruption_point="after_session_row",
+            ),
+            "interrupt_after_partial_point_prefix": (
+                simulate_interrupted_insert_attempts(
+                    output,
+                    interruption_after_attempts=2,
+                    interruption_point="after_partial_point_prefix",
+                )
+            ),
+            "same_run_duplicates": simulate_same_run_duplicates(output),
         },
     }
 
@@ -1374,6 +1742,8 @@ def manifest_entry(
             ),
             "timestamps": timestamp_summary(rows_by_table),
             "canonical": output["summary"],
+            "diagnostics": output["diagnostics"],
+            "platform_metadata": platform_metadata_payload(connection),
             "schema_logical_checksum": hash_value(schema_payload(connection)),
             "logical_checksums": logical_checksums(connection),
             "canonical_output_logical_checksum": hash_value(output),
@@ -1394,11 +1764,20 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
     for case in fixture_cases():
         database = fixtures_dir / "{}.db".format(case.key)
         expected_output_path = expected_dir / "{}.json".format(case.key)
-        create_database(database, case.activities, case.track_points)
+        create_database(
+            database,
+            case.activities,
+            case.track_points,
+            case.business_tables,
+        )
         with open_readonly(database) as connection:
-            validate_schema(connection, case.key)
+            validate_schema(connection, case.key, case.business_tables)
             rows_by_table = read_all_rows(connection)
-            output = build_canonical_output(case, rows_by_table)
+            output = build_canonical_output(
+                case,
+                rows_by_table,
+                schema_diagnostics(connection),
+            )
             write_json(expected_output_path, output)
             entries.append(
                 manifest_entry(
@@ -1423,6 +1802,9 @@ def generate_corpus(root: Path = TOOL_ROOT) -> Mapping[str, Any]:
             "combined in ACTIVITY/GPS_POINTS order"
         ),
         "source_schema": {
+            "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
+            "android_metadata_business_data": False,
+            "fixture_android_locale": ANDROID_METADATA_LOCALE,
             "activity_ddl": CREATE_ACTIVITY_SQL,
             "gps_points_ddl": CREATE_GPS_POINTS_SQL,
             "user_version": 0,
@@ -1510,14 +1892,31 @@ def compare_json(
                 float_epsilon,
             )
         return
-    if (
-        isinstance(expected, (int, float))
-        and not isinstance(expected, bool)
-        and isinstance(actual, (int, float))
-        and not isinstance(actual, bool)
-    ):
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        if (
+            not isinstance(actual, int)
+            or isinstance(actual, bool)
+            or actual != expected
+        ):
+            raise FixtureValidationError(
+                "{} integer value expected {!r}, found {!r}".format(
+                    path, expected, actual
+                )
+            )
+        return
+    if isinstance(expected, float):
+        if (
+            not isinstance(actual, (int, float))
+            or isinstance(actual, bool)
+            or not math.isfinite(float(actual))
+        ):
+            raise FixtureValidationError(
+                "{} finite numeric value expected {!r}, found {!r}".format(
+                    path, expected, actual
+                )
+            )
         if not math.isclose(
-            float(expected),
+            expected,
             float(actual),
             rel_tol=0.0,
             abs_tol=float_epsilon,
@@ -1551,6 +1950,59 @@ def validate_output_invariants(
         orphans = output["orphan_track_points"]
         rejected = output["rejected_rows"]
         summary = output["summary"]
+        diagnostics = output["diagnostics"]
+        schema_diagnostic = diagnostics["schema"]
+
+        present_business_tables = schema_diagnostic["business_tables_present"]
+        missing_business_tables = schema_diagnostic["missing_business_tables"]
+        if sorted(present_business_tables + missing_business_tables) != sorted(
+            BUSINESS_TABLES
+        ):
+            raise FixtureValidationError(
+                "{} schema diagnostic does not partition business tables".format(
+                    fixture_name
+                )
+            )
+        expected_schema_state = (
+            "complete"
+            if not missing_business_tables
+            else (
+                "no_business_tables"
+                if not present_business_tables
+                else "partial_business_schema"
+            )
+        )
+        if schema_diagnostic["state"] != expected_schema_state:
+            raise FixtureValidationError(
+                "{} schema-state diagnostic mismatch".format(fixture_name)
+            )
+        expected_readiness = (
+            "ready" if expected_schema_state == "complete" else "blocked"
+        )
+        if schema_diagnostic["migration_readiness"] != expected_readiness:
+            raise FixtureValidationError(
+                "{} migration-readiness diagnostic mismatch".format(fixture_name)
+            )
+        if schema_diagnostic["platform_tables_present"] != ["android_metadata"]:
+            raise FixtureValidationError(
+                "{} must report verified android_metadata".format(fixture_name)
+            )
+        if schema_diagnostic["unexpected_tables"]:
+            raise FixtureValidationError(
+                "{} reports unexpected source tables".format(fixture_name)
+            )
+        expected_data_state = (
+            "empty"
+            if (
+                summary["source_activity_rows"] == 0
+                and summary["source_track_point_rows"] == 0
+            )
+            else "contains_business_rows"
+        )
+        if diagnostics["data_state"] != expected_data_state:
+            raise FixtureValidationError(
+                "{} data-state diagnostic mismatch".format(fixture_name)
+            )
 
         if summary["sessions"] != len(sessions):
             raise FixtureValidationError(
@@ -1664,6 +2116,64 @@ def validate_output_invariants(
                     )
                 )
 
+        idempotency = output["idempotency"]
+        if idempotency is not None:
+            expected_checksum = idempotency["expected_state_logical_checksum"]
+            scenarios = idempotency["scenarios"]
+            for scenario_name in (
+                "interrupt_after_session_row",
+                "interrupt_after_partial_point_prefix",
+            ):
+                scenario = scenarios[scenario_name]
+                for phase_name in ("first_attempt", "replay"):
+                    phase = scenario[phase_name]
+                    if (
+                        phase["attempted_rows"]
+                        != phase["inserted_rows"] + phase["duplicate_attempts"]
+                        or not phase["attempts_fully_accounted"]
+                        or phase["duplicate_rows"] != 0
+                    ):
+                        raise FixtureValidationError(
+                            "{} {} {} insert attempts are not accounted for".format(
+                                fixture_name, scenario_name, phase_name
+                            )
+                        )
+                computed_duplicate_attempts = (
+                    scenario["first_attempt"]["duplicate_attempts"]
+                    + scenario["replay"]["duplicate_attempts"]
+                )
+                if (
+                    scenario["duplicate_attempts_prevented"]
+                    != computed_duplicate_attempts
+                    or scenario["duplicate_rows"] != 0
+                ):
+                    raise FixtureValidationError(
+                        "{} {} duplicate accounting mismatch".format(
+                            fixture_name, scenario_name
+                        )
+                    )
+                if (
+                    not scenario["exact_final_equality"]
+                    or scenario["state_logical_checksum"] != expected_checksum
+                ):
+                    raise FixtureValidationError(
+                        "{} {} final state mismatch".format(
+                            fixture_name, scenario_name
+                        )
+                    )
+            same_run = scenarios["same_run_duplicates"]
+            if (
+                same_run["attempted_rows"]
+                != same_run["inserted_rows"] + same_run["duplicate_attempts"]
+                or not same_run["attempts_fully_accounted"]
+                or same_run["duplicate_rows"] != 0
+                or not same_run["exact_final_equality"]
+                or same_run["state_logical_checksum"] != expected_checksum
+            ):
+                raise FixtureValidationError(
+                    "{} same-run duplicate accounting mismatch".format(fixture_name)
+                )
+
 
 def validate_candidate_outputs(
     expected_outputs: Mapping[str, Mapping[str, Any]],
@@ -1715,6 +2225,15 @@ def run_mutation_detection_tests(
     rejected("integer_truncation", candidate)
 
     candidate = copy.deepcopy(expected_outputs)
+    precision_session = next(
+        session
+        for session in candidate["precision"]["sessions"]
+        if session["legacy_id"] == 9007199254740993
+    )
+    precision_session["legacy_id"] = 9007199254740992
+    rejected("integer_precision_above_2_53", candidate)
+
+    candidate = copy.deepcopy(expected_outputs)
     precision_point = candidate["precision"]["track_points"][0]
     precision_point["latitude"], precision_point["longitude"] = (
         precision_point["longitude"],
@@ -1753,9 +2272,10 @@ def run_mutation_detection_tests(
         if track_point["session_id"] == old_id:
             track_point["session_id"] = replacement_id
     try:
-        simulate_interrupted_migration(
+        simulate_interrupted_insert_attempts(
             interrupted,
-            1,
+            interruption_after_attempts=1,
+            interruption_point="after_session_row",
             rerun_output=bad_rerun,
         )
     except FixtureValidationError:
@@ -1763,6 +2283,22 @@ def run_mutation_detection_tests(
     else:
         raise FixtureValidationError(
             "Validator self-test did not detect partial_rerun_identity_drift"
+        )
+
+    bad_rerun = copy.deepcopy(interrupted)
+    bad_rerun["track_points"].pop()
+    try:
+        simulate_interrupted_insert_attempts(
+            interrupted,
+            interruption_after_attempts=1,
+            interruption_point="after_session_row",
+            rerun_output=bad_rerun,
+        )
+    except FixtureValidationError:
+        passed.append("partial_rerun_missing_row")
+    else:
+        raise FixtureValidationError(
+            "Validator self-test did not detect partial_rerun_missing_row"
         )
 
     return tuple(passed)
@@ -1779,6 +2315,9 @@ def verify_manifest_header(manifest: Mapping[str, Any]) -> None:
         raise FixtureValidationError("Manifest fixture namespace mismatch")
     source_schema = manifest.get("source_schema", {})
     expected_schema = {
+        "android_metadata_ddl": CREATE_ANDROID_METADATA_SQL,
+        "android_metadata_business_data": False,
+        "fixture_android_locale": ANDROID_METADATA_LOCALE,
         "activity_ddl": CREATE_ACTIVITY_SQL,
         "gps_points_ddl": CREATE_GPS_POINTS_SQL,
         "user_version": 0,
@@ -1827,10 +2366,18 @@ def verify_corpus(
                 "Missing expected output {}".format(expected_output_path)
             )
         with open_readonly(database) as connection:
-            schema_checksum = validate_schema(connection, name)
+            schema_checksum = validate_schema(
+                connection,
+                name,
+                case.business_tables,
+            )
             rows_by_table = read_all_rows(connection)
             compare_rows_to_case(case, rows_by_table)
-            output = build_canonical_output(case, rows_by_table)
+            output = build_canonical_output(
+                case,
+                rows_by_table,
+                schema_diagnostics(connection),
+            )
             committed_output = load_json(expected_output_path)
             compare_json(output, committed_output, "$.expected.{}".format(name))
             expected_outputs[name] = committed_output
