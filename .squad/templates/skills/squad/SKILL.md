@@ -132,9 +132,9 @@ Proceed? (yes / no)
 ### Triage Issues
 
 - **intent:** triage issues, review issues, assign issues, label issues
-- **summary:** Run the Lead triage flow on open GitHub issues
+- **summary:** Run Ralph's routing-table triage flow on open GitHub issues
 - **action:** coordinator
-- **command:** GitHub Issues Mode → Lead triage
+- **command:** GitHub Issues Mode → Ralph triage
 - **args:** (none)
 - **confirm:** false
 

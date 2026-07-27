@@ -19,15 +19,15 @@ How to decide who handles what.
 
 | Label | Action | Who |
 |-------|--------|-----|
-| `squad` | Triage: analyze issue, assign `squad:{member}` label | Lead |
+| `squad` | Automatically triage and assign `squad:{member}` label | Ralph |
 | `squad:{name}` | Pick up issue and complete the work | Named member |
 
 ### How Issue Assignment Works
 
-1. When a GitHub issue gets the `squad` label, the **Lead** triages it — analyzing content, assigning the right `squad:{member}` label, and commenting with triage notes.
+1. When a GitHub issue gets the `squad` label, **Ralph** reads the Routing Table, assigns the right `squad:{member}` label, and comments with triage notes.
 2. When a `squad:{member}` label is applied, that member picks up the issue in their next session.
 3. Members can reassign by removing their label and adding another member's label.
-4. The `squad` label is the "inbox" — untriaged issues waiting for Lead review.
+4. The `squad` label is the inbox — untriaged issues waiting for Ralph's heartbeat.
 
 ## Rules
 
@@ -37,4 +37,4 @@ How to decide who handles what.
 4. **When two agents could handle it**, pick the one whose domain is the primary concern.
 5. **"Team, ..." → fan-out.** Spawn all relevant agents in parallel as `mode: "background"`.
 6. **Anticipate downstream work.** If a feature is being built, spawn the tester to write test cases from requirements simultaneously.
-7. **Issue-labeled work** — when a `squad:{member}` label is applied to an issue, route to that member. The Lead handles all `squad` (base label) triage.
+7. **Issue-labeled work** — when a `squad:{member}` label is applied to an issue, route to that member. Ralph handles automatic `squad` (base label) triage; the Lead may manually reassign ownership.

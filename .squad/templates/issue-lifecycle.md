@@ -48,6 +48,8 @@ Each platform tracks issue lifecycle differently. Squad normalizes these into a 
 - `priority:p{N}` — Priority level (0=critical, 1=high, 2=medium, 3=low)
 - `next-up` — Queued for next agent pickup
 
+Only labels derived from the current `.squad/team.md` roster (plus `squad:copilot` when present) count as owners. Reserved or unknown `squad:*` labels, including `squad:untriaged`, do not.
+
 **Branch naming convention:**
 ```
 squad/{issue-number}-{kebab-case-slug}
@@ -96,6 +98,10 @@ Planner does not have native Git integration. Squad uses Planner for task tracki
 
 ## Issue → Branch → PR → Merge Lifecycle
 
+### Lifecycle Preflight — Resolve the Default Branch Once
+
+Before starting Step 1, resolve `{default-branch}` from repository metadata. Normalize platform prefixes such as `refs/heads/`, retain the resulting branch name for the entire lifecycle, and reuse that same value for branch creation, worktree creation, PR targeting, and cleanup. Never assume `main`, `master`, or `dev`.
+
 ### 1. Issue Assignment (Triage)
 
 **Trigger:** Ralph detects an untriaged issue or user manually assigns work.
@@ -120,7 +126,7 @@ az boards work-item show --id {id} --output json
 **Trigger:** Agent accepts issue assignment and begins work.
 
 **Actions:**
-1. Ensure working on latest base branch (usually `main` or `dev`)
+1. Ensure the resolved `{default-branch}` is current
 2. Create feature branch using Squad naming convention
 3. Transition issue to `inProgress` state
 
@@ -128,12 +134,15 @@ az boards work-item show --id {id} --output json
 
 **Standard (single-agent, no parallelism):**
 ```bash
-git checkout main && git pull && git checkout -b squad/{issue-number}-{slug}
+git checkout {default-branch}
+git pull --ff-only origin {default-branch}
+git checkout -b squad/{issue-number}-{slug}
 ```
 
 **Worktree (parallel multi-agent):**
 ```bash
-git worktree add ../worktrees/{issue-number} -b squad/{issue-number}-{slug}
+git fetch origin {default-branch}
+git worktree add ../worktrees/{issue-number} -b squad/{issue-number}-{slug} origin/{default-branch}
 cd ../worktrees/{issue-number}
 ```
 
@@ -171,7 +180,7 @@ git push -u origin squad/{issue-number}-{slug}
 **Trigger:** Agent completes implementation and is ready for review.
 
 **Actions:**
-1. Open PR from feature branch to base branch
+1. Open PR from the feature branch to the same `{default-branch}` resolved at lifecycle start
 2. Reference issue in PR description
 3. Apply labels if needed
 4. Transition issue to `needsReview` state
@@ -183,7 +192,7 @@ git push -u origin squad/{issue-number}-{slug}
 gh pr create --title "{title}" \
   --body "Closes #{issue-number}\n\n{description}" \
   --head squad/{issue-number}-{slug} \
-  --base main
+  --base {default-branch}
 ```
 
 **Azure DevOps:**
@@ -191,7 +200,7 @@ gh pr create --title "{title}" \
 az repos pr create --title "{title}" \
   --description "Closes #{work-item-id}\n\n{description}" \
   --source-branch squad/{work-item-id}-{slug} \
-  --target-branch main
+  --target-branch {default-branch}
 ```
 
 **PR description template:**
@@ -273,8 +282,8 @@ az repos pr update --id {pr-id} --status completed --delete-source-branch true
 
 **Standard workflow cleanup:**
 ```bash
-git checkout main
-git pull
+git checkout {default-branch}
+git pull --ff-only origin {default-branch}
 git branch -d squad/{issue-number}-{slug}
 ```
 
@@ -315,7 +324,7 @@ When spawning an agent to work on an issue, include this context block:
 2. Push branch
 3. Open PR using:
    ```
-   gh pr create --title "{title}" --body "Closes #{number}\n\n{description}" --head squad/{issue-number}-{slug} --base {base-branch}
+   gh pr create --title "{title}" --body "Closes #{number}\n\n{description}" --head squad/{issue-number}-{slug} --base {default-branch}
    ```
 4. Report PR URL to coordinator
 ```
