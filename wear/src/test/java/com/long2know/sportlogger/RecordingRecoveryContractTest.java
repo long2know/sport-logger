@@ -167,6 +167,39 @@ public class RecordingRecoveryContractTest {
     }
 
     @Test
+    public void terminalStopReplaySurvivesActivityAndServiceTeardown()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
+        String terminalState = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingTerminalCompletionState.java");
+        String destroy = service.substring(
+                service.indexOf("public void onDestroy()"),
+                service.indexOf(
+                        "public void setServiceClient(",
+                        service.indexOf("public void onDestroy()")));
+
+        assertTrue(service.contains(
+                "runStartupWithTerminalCompletion("));
+        assertTrue(service.contains(
+                "deliverPendingTerminalCompletion();"));
+        assertTrue(service.contains(
+                "_terminalDeliveryInFlightId"));
+        assertFalse(destroy.contains("clearPending("));
+        assertFalse(destroy.contains("acknowledge("));
+        assertTrue(activity.contains(
+                "_terminalExportCoordinator.abandon();"));
+        assertTrue(terminalState.contains(
+                "AcknowledgeStatus.RETAINED"));
+        assertTrue(terminalState.contains(
+                "AcknowledgeStatus.ALREADY_CLEARED"));
+    }
+
+    @Test
     public void documentationStatesCurrentProcessRecoveryLimit() throws Exception {
         String documentation = read("docs/build-foundation.md");
 
@@ -182,6 +215,12 @@ public class RecordingRecoveryContractTest {
         assertTrue(documentation.contains("`onDestroy()` is nonblocking"));
         assertTrue(documentation.contains("`RejectedExecutionException`"));
         assertTrue(documentation.contains("separate activity executor"));
+        assertTrue(documentation.contains(
+                "single-slot legacy terminal export handoff"));
+        assertTrue(documentation.contains(
+                "successful Data Layer handoff acknowledgment"));
+        assertTrue(documentation.contains(
+                "not the future canonical Data Layer outbox"));
     }
 
     private static String read(String relativePath) throws Exception {

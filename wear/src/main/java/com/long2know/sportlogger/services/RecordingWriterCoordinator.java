@@ -21,8 +21,14 @@ final class RecordingWriterCoordinator {
         Scheduler create();
     }
 
+    interface Task extends Runnable, AutoCloseable {
+        @Override
+        default void close() {
+        }
+    }
+
     interface TaskFactory {
-        Runnable create(GenerationToken generation);
+        Task create(GenerationToken generation);
     }
 
     interface FailureListener {
@@ -116,16 +122,39 @@ final class RecordingWriterCoordinator {
     private static final class Generation {
         final GenerationToken token;
         final Scheduler scheduler;
+        final Task task;
+        final AtomicBoolean resourcesClosed = new AtomicBoolean(false);
 
-        Generation(GenerationToken token, Scheduler scheduler) {
+        Generation(GenerationToken token, Scheduler scheduler, Task task) {
             this.token = token;
             this.scheduler = scheduler;
+            this.task = task;
+        }
+
+        void closeResources() {
+            if (!resourcesClosed.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                task.close();
+            } catch (RuntimeException exception) {
+                // The generation is already quiescent; cleanup remains best effort.
+            }
+        }
+    }
+
+    private static final class Reservation {
+        final GenerationToken token;
+
+        Reservation(GenerationToken token) {
+            this.token = token;
         }
     }
 
     private final SchedulerFactory _schedulerFactory;
     private long _nextGeneration;
     private Generation _current;
+    private Reservation _reservation;
 
     RecordingWriterCoordinator() {
         this(ExecutorScheduler::new);
@@ -135,7 +164,7 @@ final class RecordingWriterCoordinator {
         _schedulerFactory = schedulerFactory;
     }
 
-    synchronized StartStatus start(Object owner, int activityId, TaskFactory taskFactory) {
+    StartStatus start(Object owner, int activityId, TaskFactory taskFactory) {
         return start(
                 owner,
                 activityId,
@@ -144,7 +173,7 @@ final class RecordingWriterCoordinator {
                 (generation, exception) -> { });
     }
 
-    synchronized StartStatus start(
+    StartStatus start(
             Object owner,
             int activityId,
             TaskFactory taskFactory,
@@ -157,71 +186,130 @@ final class RecordingWriterCoordinator {
                 failureListener);
     }
 
-    synchronized StartStatus start(
+    StartStatus start(
             Object owner,
             int activityId,
             TaskFactory taskFactory,
             GenerationClaim generationClaim,
             FailureListener failureListener) {
-        if (_current != null && _current.scheduler.isTerminated()) {
-            boolean failed = _current.token.failed();
-            _current = null;
+        final Reservation reservation;
+        while (true) {
+            Generation completed = null;
+            boolean failed = false;
+            synchronized (this) {
+                if (_current != null && _current.scheduler.isTerminated()) {
+                    completed = _current;
+                    failed = completed.token.failed();
+                    _current = null;
+                } else if (_current != null) {
+                    return _current.token.belongsTo(owner)
+                                    && _current.token.isActive()
+                            ? StartStatus.ALREADY_RUNNING
+                            : StartStatus.PREVIOUS_GENERATION_ACTIVE;
+                } else if (_reservation != null) {
+                    return _reservation.token.belongsTo(owner)
+                                    && _reservation.token.isActive()
+                            ? StartStatus.ALREADY_RUNNING
+                            : StartStatus.PREVIOUS_GENERATION_ACTIVE;
+                } else {
+                    GenerationToken token =
+                            new GenerationToken(
+                                    owner, activityId, ++_nextGeneration);
+                    reservation = new Reservation(token);
+                    _reservation = reservation;
+                    break;
+                }
+            }
+            completed.closeResources();
             if (failed) {
                 return StartStatus.START_FAILED;
             }
         }
-        if (_current != null) {
-            return _current.token.belongsTo(owner) && _current.token.isActive()
-                    ? StartStatus.ALREADY_RUNNING
-                    : StartStatus.PREVIOUS_GENERATION_ACTIVE;
+
+        boolean claimed;
+        try {
+            claimed = generationClaim.claim(reservation.token);
+        } catch (RuntimeException exception) {
+            cancelReservation(reservation);
+            return StartStatus.START_FAILED;
+        }
+        if (!claimed || !reservationOwns(reservation)) {
+            cancelReservation(reservation);
+            return StartStatus.START_FAILED;
         }
 
-        Scheduler scheduler;
+        Scheduler scheduler = null;
+        Task task = null;
         try {
             scheduler = _schedulerFactory.create();
         } catch (RuntimeException exception) {
+            cancelReservation(reservation);
+            return StartStatus.START_FAILED;
+        }
+        if (!reservationOwns(reservation)) {
+            closePrepared(reservation.token, scheduler, null);
+            return StartStatus.START_FAILED;
+        }
+        try {
+            task = taskFactory.create(reservation.token);
+        } catch (RuntimeException exception) {
+            cancelReservation(reservation);
+            closePrepared(reservation.token, scheduler, task);
+            return StartStatus.START_FAILED;
+        }
+        if (task == null) {
+            cancelReservation(reservation);
+            closePrepared(reservation.token, scheduler, null);
             return StartStatus.START_FAILED;
         }
 
-        GenerationToken token =
-                new GenerationToken(owner, activityId, ++_nextGeneration);
-        Generation generation = new Generation(token, scheduler);
-        _current = generation;
-        try {
-            if (!generationClaim.claim(token)) {
-                token.deactivate();
-                scheduler.shutdownNow();
-                _current = null;
-                return StartStatus.START_FAILED;
-            }
-            Runnable task = taskFactory.create(token);
-            scheduler.scheduleAtFixedRate(new Runnable() {
-                @Override
-                public void run() {
-                    if (!token.isActive() || Thread.currentThread().isInterrupted()) {
-                        return;
-                    }
-                    try {
-                        task.run();
-                    } catch (RuntimeException exception) {
-                        token.fail(exception);
-                        try {
-                            failureListener.onFailure(token, exception);
-                        } finally {
-                            scheduler.shutdownNow();
+        final Scheduler preparedScheduler = scheduler;
+        final Task preparedTask = task;
+        Generation generation =
+                new Generation(
+                        reservation.token, preparedScheduler, preparedTask);
+        boolean scheduled = false;
+        synchronized (this) {
+            if (_reservation == reservation
+                    && reservation.token.isActive()
+                    && _current == null) {
+                _reservation = null;
+                _current = generation;
+                try {
+                    preparedScheduler.scheduleAtFixedRate(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!reservation.token.isActive()
+                                    || Thread.currentThread().isInterrupted()) {
+                                return;
+                            }
+                            try {
+                                preparedTask.run();
+                            } catch (RuntimeException exception) {
+                                reservation.token.fail(exception);
+                                try {
+                                    failureListener.onFailure(
+                                            reservation.token, exception);
+                                } finally {
+                                    preparedScheduler.shutdownNow();
+                                }
+                            }
                         }
-                    }
+                    }, 0L, 1L, TimeUnit.SECONDS);
+                    scheduled = true;
+                } catch (RuntimeException exception) {
+                    reservation.token.deactivate();
+                    _current = null;
                 }
-            }, 0L, 1L, TimeUnit.SECONDS);
-            return StartStatus.STARTED;
-        } catch (RuntimeException exception) {
-            token.deactivate();
-            scheduler.shutdownNow();
-            if (scheduler.isTerminated()) {
-                _current = null;
             }
+        }
+        if (!scheduled) {
+            cancelReservation(reservation);
+            closePrepared(
+                    reservation.token, preparedScheduler, preparedTask);
             return StartStatus.START_FAILED;
         }
+        return StartStatus.STARTED;
     }
 
     synchronized void restoreGenerationFloor(long generation) {
@@ -231,12 +319,17 @@ final class RecordingWriterCoordinator {
     }
 
     synchronized long generationFor(Object owner, int activityId) {
-        if (_current == null
-                || !_current.token.belongsTo(owner)
-                || _current.token.getActivityId() != activityId) {
-            return 0L;
+        if (_current != null
+                && _current.token.belongsTo(owner)
+                && _current.token.getActivityId() == activityId) {
+            return _current.token.getGeneration();
         }
-        return _current.token.getGeneration();
+        if (_reservation != null
+                && _reservation.token.belongsTo(owner)
+                && _reservation.token.getActivityId() == activityId) {
+            return _reservation.token.getGeneration();
+        }
+        return 0L;
     }
 
     LifecycleTermination fenceOwned(Object owner, long timeoutMillis) {
@@ -292,29 +385,43 @@ final class RecordingWriterCoordinator {
             int activityId,
             long generationNumber,
             boolean exactGeneration) {
+        Generation generation = null;
         synchronized (this) {
-            Generation generation = _current;
-            if (generation == null) {
+            if (_current != null) {
+                if (!matches(
+                        _current.token,
+                        owner,
+                        anyOwner,
+                        activityId,
+                        generationNumber,
+                        exactGeneration)) {
+                    return !exactGeneration;
+                }
+                generation = _current;
+                generation.token.deactivate();
+            } else if (_reservation != null) {
+                if (!matches(
+                        _reservation.token,
+                        owner,
+                        anyOwner,
+                        activityId,
+                        generationNumber,
+                        exactGeneration)) {
+                    return !exactGeneration;
+                }
+                _reservation.token.deactivate();
+                _reservation = null;
                 return true;
             }
-            if (exactGeneration
-                    && (generation.token.getActivityId() != activityId
-                    || generation.token.getGeneration()
-                            != generationNumber)) {
-                return false;
-            }
-            if (!exactGeneration
-                    && !anyOwner
-                    && !generation.token.belongsTo(owner)) {
-                return true;
-            }
-            generation.token.deactivate();
-            try {
-                generation.scheduler.shutdownNow();
-                return true;
-            } catch (RuntimeException exception) {
-                return false;
-            }
+        }
+        if (generation == null) {
+            return true;
+        }
+        try {
+            generation.scheduler.shutdownNow();
+            return true;
+        } catch (RuntimeException exception) {
+            return false;
         }
     }
 
@@ -327,36 +434,59 @@ final class RecordingWriterCoordinator {
             FenceClaim fenceClaim,
             long timeoutMillis) {
         Generation generation;
+        boolean alreadyTerminated = false;
         synchronized (this) {
             if (fenceClaim != null && !fenceClaim.claim()) {
                 return LifecycleTermination.TERMINATED;
             }
             generation = _current;
             if (generation == null) {
+                if (_reservation == null) {
+                    return LifecycleTermination.TERMINATED;
+                }
+                if (!matches(
+                        _reservation.token,
+                        owner,
+                        anyOwner,
+                        activityId,
+                        generationNumber,
+                        exactGeneration)) {
+                    return exactGeneration
+                            ? LifecycleTermination.TIMED_OUT
+                            : LifecycleTermination.TERMINATED;
+                }
+                _reservation.token.deactivate();
+                _reservation = null;
                 return LifecycleTermination.TERMINATED;
             }
-            if (exactGeneration
-                    && (generation.token.getActivityId() != activityId
-                    || generation.token.getGeneration() != generationNumber)) {
-                return LifecycleTermination.TIMED_OUT;
-            }
-            if (!exactGeneration
-                    && !anyOwner
-                    && !generation.token.belongsTo(owner)) {
-                return LifecycleTermination.TERMINATED;
+            if (!matches(
+                    generation.token,
+                    owner,
+                    anyOwner,
+                    activityId,
+                    generationNumber,
+                    exactGeneration)) {
+                return exactGeneration
+                        ? LifecycleTermination.TIMED_OUT
+                        : LifecycleTermination.TERMINATED;
             }
             if (generation.scheduler.isTerminated()) {
                 _current = null;
-                return generation.token.failed()
-                        ? LifecycleTermination.TERMINATED_WITH_FAILURE
-                        : LifecycleTermination.TERMINATED;
+                alreadyTerminated = true;
+            } else {
+                generation.token.deactivate();
             }
-            generation.token.deactivate();
-            try {
-                generation.scheduler.shutdownNow();
-            } catch (RuntimeException exception) {
-                return LifecycleTermination.FAILED;
-            }
+        }
+        if (alreadyTerminated) {
+            generation.closeResources();
+            return generation.token.failed()
+                    ? LifecycleTermination.TERMINATED_WITH_FAILURE
+                    : LifecycleTermination.TERMINATED;
+        }
+        try {
+            generation.scheduler.shutdownNow();
+        } catch (RuntimeException exception) {
+            return LifecycleTermination.FAILED;
         }
 
         boolean terminated;
@@ -370,20 +500,71 @@ final class RecordingWriterCoordinator {
             return LifecycleTermination.FAILED;
         }
 
+        LifecycleTermination result;
         synchronized (this) {
             if (_current == generation
                     && (terminated || generation.scheduler.isTerminated())) {
                 _current = null;
-                return generation.token.failed()
+                result = generation.token.failed()
+                        ? LifecycleTermination.TERMINATED_WITH_FAILURE
+                        : LifecycleTermination.TERMINATED;
+            } else if (_current == generation) {
+                result = LifecycleTermination.TIMED_OUT;
+            } else {
+                result = generation.token.failed()
                         ? LifecycleTermination.TERMINATED_WITH_FAILURE
                         : LifecycleTermination.TERMINATED;
             }
-            if (_current == generation) {
-                return LifecycleTermination.TIMED_OUT;
-            }
-            return generation.token.failed()
-                    ? LifecycleTermination.TERMINATED_WITH_FAILURE
-                    : LifecycleTermination.TERMINATED;
         }
+        if (result == LifecycleTermination.TERMINATED
+                || result
+                        == LifecycleTermination.TERMINATED_WITH_FAILURE) {
+            generation.closeResources();
+        }
+        return result;
+    }
+
+    private synchronized boolean reservationOwns(Reservation reservation) {
+        return _reservation == reservation && reservation.token.isActive();
+    }
+
+    private synchronized void cancelReservation(Reservation reservation) {
+        reservation.token.deactivate();
+        if (_reservation == reservation) {
+            _reservation = null;
+        }
+    }
+
+    private static void closePrepared(
+            GenerationToken token, Scheduler scheduler, Task task) {
+        token.deactivate();
+        if (scheduler != null) {
+            try {
+                scheduler.shutdownNow();
+            } catch (RuntimeException exception) {
+                // The unpublished scheduler cannot retain coordinator ownership.
+            }
+        }
+        if (task != null) {
+            try {
+                task.close();
+            } catch (RuntimeException exception) {
+                // Construction failed or was fenced; cleanup remains best effort.
+            }
+        }
+    }
+
+    private static boolean matches(
+            GenerationToken token,
+            Object owner,
+            boolean anyOwner,
+            int activityId,
+            long generationNumber,
+            boolean exactGeneration) {
+        if (exactGeneration) {
+            return token.getActivityId() == activityId
+                    && token.getGeneration() == generationNumber;
+        }
+        return anyOwner || token.belongsTo(owner);
     }
 }

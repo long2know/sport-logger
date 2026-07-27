@@ -72,4 +72,23 @@ public class PermissionCheckedTaskTest {
         assertEquals(0, recordingRuns.get());
         assertEquals(0, permissionLossRuns.get());
     }
+
+    @Test
+    public void closeReleasesPreparedResourceAndPreventsLaterWrite() {
+        AtomicInteger recordingRuns = new AtomicInteger();
+        AtomicInteger cleanupRuns = new AtomicInteger();
+        PermissionCheckedTask task = new PermissionCheckedTask(
+                () -> false,
+                () -> true,
+                recordingRuns::incrementAndGet,
+                () -> { },
+                cleanupRuns::incrementAndGet);
+
+        task.close();
+        task.close();
+        task.run();
+
+        assertEquals(0, recordingRuns.get());
+        assertEquals(1, cleanupRuns.get());
+    }
 }

@@ -79,6 +79,8 @@ public class MainActivity extends FragmentActivity implements
             RecordingOperationResult.Operation.NONE;
     private final ExecutorService _exportExecutor =
             Executors.newSingleThreadExecutor();
+    private final TerminalExportCoordinator _terminalExportCoordinator =
+            new TerminalExportCoordinator();
     private final RecordingUiState _recordingUiState = new RecordingUiState();
 
     @Override
@@ -163,6 +165,7 @@ public class MainActivity extends FragmentActivity implements
             public void onServiceDisconnected(ComponentName name)            {
                 _loggingService = null;
                 Session.setBoundToService(false);
+                _terminalExportCoordinator.abandon();
                 clearPendingOperation();
                 reconcileRecordingUi();
             }
@@ -192,6 +195,10 @@ public class MainActivity extends FragmentActivity implements
         super.onResume();
         reconcileRecordingPermissions();
         reconcileRecordingUi();
+        if (_loggingService != null
+                && !_terminalExportCoordinator.isInFlight()) {
+            _loggingService.requestPendingTerminalCompletionReplay();
+        }
     }
 
     @Override
@@ -214,6 +221,7 @@ public class MainActivity extends FragmentActivity implements
         if (Config.activityContext == this) {
             Config.activityContext = null;
         }
+        _terminalExportCoordinator.abandon();
         _exportExecutor.shutdownNow();
         super.onDestroy();
     }
@@ -272,7 +280,7 @@ public class MainActivity extends FragmentActivity implements
             case STOP:
                 _sensorFragment.pauseTimer();
                 _sensorFragment.resetTimer();
-                exportActivityAsync(result.getActivityId());
+                exportActivityAsync(result);
                 showStartScreenIfPossible();
                 break;
             case DISCARD:
@@ -434,13 +442,21 @@ public class MainActivity extends FragmentActivity implements
         }
     }
 
-    private void exportActivityAsync(final int activityId) {
+    private void exportActivityAsync(
+            final RecordingOperationResult terminalResult) {
+        if (!terminalResult.hasTerminalCompletion()
+                || !_terminalExportCoordinator.begin(
+                        terminalResult.getTerminalCompletionId())) {
+            return;
+        }
+        final int activityId = terminalResult.getActivityId();
+        final long terminalCompletionId =
+                terminalResult.getTerminalCompletionId();
         try {
             _exportExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
-                    try {
-                        SqlLogger sqlLogger = new SqlLogger();
+                    try (SqlLogger sqlLogger = new SqlLogger()) {
                         SportActivity activity =
                                 sqlLogger.getSportActivity(activityId);
                         activity.SportTrackPoints =
@@ -455,31 +471,64 @@ public class MainActivity extends FragmentActivity implements
                         Task<DataItem> putTask =
                                 Wearable.getDataClient(MainActivity.this)
                                         .putDataItem(request);
+                        putTask.addOnSuccessListener(dataItem ->
+                                handleTerminalExportSuccess(
+                                        terminalCompletionId));
                         putTask.addOnFailureListener(exception ->
-                                Log.e(
-                                        TAG,
-                                        "Could not transmit retained activity "
-                                                + activityId
-                                                + ".",
+                                handleTerminalExportFailure(
+                                        terminalCompletionId,
+                                        activityId,
                                         exception));
                     } catch (Exception exception) {
-                        Log.e(
-                                TAG,
-                                "Could not export retained activity "
-                                        + activityId
-                                        + ".",
+                        handleTerminalExportFailure(
+                                terminalCompletionId,
+                                activityId,
                                 exception);
                     }
                 }
             });
         } catch (RuntimeException exception) {
+            handleTerminalExportFailure(
+                    terminalCompletionId, activityId, exception);
+        }
+    }
+
+    private void handleTerminalExportSuccess(long terminalCompletionId) {
+        boolean acknowledged = _terminalExportCoordinator.succeeded(
+                terminalCompletionId,
+                operationId -> {
+                    SportLoggerService service = _loggingService;
+                    return service != null
+                            && service.acknowledgeTerminalCompletion(
+                                    operationId);
+                });
+        if (!acknowledged) {
+            SportLoggerService service = _loggingService;
+            if (service != null) {
+                service.releaseTerminalCompletion(terminalCompletionId);
+            }
             Log.e(
                     TAG,
-                    "Activity export was not scheduled; database data remains retained for "
-                            + activityId
-                            + ".",
-                    exception);
+                    "Data Layer handoff succeeded but its durable terminal "
+                            + "acknowledgment remains pending.");
         }
+    }
+
+    private void handleTerminalExportFailure(
+            long terminalCompletionId,
+            int activityId,
+            Exception exception) {
+        _terminalExportCoordinator.failed(terminalCompletionId);
+        SportLoggerService service = _loggingService;
+        if (service != null) {
+            service.releaseTerminalCompletion(terminalCompletionId);
+        }
+        Log.e(
+                TAG,
+                "Could not export retained activity "
+                        + activityId
+                        + "; durable retry remains pending.",
+                exception);
     }
 
     @Override

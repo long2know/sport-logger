@@ -43,4 +43,27 @@ public class RecordingOperationResultTest {
         assertEquals(19L, result.getOperationToken());
         assertEquals(24, result.getActivityId());
     }
+
+    @Test
+    public void terminalStopCarriesDurableCompletionIdentity() {
+        RecordingTerminalCompletion completion =
+                new RecordingTerminalCompletion(
+                        29L,
+                        31,
+                        37L,
+                        RecordingTerminalCompletion.Type.STOP_EXPORT,
+                        RecordingTerminalCompletion.Result.SUCCESS);
+
+        RecordingOperationResult result =
+                RecordingOperationResult.terminalStopSuccess(completion, 41L);
+
+        assertEquals(RecordingOperationResult.Status.SUCCESS, result.getStatus());
+        assertEquals(
+                RecordingOperationResult.Operation.STOP,
+                result.getOperation());
+        assertEquals(41L, result.getOperationToken());
+        assertEquals(29L, result.getTerminalCompletionId());
+        assertEquals(37L, result.getWriterGeneration());
+        assertEquals(31, result.getActivityId());
+    }
 }

@@ -1,6 +1,9 @@
 package com.long2know.sportlogger.services;
 
-final class PermissionCheckedTask implements Runnable {
+import java.util.concurrent.atomic.AtomicBoolean;
+
+final class PermissionCheckedTask
+        implements RecordingWriterCoordinator.Task {
     interface PermissionCheck {
         boolean allRequiredPermissionsGranted();
     }
@@ -13,6 +16,8 @@ final class PermissionCheckedTask implements Runnable {
     private final PermissionCheck _permissionCheck;
     private final Runnable _permittedTask;
     private final Runnable _permissionLossTask;
+    private final Runnable _cleanupTask;
+    private final AtomicBoolean _closed = new AtomicBoolean(false);
 
     PermissionCheckedTask(
             PermissionCheck permissionCheck,
@@ -26,10 +31,25 @@ final class PermissionCheckedTask implements Runnable {
             PermissionCheck permissionCheck,
             Runnable permittedTask,
             Runnable permissionLossTask) {
+        this(
+                cancellationCheck,
+                permissionCheck,
+                permittedTask,
+                permissionLossTask,
+                () -> { });
+    }
+
+    PermissionCheckedTask(
+            CancellationCheck cancellationCheck,
+            PermissionCheck permissionCheck,
+            Runnable permittedTask,
+            Runnable permissionLossTask,
+            Runnable cleanupTask) {
         _cancellationCheck = cancellationCheck;
         _permissionCheck = permissionCheck;
         _permittedTask = permittedTask;
         _permissionLossTask = permissionLossTask;
+        _cleanupTask = cleanupTask;
     }
 
     @Override
@@ -50,7 +70,16 @@ final class PermissionCheckedTask implements Runnable {
         _permittedTask.run();
     }
 
+    @Override
+    public void close() {
+        if (_closed.compareAndSet(false, true)) {
+            _cleanupTask.run();
+        }
+    }
+
     private boolean isCancelled() {
-        return Thread.currentThread().isInterrupted() || _cancellationCheck.isCancelled();
+        return _closed.get()
+                || Thread.currentThread().isInterrupted()
+                || _cancellationCheck.isCancelled();
     }
 }

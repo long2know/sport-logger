@@ -22,7 +22,7 @@ import com.long2know.utilities.models.SportTrackPoint;
 import com.long2know.utilities.tcxzpot.Trackpoint;
 
 
-public class SqlLogger implements Runnable {
+public class SqlLogger implements Runnable, AutoCloseable {
 
     public static final String TAG = "SqlLogger";
     public static final String DATABASE_NAME = "GPSLOGGERDB_LONG2KNOW";
@@ -71,6 +71,14 @@ public class SqlLogger implements Runnable {
         // Moves the current Thread into the background
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
         writeData();
+    }
+
+    @Override
+    public synchronized void close() {
+        if (_db != null) {
+            _db.close();
+            _db = null;
+        }
     }
 
     private void writeData() {
@@ -268,6 +276,7 @@ public class SqlLogger implements Runnable {
                 cursor.close();
             }
         }
+        db.close();
 
         return retVal;
     }
@@ -357,6 +366,7 @@ public class SqlLogger implements Runnable {
         whereClause = A_ROWID + "=?";
         whereArgs = new String[] { Integer.toString(id) };
         db.delete(ACTIVITY_TABLE_NAME, whereClause, whereArgs);
+        db.close();
     }
 
     public List<SportTrackPoint> getTrackPointsByActivity(int activityId) {
@@ -410,6 +420,7 @@ public class SqlLogger implements Runnable {
                 cursor.close();
             }
         }
+        db.close();
 
         return retVal;
     }

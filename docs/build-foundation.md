@@ -108,8 +108,9 @@ return the existing pending token, and invalid cross-state actions are rejected 
 second fence. The Wear activity disables start/resume/stop/discard/retry controls while that token is
 in flight, including after activity reconnection. Until completion is delivered, status reconciliation
 keeps the previous stable screen; navigation changes only from the asynchronous completion callback.
-The service publishes the completion or failure into its reconnect-safe pending slot before releasing
-the operation token, so no later click can enter the pipeline between state commit and result delivery.
+The service publishes nonterminal completion or failure into its reconnect-safe pending slot before
+releasing the operation token, so no later click can enter the pipeline between state commit and
+result delivery. Successful stop uses the separate durable handoff described below.
 
 Each operation captures the service generation, operation token, activity ID, and writer generation
 under a short service lock. Writer/listener fences, listener readiness waits, synchronous recovery
@@ -122,9 +123,13 @@ a stale service that passed an earlier check therefore cannot fence whichever ge
 service has installed in the meantime.
 
 A writer generation captures its activity ID before scheduling, and every SQL insert uses that
-immutable ID instead of consulting the mutable shared `ActivityId`. A generation claim is published
-to the service before the scheduler can run, so permission loss or destruction cannot strand a newer
-untracked writer. A process-wide writer coordinator permits at most one generation and fences
+immutable ID instead of consulting the mutable shared `ActivityId`. The writer coordinator reserves
+the generation/activity slot under its short monitor, publishes the generation claim, then creates
+the scheduler task and opens `SqlLogger` only after releasing that monitor. It revalidates the same
+reservation before publishing or scheduling. Permission loss or destruction can therefore invalidate
+a slow reservation immediately instead of waiting behind SQLite initialization; a task that finishes
+construction after its reservation was fenced is never scheduled and is closed with its scheduler.
+A process-wide writer coordinator permits at most one generation and fences
 cancellation plus an in-flight write before pause, stop/export, discard/delete, permission-loss
 completion, or a later recording. The fence is bounded to two seconds and honors interruption. If it
 times out or otherwise fails, the operation returns a typed failure, keeps the activity and database
@@ -176,6 +181,13 @@ the established owner, so destruction or permission loss closes its active gate 
 races the listener-readiness handshake. The service client is cleared by identity,
 preventing an old activity instance from disconnecting its replacement.
 
+A start or resume starts the service stopwatch inside the same final service-monitor commit that
+revalidates the operation token, service generation, activity ID, writer generation, permission gate,
+and recording state. Permission loss, writer failure, stop/discard, or destruction therefore either
+wins before that commit and makes startup a no-op, or wins afterward and pauses the already-started
+timer. Cleanup repeats an idempotent final pause (and reset where terminal) after its writer/listener
+fences so a dequeued stale completion cannot leave timing active.
+
 A detected revocation invalidates any active operation token and closes listener callback production
 immediately, then queues bounded writer and listener fences on the same lifecycle executor. This
 preemption does not wait for a stop/discard fence while holding the service monitor, so permission
@@ -191,7 +203,8 @@ successful.
 `onDestroy()` is nonblocking. It first marks the service closing, clears its client, invalidates the
 service/operation and listener generations, and only then shuts down the lifecycle executor. Exact
 writer and listener cleanup continues on a bounded destruction executor without updating UI or
-clearing recovery ownership. A writer/listener callback that races or follows destruction therefore
+clearing recovery ownership or a pending terminal export handoff. A writer/listener callback that
+races or follows destruction therefore
 cannot submit to the shut-down executor, throw `RejectedExecutionException`, mutate a replacement
 service, export/delete data, or notify stale UI. Rejected cleanup is logged explicitly and leaves the
 database and durable recovery tuple intact; current-process-only metadata is logged as unable to
@@ -206,6 +219,22 @@ service or retained recovery status, then render the pending idle, recording, pa
 once the `FragmentManager` can safely commit. Stop export database reads and serialization run on a
 separate activity executor and are entered only from a successful stop completion; failed or stale
 terminal operations retain data and never take the export/delete/navigation success path.
+
+Before a fenced stop clears active recording ownership or reports success, it synchronously persists a
+minimal record containing a monotonic terminal operation ID, activity ID, writer generation, result,
+and `STOP_EXPORT` type. This single-slot legacy terminal export handoff survives activity recreation,
+service destruction/restart, and unrelated permission loss. The service replays it until the activity
+reports a successful Data Layer handoff acknowledgment from `putDataItem`; task submission alone,
+failure, cancellation, a missing callback, or process death leaves it pending for retry. Duplicate
+delivery and acknowledgment are idempotent, and discard checks both submission and deletion paths so
+it cannot delete the protected stopped activity. A failed terminal-record commit leaves the source
+activity in explicit recovery instead of returning stop success.
+
+This compatibility bridge is intentionally not the future canonical Data Layer outbox. It stores only
+one pending stopped activity, blocks another recording/discard while that slot is occupied, retains the
+SQLite source rows, and treats Data Layer acceptance as handoff rather than proof that the phone
+consumed the workout. A later sync milestone must replace it with a bounded multi-item outbox,
+receiver acknowledgment, retry policy, and lifecycle-independent worker.
 
 ## Pinned direct dependencies
 
@@ -285,8 +314,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew clean assembleDebug test lint --no-daemon
 ```
 
-The final clean local run completed successfully with 202 actionable tasks. Thirty-six unit-test
-reports contained 200 tests with zero failures, errors, or skips. Lint completed with zero errors and
+The final clean local run completed successfully with 202 actionable tasks. Forty-two unit-test
+reports contained 242 tests with zero failures, errors, or skips. Lint completed with zero errors and
 82 unsuppressed warnings (6 mobile, 71 Wear, and 5 utilities).
 
 The clean build produces:
@@ -303,8 +332,9 @@ Actions 6.2.0.
 ## Known behavior intentionally not modernized
 
 - Recording still uses the existing raw `SensorManager` and `LocationManager` implementation.
-- Watch-to-phone transfer still uses the existing Java-serialized Data Item/Asset path and has no
-  durable acknowledgement protocol.
+- Watch-to-phone transfer still uses the existing Java-serialized Data Item/Asset path. The bounded
+  single-slot handoff acknowledges only successful Data Layer acceptance, not phone consumption; it is
+  not a general sync outbox.
 - Persistence remains the existing raw SQLite implementation; Room and legacy-data ETL are later
   work.
 - The phone still uses deprecated in-process `LocalBroadcastManager` behavior to preserve the

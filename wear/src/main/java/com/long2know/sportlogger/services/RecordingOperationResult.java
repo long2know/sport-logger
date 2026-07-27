@@ -30,7 +30,9 @@ public final class RecordingOperationResult {
         START_FAILED,
         DATABASE_FAILED,
         RECOVERY_PERSISTENCE_FAILED,
-        RECOVERY_IN_PROGRESS
+        RECOVERY_IN_PROGRESS,
+        TERMINAL_PERSISTENCE_FAILED,
+        TERMINAL_COMPLETION_PENDING
     }
 
     public enum RecoveryAction {
@@ -52,6 +54,8 @@ public final class RecordingOperationResult {
     private final RecoveryRetention _recoveryRetention;
     private final Operation _operation;
     private final long _operationToken;
+    private final long _terminalCompletionId;
+    private final long _writerGeneration;
 
     private RecordingOperationResult(
             Status status,
@@ -59,13 +63,17 @@ public final class RecordingOperationResult {
             RecoveryAction recoveryAction,
             RecoveryRetention recoveryRetention,
             Operation operation,
-            long operationToken) {
+            long operationToken,
+            long terminalCompletionId,
+            long writerGeneration) {
         _status = status;
         _activityId = activityId;
         _recoveryAction = recoveryAction;
         _recoveryRetention = recoveryRetention;
         _operation = operation;
         _operationToken = operationToken;
+        _terminalCompletionId = terminalCompletionId;
+        _writerGeneration = writerGeneration;
     }
 
     public static RecordingOperationResult of(Status status, int activityId) {
@@ -75,6 +83,8 @@ public final class RecordingOperationResult {
                 RecoveryAction.NONE,
                 RecoveryRetention.NONE,
                 Operation.NONE,
+                0L,
+                0L,
                 0L);
     }
 
@@ -99,6 +109,8 @@ public final class RecordingOperationResult {
                 recoveryAction,
                 recoveryRetention,
                 Operation.NONE,
+                0L,
+                0L,
                 0L);
     }
 
@@ -145,20 +157,37 @@ public final class RecordingOperationResult {
                 recoveryAction,
                 recoveryRetention,
                 operation,
-                operationToken);
+                operationToken,
+                0L,
+                0L);
     }
 
     static RecordingOperationResult forOperation(
             RecordingOperationResult result,
             Operation operation,
             long operationToken) {
-        return operation(
+        return new RecordingOperationResult(
                 result.getStatus(),
-                operation,
-                operationToken,
                 result.getActivityId(),
                 result.getRecoveryAction(),
-                result.getRecoveryRetention());
+                result.getRecoveryRetention(),
+                operation,
+                operationToken,
+                result.getTerminalCompletionId(),
+                result.getWriterGeneration());
+    }
+
+    static RecordingOperationResult terminalStopSuccess(
+            RecordingTerminalCompletion completion, long operationToken) {
+        return new RecordingOperationResult(
+                Status.SUCCESS,
+                completion.getActivityId(),
+                RecoveryAction.NONE,
+                RecoveryRetention.NONE,
+                Operation.STOP,
+                operationToken,
+                completion.getOperationId(),
+                completion.getGeneration());
     }
 
     public Status getStatus() {
@@ -183,6 +212,21 @@ public final class RecordingOperationResult {
 
     public long getOperationToken() {
         return _operationToken;
+    }
+
+    public long getTerminalCompletionId() {
+        return _terminalCompletionId;
+    }
+
+    public long getWriterGeneration() {
+        return _writerGeneration;
+    }
+
+    public boolean hasTerminalCompletion() {
+        return _terminalCompletionId > 0L
+                && _writerGeneration > 0L
+                && _operation == Operation.STOP
+                && _status == Status.SUCCESS;
     }
 
     public boolean isAccepted() {

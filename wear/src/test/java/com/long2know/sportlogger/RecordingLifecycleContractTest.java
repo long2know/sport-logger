@@ -22,14 +22,18 @@ public class RecordingLifecycleContractTest {
         String activity = read(
                 "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
 
-        assertTrue(service.contains("new SqlLogger(activityId)"));
+        assertTrue(service.contains(
+                "SqlLogger sqlLogger = new SqlLogger(activityId)"));
         assertTrue(logger.contains("public SqlLogger(int activityId)"));
+        assertTrue(logger.contains(
+                "implements Runnable, AutoCloseable"));
+        assertTrue(logger.contains("public synchronized void close()"));
         assertTrue(logger.contains("int activityId = _activityId;"));
         assertFalse(logger.contains("int activityId = singleton.ActivityId"));
-        assertTrue(activity.contains(
-                "exportActivityAsync(result.getActivityId())"));
+        assertTrue(activity.contains("exportActivityAsync(result)"));
         assertTrue(activity.contains(
                 "getTrackPointsByActivity(activityId)"));
+        assertTrue(service.contains("sqlLogger::close"));
     }
 
     @Test
@@ -125,8 +129,18 @@ public class RecordingLifecycleContractTest {
                 stop.indexOf("RecordingTerminalTransition.finish(")
                         < stop.indexOf("_recoveryState.clearAfterStop("));
         assertTrue(
+                stop.indexOf("_terminalCompletions.recordSuccessfulStop(")
+                        < stop.indexOf(
+                                "RecordingTerminalTransition.finish("));
+        int terminalRecord = stop.indexOf(
+                "_terminalCompletions.recordSuccessfulStop(");
+        int finalOwnershipCheck = stop.lastIndexOf(
+                "if (!operationOwns(token))", terminalRecord);
+        assertTrue(finalOwnershipCheck >= 0);
+        assertTrue(finalOwnershipCheck < terminalRecord);
+        assertTrue(
                 discard.indexOf("RecordingTerminalTransition.finish(")
-                        < discard.indexOf("new SqlLogger().deleteActivity("));
+                        < discard.indexOf("sqlLogger.deleteActivity("));
     }
 
     @Test
@@ -145,10 +159,102 @@ public class RecordingLifecycleContractTest {
         assertFalse(stopAction.contains("exportActivityAsync("));
         assertTrue(completion.contains("if (!result.isSuccess())"));
         assertTrue(completion.contains("case STOP:"));
-        assertTrue(completion.contains(
-                "exportActivityAsync(result.getActivityId())"));
+        assertTrue(completion.contains("exportActivityAsync(result)"));
         assertTrue(completion.contains("showStartScreenIfPossible()"));
         assertTrue(activity.contains("_exportExecutor.execute("));
+        assertTrue(activity.contains("addOnSuccessListener"));
+        assertTrue(activity.contains("acknowledgeTerminalCompletion("));
+        assertTrue(activity.contains("addOnFailureListener"));
+        assertTrue(activity.contains("releaseTerminalCompletion("));
+    }
+
+    @Test
+    public void stopwatchStartupAndCleanupShareFinalOwnershipBoundary()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String start = method(
+                service, "private void runStart(", "private void runPause(");
+        String resume = method(
+                service, "private void runResume(", "private void runStop(");
+        String writerFailure = method(
+                service,
+                "private void runWriterFailureCleanup(",
+                "private void handleRecordingPermissionLoss(");
+        String permissionLoss = method(
+                service,
+                "private void runPermissionLoss(",
+                "private void failWithoutRecovery(");
+        String destroyCleanup = method(
+                service,
+                "private void scheduleDestroyCleanup(",
+                "private void initializeRetainedMirror(");
+
+        assertTrue(start.contains("RecordingStartCommit.commit("));
+        assertTrue(resume.contains("RecordingStartCommit.commit("));
+        assertTrue(start.contains("_stopWatch.startTImer();"));
+        assertTrue(resume.contains("_stopWatch.startTImer();"));
+        assertTrue(
+                writerFailure.indexOf("WRITERS.fenceGeneration(")
+                        < writerFailure.lastIndexOf(
+                                "_stopWatch.pauseTimer();"));
+        assertTrue(
+                permissionLoss.indexOf("WRITERS.fence")
+                        < permissionLoss.lastIndexOf(
+                                "_stopWatch.pauseTimer();"));
+        assertTrue(
+                destroyCleanup.indexOf("WRITERS.fence")
+                        < destroyCleanup.lastIndexOf(
+                                "_stopWatch.pauseTimer();"));
+    }
+
+    @Test
+    public void writerFactoriesRunOutsideCoordinatorMonitor() throws Exception {
+        String coordinator = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "RecordingWriterCoordinator.java");
+
+        assertFalse(coordinator.contains(
+                "synchronized StartStatus start("));
+        assertSynchronizedBlocksExclude(
+                coordinator,
+                "taskFactory.create(",
+                "_schedulerFactory.create()");
+        assertTrue(coordinator.contains("Reservation"));
+        assertTrue(coordinator.contains("reservationOwns("));
+        assertTrue(coordinator.contains("closePrepared("));
+    }
+
+    @Test
+    public void stopExportIsDurableUntilExplicitSuccessAcknowledgment()
+            throws Exception {
+        String service = read(
+                "wear/src/main/java/com/long2know/sportlogger/services/"
+                        + "SportLoggerService.java");
+        String activity = read(
+                "wear/src/main/java/com/long2know/sportlogger/MainActivity.java");
+        String stop = method(
+                service, "private void runStop(", "private void runDiscard(");
+        String destroy = method(
+                service, "public void onDestroy()", "public void setServiceClient(");
+
+        assertTrue(
+                stop.indexOf("_terminalCompletions.recordSuccessfulStop(")
+                        < stop.indexOf("_recoveryState.clearAfterStop("));
+        assertTrue(service.contains(
+                "SharedPreferencesRecordingTerminalCompletionStore"));
+        assertTrue(service.contains("deliverPendingTerminalCompletion()"));
+        assertTrue(service.contains(
+                "public boolean acknowledgeTerminalCompletion("));
+        assertTrue(service.contains(
+                "_terminalCompletions.protectsActivity("));
+        assertFalse(destroy.contains(
+                "_terminalCompletions.acknowledge("));
+        assertTrue(activity.contains(
+                "service.acknowledgeTerminalCompletion("));
+        assertTrue(activity.contains(
+                "service.releaseTerminalCompletion("));
     }
 
     @Test

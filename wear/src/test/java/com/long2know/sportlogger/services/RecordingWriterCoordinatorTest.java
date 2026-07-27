@@ -129,11 +129,147 @@ public class RecordingWriterCoordinatorTest {
                         token -> false,
                         (token, exception) -> { }));
 
-        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
-        assertEquals(null, schedulers.schedulers.get(0).task);
+        assertEquals(0, schedulers.schedulers.size());
         assertEquals(
                 RecordingWriterCoordinator.StartStatus.STARTED,
                 coordinator.start(owner, 18, token -> () -> { }));
+    }
+
+    @Test
+    public void slowTaskFactoryDoesNotBlockFenceAndClosesStaleTask()
+            throws Exception {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object owner = new Object();
+        CountDownLatch factoryEntered = new CountDownLatch(1);
+        CountDownLatch releaseFactory = new CountDownLatch(1);
+        CountDownLatch fenceReturned = new CountDownLatch(1);
+        AtomicReference<RecordingWriterCoordinator.GenerationToken> token =
+                new AtomicReference<>();
+        AtomicReference<RecordingWriterCoordinator.StartStatus> startStatus =
+                new AtomicReference<>();
+        CloseTrackingTask task = new CloseTrackingTask();
+
+        Thread startThread = new Thread(() -> startStatus.set(
+                coordinator.start(owner, 31, generation -> {
+                    token.set(generation);
+                    factoryEntered.countDown();
+                    awaitUninterruptibly(releaseFactory);
+                    return task;
+                })));
+        startThread.start();
+        assertTrue(factoryEntered.await(1, TimeUnit.SECONDS));
+
+        Thread fenceThread = new Thread(() -> {
+            assertTrue(coordinator.requestFenceGeneration(
+                    token.get().getActivityId(),
+                    token.get().getGeneration()));
+            fenceReturned.countDown();
+        });
+        fenceThread.start();
+
+        assertTrue(fenceReturned.await(1, TimeUnit.SECONDS));
+        assertEquals(1L, releaseFactory.getCount());
+        releaseFactory.countDown();
+        startThread.join(1_000L);
+        fenceThread.join(1_000L);
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                startStatus.get());
+        assertEquals(1, task.closeCalls.get());
+        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
+        assertEquals(null, schedulers.schedulers.get(0).task);
+    }
+
+    @Test
+    public void fencedReservationCannotReplaceANewerPublishedGeneration()
+            throws Exception {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object oldOwner = new Object();
+        Object replacementOwner = new Object();
+        CountDownLatch oldFactoryEntered = new CountDownLatch(1);
+        CountDownLatch releaseOldFactory = new CountDownLatch(1);
+        AtomicReference<RecordingWriterCoordinator.GenerationToken> oldToken =
+                new AtomicReference<>();
+        AtomicReference<RecordingWriterCoordinator.StartStatus> oldStatus =
+                new AtomicReference<>();
+        CloseTrackingTask oldTask = new CloseTrackingTask();
+
+        Thread oldStart = new Thread(() -> oldStatus.set(
+                coordinator.start(oldOwner, 32, generation -> {
+                    oldToken.set(generation);
+                    oldFactoryEntered.countDown();
+                    awaitUninterruptibly(releaseOldFactory);
+                    return oldTask;
+                })));
+        oldStart.start();
+        assertTrue(oldFactoryEntered.await(1, TimeUnit.SECONDS));
+        assertTrue(coordinator.requestFenceGeneration(
+                oldToken.get().getActivityId(),
+                oldToken.get().getGeneration()));
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(
+                        replacementOwner, 33, generation -> () -> { }));
+        long replacementGeneration =
+                coordinator.generationFor(replacementOwner, 33);
+        releaseOldFactory.countDown();
+        oldStart.join(1_000L);
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                oldStatus.get());
+        assertEquals(1, oldTask.closeCalls.get());
+        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
+        assertFalse(schedulers.schedulers.get(1).shutdownRequested);
+        assertEquals(
+                replacementGeneration,
+                coordinator.generationFor(replacementOwner, 33));
+    }
+
+    @Test
+    public void failingTaskFactoryReleasesReservationAndScheduler() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object owner = new Object();
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.START_FAILED,
+                coordinator.start(owner, 34, generation -> {
+                    throw new RuntimeException("open failed");
+                }));
+
+        assertTrue(schedulers.schedulers.get(0).shutdownRequested);
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(owner, 35, generation -> () -> { }));
+    }
+
+    @Test
+    public void successfulFenceClosesConstructedTaskExactlyOnce() {
+        FakeSchedulerFactory schedulers = new FakeSchedulerFactory();
+        RecordingWriterCoordinator coordinator =
+                new RecordingWriterCoordinator(schedulers);
+        Object owner = new Object();
+        CloseTrackingTask task = new CloseTrackingTask();
+
+        assertEquals(
+                RecordingWriterCoordinator.StartStatus.STARTED,
+                coordinator.start(owner, 36, generation -> task));
+        assertEquals(
+                LifecycleTermination.TERMINATED,
+                coordinator.fenceOwned(owner, 50));
+        assertEquals(
+                LifecycleTermination.TERMINATED,
+                coordinator.fenceOwned(owner, 50));
+
+        assertEquals(1, task.closeCalls.get());
     }
 
     @Test
@@ -363,6 +499,35 @@ public class RecordingWriterCoordinatorTest {
             FakeScheduler scheduler = new FakeScheduler();
             schedulers.add(scheduler);
             return scheduler;
+        }
+    }
+
+    private static final class CloseTrackingTask
+            implements RecordingWriterCoordinator.Task {
+        final AtomicInteger closeCalls = new AtomicInteger();
+
+        @Override
+        public void run() {
+        }
+
+        @Override
+        public void close() {
+            closeCalls.incrementAndGet();
+        }
+    }
+
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException exception) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

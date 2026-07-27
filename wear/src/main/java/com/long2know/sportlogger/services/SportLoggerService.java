@@ -83,14 +83,19 @@ public class SportLoggerService extends Service {
     private volatile boolean _closing;
     private int _activityId;
     private long _writerGeneration;
+    private long _terminalDeliveryInFlightId;
+    private long _terminalDeliveryOperationToken;
     private long _nextListenerGeneration;
     private long _listenerGeneration;
     private RecordingRecoveryState _recoveryState;
+    private RecordingTerminalCompletionState _terminalCompletions;
 
     @Override
     public void onCreate() {
         super.onCreate();
         Config.context = getApplicationContext();
+        _terminalCompletions = new RecordingTerminalCompletionState(
+                new SharedPreferencesRecordingTerminalCompletionStore(this));
         _recoveryState = new RecordingRecoveryState(
                 new SharedPreferencesRecordingRecoveryStore(this));
         initializeRetainedMirror();
@@ -143,6 +148,8 @@ public class SportLoggerService extends Service {
             _serviceClient = null;
             _pendingLifecycleFailure = null;
             _pendingOperationCompletion = null;
+            _terminalDeliveryInFlightId = 0L;
+            _terminalDeliveryOperationToken = 0L;
             _permissionLossHandled = true;
             _listenerEventsActive.set(false);
             _listenersReady = false;
@@ -150,7 +157,7 @@ public class SportLoggerService extends Service {
             _stateMachine.begin(RecordingStateMachine.Operation.SHUTDOWN);
             retained = _recoveryState == null
                     ? RecordingRecoveryState.Snapshot.idle()
-                    : _recoveryState.snapshot();
+                    : activeRecoverySnapshot();
             writerActivityId = _activityId > 0
                     ? _activityId
                     : retained.getActivityId();
@@ -173,10 +180,7 @@ public class SportLoggerService extends Service {
             startingListenerGroup.requestShutdown();
         }
         boolean writerCancellationRequested =
-                writerActivityId > 0
-                        ? WRITERS.requestFenceGeneration(
-                                writerActivityId, writerGeneration)
-                        : WRITERS.requestFenceOwned(this);
+                WRITERS.requestFenceOwned(this);
         if (!writerCancellationRequested) {
             Log.e(
                     TAG,
@@ -218,6 +222,7 @@ public class SportLoggerService extends Service {
                 public void run() {
                     deliverPendingOperationCompletion();
                     deliverPendingLifecycleFailure();
+                    deliverPendingTerminalCompletion();
                 }
             });
         }
@@ -226,6 +231,7 @@ public class SportLoggerService extends Service {
     public synchronized void clearServiceClient(ISportLoggerServiceClient client) {
         if (_serviceClient == client) {
             _serviceClient = null;
+            _terminalDeliveryInFlightId = 0L;
         }
     }
 
@@ -233,7 +239,82 @@ public class SportLoggerService extends Service {
         handleRecordingPermissionLoss(_operations.getServiceGeneration());
     }
 
+    public boolean acknowledgeTerminalCompletion(long operationId) {
+        RecordingTerminalCompletion pending =
+                _terminalCompletions == null
+                        ? null
+                        : _terminalCompletions.pending();
+        if (pending != null
+                && pending.getOperationId() == operationId) {
+            RecordingRecoveryState.Snapshot retained =
+                    _recoveryState.snapshot();
+            if (retained.ownsActivity()
+                    && retained.getActivityId() == pending.getActivityId()) {
+                RecordingRecoveryState.Transition cleared =
+                        _recoveryState.clearAfterStop(
+                                pending.getActivityId());
+                if (!cleared.isPersisted()) {
+                    return false;
+                }
+            }
+        }
+
+        RecordingTerminalCompletionState.AcknowledgeStatus status =
+                _terminalCompletions.acknowledge(operationId, true);
+        boolean acknowledged =
+                status
+                                == RecordingTerminalCompletionState
+                                        .AcknowledgeStatus.CLEARED
+                        || status
+                                == RecordingTerminalCompletionState
+                                        .AcknowledgeStatus.ALREADY_CLEARED;
+        if (acknowledged) {
+            synchronized (this) {
+                if (_terminalDeliveryInFlightId == operationId) {
+                    _terminalDeliveryInFlightId = 0L;
+                }
+                _terminalDeliveryOperationToken = 0L;
+            }
+        }
+        return acknowledged;
+    }
+
+    public void releaseTerminalCompletion(long operationId) {
+        RecordingTerminalCompletion pending =
+                _terminalCompletions == null
+                        ? null
+                        : _terminalCompletions.pending();
+        if (pending == null || pending.getOperationId() != operationId) {
+            return;
+        }
+        synchronized (this) {
+            if (_terminalDeliveryInFlightId == operationId) {
+                _terminalDeliveryInFlightId = 0L;
+            }
+        }
+    }
+
+    public void requestPendingTerminalCompletionReplay() {
+        final long serviceGeneration;
+        synchronized (this) {
+            if (_closing) {
+                return;
+            }
+            serviceGeneration = _operations.getServiceGeneration();
+        }
+        postMainForGeneration(serviceGeneration, new Runnable() {
+            @Override
+            public void run() {
+                deliverPendingTerminalCompletion();
+            }
+        });
+    }
+
     public synchronized RecordingStatus getRecordingStatus() {
+        if (_terminalCompletions != null
+                && _terminalCompletions.pending() != null) {
+            return RecordingStatus.IDLE;
+        }
         RecordingOperationDispatcher.Token active = _operations.getActive();
         if (active != null) {
             RecordingStatus pendingStatus = pendingStatus(
@@ -338,6 +419,20 @@ public class SportLoggerService extends Service {
                         publicOperation,
                         0L,
                         _activityId);
+            }
+            if (_terminalCompletions != null
+                    && _terminalCompletions.pending() != null
+                    && (publicOperation
+                            == RecordingOperationResult.Operation.START
+                            || publicOperation
+                                    == RecordingOperationResult.Operation
+                                            .DISCARD)) {
+                return operationResult(
+                        RecordingOperationResult.Status
+                                .TERMINAL_COMPLETION_PENDING,
+                        publicOperation,
+                        0L,
+                        _terminalCompletions.pending().getActivityId());
             }
             RecordingOperationResult pending =
                     _pendingOperationCompletion != null
@@ -580,19 +675,39 @@ public class SportLoggerService extends Service {
             return;
         }
 
-        synchronized (this) {
-            if (!operationOwnsLocked(token)
-                    || _permissionLossHandled
-                    || !_stateMachine.completeSuccess(
-                            RecordingStateMachine.Operation.START)) {
-                return;
-            }
-            _activityId = createdActivityId;
-            _writerGeneration = writerGeneration;
-            showRecording(createdActivityId);
-            _listenerEventsActive.set(true);
+        boolean committed = RecordingStartCommit.commit(
+                this,
+                new RecordingStartCommit.OwnershipClaim() {
+                    @Override
+                    public boolean owns() {
+                        return operationOwnsLocked(token)
+                                && !_permissionLossHandled;
+                    }
+                },
+                new RecordingStartCommit.StateCommit() {
+                    @Override
+                    public boolean commit() {
+                        if (!_stateMachine.completeSuccess(
+                                RecordingStateMachine.Operation.START)) {
+                            return false;
+                        }
+                        _activityId = createdActivityId;
+                        _writerGeneration = writerGeneration;
+                        showRecording(createdActivityId);
+                        _listenerEventsActive.set(true);
+                        return true;
+                    }
+                },
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        _stopWatch.startTImer();
+                    }
+                });
+        if (!committed) {
+            _stopWatch.pauseTimer();
+            return;
         }
-        _stopWatch.startTImer();
         postOperationCompletion(
                 token, RecordingOperationResult.success(createdActivityId));
     }
@@ -702,18 +817,38 @@ public class SportLoggerService extends Service {
             return;
         }
 
-        synchronized (this) {
-            if (!operationOwnsLocked(token)
-                    || _permissionLossHandled
-                    || !_stateMachine.completeSuccess(
-                            RecordingStateMachine.Operation.RESUME)) {
-                return;
-            }
-            _writerGeneration = writerGeneration;
-            showRecording(token.getActivityId());
-            _listenerEventsActive.set(true);
+        boolean committed = RecordingStartCommit.commit(
+                this,
+                new RecordingStartCommit.OwnershipClaim() {
+                    @Override
+                    public boolean owns() {
+                        return operationOwnsLocked(token)
+                                && !_permissionLossHandled;
+                    }
+                },
+                new RecordingStartCommit.StateCommit() {
+                    @Override
+                    public boolean commit() {
+                        if (!_stateMachine.completeSuccess(
+                                RecordingStateMachine.Operation.RESUME)) {
+                            return false;
+                        }
+                        _writerGeneration = writerGeneration;
+                        showRecording(token.getActivityId());
+                        _listenerEventsActive.set(true);
+                        return true;
+                    }
+                },
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        _stopWatch.startTImer();
+                    }
+                });
+        if (!committed) {
+            _stopWatch.pauseTimer();
+            return;
         }
-        _stopWatch.startTImer();
         postOperationCompletion(
                 token, RecordingOperationResult.success(token.getActivityId()));
     }
@@ -746,62 +881,70 @@ public class SportLoggerService extends Service {
                     null);
             return;
         }
+        _stopWatch.pauseTimer();
+        if (!operationOwns(token)) {
+            _stopWatch.pauseTimer();
+            return;
+        }
 
+        RecordingTerminalCompletionState.RecordResult terminalRecord =
+                _terminalCompletions.recordSuccessfulStop(
+                        token.getActivityId(), token.getWriterGeneration());
+        if (!terminalRecord.isPersisted()) {
+            failWithRecovery(
+                    token,
+                    terminalRecord.isOccupied()
+                            ? RecordingOperationResult.Status
+                                    .TERMINAL_COMPLETION_PENDING
+                            : RecordingOperationResult.Status
+                                    .TERMINAL_PERSISTENCE_FAILED,
+                    token.getActivityId(),
+                    token.getWriterGeneration(),
+                    null);
+            _stopWatch.pauseTimer();
+            return;
+        }
+        RecordingTerminalCompletion terminalCompletion =
+                terminalRecord.getCompletion();
         RecordingTerminalTransition.Outcome terminalOutcome;
         synchronized (this) {
             if (!operationOwnsLocked(token)) {
+                _stopWatch.pauseTimer();
                 return;
             }
             terminalOutcome = RecordingTerminalTransition.finish(
                     _stateMachine,
                     RecordingStateMachine.Operation.STOP,
                     termination);
+            if (terminalOutcome.permitsTerminalEffects()) {
+                _activityId = 0;
+                _writerGeneration = 0L;
+                _listenerEventsActive.set(false);
+                _terminalDeliveryOperationToken =
+                        token.getOperationToken();
+                showIdle();
+            }
         }
         if (!terminalOutcome.permitsTerminalEffects()) {
-            failWithRecovery(
-                    token,
-                    terminalOutcome
-                                    == RecordingTerminalTransition.Outcome
-                                            .STATE_CHANGED
-                            ? RecordingOperationResult.Status.STALE_OPERATION
-                            : writerStatus(termination),
-                    token.getActivityId(),
-                    token.getWriterGeneration(),
-                    null);
-            return;
-        }
-        if (!operationOwns(token)) {
+            Log.e(
+                    TAG,
+                    "Durable stop completion was retained after its in-memory "
+                            + "state commit became stale.");
+            _stopWatch.pauseTimer();
             return;
         }
 
         RecordingRecoveryState.Transition clearTransition =
                 _recoveryState.clearAfterStop(token.getActivityId());
         if (!clearTransition.isPersisted()) {
-            failWithRecovery(
-                    token,
-                    clearTransition.isAccepted()
-                            ? RecordingOperationResult.Status
-                                    .RECOVERY_PERSISTENCE_FAILED
-                            : RecordingOperationResult.Status.INVALID_STATE,
-                    token.getActivityId(),
-                    token.getWriterGeneration(),
-                    clearTransition);
-            return;
-        }
-
-        synchronized (this) {
-            if (!operationOwnsLocked(token)) {
-                return;
-            }
-            _activityId = 0;
-            _writerGeneration = 0L;
-            _listenerEventsActive.set(false);
-            showIdle();
+            Log.e(
+                    TAG,
+                    "Stopped activity recovery metadata could not be cleared; "
+                            + "the durable terminal handoff remains authoritative.");
         }
         _stopWatch.pauseTimer();
         _stopWatch.resetTimer();
-        postOperationCompletion(
-                token, RecordingOperationResult.success(token.getActivityId()));
+        postTerminalCompletion(token, terminalCompletion);
     }
 
     private void runDiscard(RecordingOperationDispatcher.Token token) {
@@ -832,6 +975,29 @@ public class SportLoggerService extends Service {
                     null);
             return;
         }
+        _stopWatch.pauseTimer();
+        if (_terminalCompletions.protectsActivity(token.getActivityId())) {
+            synchronized (this) {
+                if (!operationOwnsLocked(token)) {
+                    _stopWatch.pauseTimer();
+                    return;
+                }
+                _stateMachine.restoreIdle();
+                _activityId = 0;
+                _writerGeneration = 0L;
+                _listenerEventsActive.set(false);
+                showIdle();
+            }
+            _stopWatch.pauseTimer();
+            _stopWatch.resetTimer();
+            postOperationCompletion(
+                    token,
+                    RecordingOperationResult.of(
+                            RecordingOperationResult.Status
+                                    .TERMINAL_COMPLETION_PENDING,
+                            token.getActivityId()));
+            return;
+        }
 
         RecordingTerminalTransition.Outcome terminalOutcome;
         synchronized (this) {
@@ -860,8 +1026,34 @@ public class SportLoggerService extends Service {
             return;
         }
 
-        try {
-            new SqlLogger().deleteActivity(token.getActivityId());
+        if (_terminalCompletions.protectsActivity(token.getActivityId())) {
+            Log.e(
+                    TAG,
+                    "Discard was fenced because a durable stop export still "
+                            + "protects activity "
+                            + token.getActivityId()
+                            + ".");
+            synchronized (this) {
+                if (operationOwnsLocked(token)) {
+                    _stateMachine.restoreIdle();
+                    _activityId = 0;
+                    _writerGeneration = 0L;
+                    _listenerEventsActive.set(false);
+                    showIdle();
+                }
+            }
+            _stopWatch.pauseTimer();
+            _stopWatch.resetTimer();
+            postOperationCompletion(
+                    token,
+                    RecordingOperationResult.of(
+                            RecordingOperationResult.Status
+                                    .TERMINAL_COMPLETION_PENDING,
+                            token.getActivityId()));
+            return;
+        }
+        try (SqlLogger sqlLogger = new SqlLogger()) {
+            sqlLogger.deleteActivity(token.getActivityId());
         } catch (RuntimeException exception) {
             Log.e(TAG, "Could not discard activity.", exception);
             failWithRecovery(
@@ -1083,6 +1275,12 @@ public class SportLoggerService extends Service {
     }
 
     private void runStartup(RecordingOperationDispatcher.Token token) {
+        RecordingTerminalCompletion pendingTerminal =
+                _terminalCompletions.pending();
+        if (pendingTerminal != null) {
+            runStartupWithTerminalCompletion(token, pendingTerminal);
+            return;
+        }
         RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
         boolean activityExists = retained.ownsActivity();
         if (activityExists) {
@@ -1188,6 +1386,70 @@ public class SportLoggerService extends Service {
                         retained.ownsActivity() ? retained.getActivityId() : 0));
     }
 
+    private void runStartupWithTerminalCompletion(
+            RecordingOperationDispatcher.Token token,
+            RecordingTerminalCompletion terminalCompletion) {
+        WRITERS.restoreGenerationFloor(terminalCompletion.getGeneration());
+        LifecycleTermination writerTermination =
+                WRITERS.fenceGeneration(
+                        terminalCompletion.getActivityId(),
+                        terminalCompletion.getGeneration(),
+                        WRITER_FENCE_TIMEOUT_MILLIS);
+        if (!writerTermination.succeeded()) {
+            failStartupWithRecovery(
+                    token,
+                    writerStatus(writerTermination),
+                    RecordingRecoveryState.Snapshot.idle(),
+                    null);
+            _stopWatch.pauseTimer();
+            return;
+        }
+
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        if (retained.ownsActivity()
+                && retained.getActivityId()
+                        == terminalCompletion.getActivityId()) {
+            RecordingRecoveryState.Transition cleared =
+                    _recoveryState.clearAfterStop(
+                            terminalCompletion.getActivityId());
+            if (!cleared.isPersisted()) {
+                Log.e(
+                        TAG,
+                        "Terminal startup replay could not clear stale recovery "
+                                + "metadata; discard remains protected.");
+            }
+        }
+
+        LifecycleTermination listenerStartup =
+                replaceOwnedListeners(token.getServiceGeneration(), token);
+        if (!listenerStartup.succeeded()) {
+            failStartupWithRecovery(
+                    token,
+                    listenerStatus(listenerStartup),
+                    RecordingRecoveryState.Snapshot.idle(),
+                    null);
+            _stopWatch.pauseTimer();
+            return;
+        }
+
+        synchronized (this) {
+            if (!operationOwnsLocked(token)) {
+                _stopWatch.pauseTimer();
+                return;
+            }
+            _startupReady = true;
+            _permissionLossHandled = false;
+            _activityId = 0;
+            _writerGeneration = 0L;
+            _stateMachine.restoreIdle();
+            _listenerEventsActive.set(false);
+            showIdle();
+        }
+        _stopWatch.pauseTimer();
+        _stopWatch.resetTimer();
+        postOperationCompletion(token, RecordingOperationResult.success(0));
+    }
+
     private void failStartupWithRecovery(
             RecordingOperationDispatcher.Token token,
             RecordingOperationResult.Status status,
@@ -1252,31 +1514,40 @@ public class SportLoggerService extends Service {
                 activityId,
                 generation -> {
                     started.set(generation);
-                    return new PermissionCheckedTask(
-                            new PermissionCheckedTask.CancellationCheck() {
-                                @Override
-                                public boolean isCancelled() {
-                                    return _permissionLossHandled
-                                            || _closing
-                                            || !WRITERS.isActive(generation);
-                                }
-                            },
-                            new PermissionCheckedTask.PermissionCheck() {
-                                @Override
-                                public boolean allRequiredPermissionsGranted() {
-                                    return RecordingPermissions
-                                            .allRequiredForRecordingGranted(
-                                                    SportLoggerService.this);
-                                }
-                            },
-                            new SqlLogger(activityId),
-                            new Runnable() {
-                                @Override
-                                public void run() {
-                                    handleRecordingPermissionLoss(
-                                            serviceGeneration);
-                                }
-                            });
+                    SqlLogger sqlLogger = new SqlLogger(activityId);
+                    try {
+                        return new PermissionCheckedTask(
+                                new PermissionCheckedTask.CancellationCheck() {
+                                    @Override
+                                    public boolean isCancelled() {
+                                        return _permissionLossHandled
+                                                || _closing
+                                                || !WRITERS.isActive(
+                                                        generation);
+                                    }
+                                },
+                                new PermissionCheckedTask.PermissionCheck() {
+                                    @Override
+                                    public boolean
+                                            allRequiredPermissionsGranted() {
+                                        return RecordingPermissions
+                                                .allRequiredForRecordingGranted(
+                                                        SportLoggerService.this);
+                                    }
+                                },
+                                sqlLogger,
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        handleRecordingPermissionLoss(
+                                                serviceGeneration);
+                                    }
+                                },
+                                sqlLogger::close);
+                    } catch (RuntimeException exception) {
+                        sqlLogger.close();
+                        throw exception;
+                    }
                 },
                 new RecordingWriterCoordinator.GenerationClaim() {
                     @Override
@@ -1415,6 +1686,7 @@ public class SportLoggerService extends Service {
                         generation.getGeneration(),
                         WRITER_FENCE_TIMEOUT_MILLIS);
         LifecycleTermination listenerTermination = releaseOwnedListeners();
+        _stopWatch.pauseTimer();
 
         synchronized (this) {
             if (!operationOwnsLocked(cleanupToken)) {
@@ -1510,11 +1782,7 @@ public class SportLoggerService extends Service {
             startingListenerGroup.requestShutdown();
         }
         boolean writerCancellationRequested =
-                permissionToken.getActivityId() > 0
-                        ? WRITERS.requestFenceGeneration(
-                                permissionToken.getActivityId(),
-                                permissionToken.getWriterGeneration())
-                        : WRITERS.requestFenceOwned(this);
+                WRITERS.requestFenceOwned(this);
         if (!writerCancellationRequested) {
             Log.e(
                     TAG,
@@ -1530,7 +1798,8 @@ public class SportLoggerService extends Service {
                     }
                 });
         if (dispatch != RecordingOperationDispatcher.DispatchStatus.SCHEDULED) {
-            RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+            RecordingRecoveryState.Snapshot retained =
+                    activeRecoverySnapshot();
             synchronized (this) {
                 if (operationOwnsLocked(permissionToken)) {
                     if (retained.ownsActivity()) {
@@ -1565,7 +1834,7 @@ public class SportLoggerService extends Service {
 
     private void runPermissionLoss(
             RecordingOperationDispatcher.Token permissionToken) {
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        RecordingRecoveryState.Snapshot retained = activeRecoverySnapshot();
         int writerActivityId = permissionToken.getActivityId() > 0
                 ? permissionToken.getActivityId()
                 : retained.getActivityId();
@@ -1581,6 +1850,7 @@ public class SportLoggerService extends Service {
                         : WRITERS.fenceOwned(
                                 this, WRITER_FENCE_TIMEOUT_MILLIS);
         LifecycleTermination listenerTermination = releaseOwnedListeners();
+        _stopWatch.pauseTimer();
         if (!writerTermination.succeeded()
                 || !listenerTermination.succeeded()) {
             RecordingRecoveryState.Transition recoveryTransition =
@@ -1753,6 +2023,7 @@ public class SportLoggerService extends Service {
                                 + listenerTermination);
             }
         }
+        _stopWatch.pauseTimer();
         postOperationCompletion(
                 token,
                 recoveryFailure(
@@ -1950,6 +2221,7 @@ public class SportLoggerService extends Service {
                                         + ", startingListeners="
                                         + startingListenerTermination);
                     }
+                    _stopWatch.pauseTimer();
                 }
             });
         } catch (RuntimeException exception) {
@@ -1964,7 +2236,7 @@ public class SportLoggerService extends Service {
     }
 
     private void initializeRetainedMirror() {
-        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        RecordingRecoveryState.Snapshot retained = activeRecoverySnapshot();
         synchronized (this) {
             if (retained.ownsActivity()) {
                 _activityId = retained.getActivityId();
@@ -1976,6 +2248,20 @@ public class SportLoggerService extends Service {
                 showIdle();
             }
         }
+    }
+
+    private RecordingRecoveryState.Snapshot activeRecoverySnapshot() {
+        RecordingRecoveryState.Snapshot retained = _recoveryState.snapshot();
+        RecordingTerminalCompletion pending =
+                _terminalCompletions == null
+                        ? null
+                        : _terminalCompletions.pending();
+        return pending != null
+                        && retained.ownsActivity()
+                        && pending.getActivityId()
+                                == retained.getActivityId()
+                ? RecordingRecoveryState.Snapshot.idle()
+                : retained;
     }
 
     private synchronized boolean claimActivity(
@@ -2077,6 +2363,35 @@ public class SportLoggerService extends Service {
                 });
     }
 
+    private void postTerminalCompletion(
+            RecordingOperationDispatcher.Token token,
+            RecordingTerminalCompletion terminalCompletion) {
+        synchronized (this) {
+            if (_closing
+                    || !_operations.isServiceGenerationCurrent(
+                            token.getServiceGeneration())
+                    || !_operations.owns(token)) {
+                Log.w(
+                        TAG,
+                        "Durable terminal completion "
+                                + terminalCompletion.getOperationId()
+                                + " will replay from storage after its service "
+                                + "operation became stale.");
+                return;
+            }
+            _terminalDeliveryOperationToken = token.getOperationToken();
+            _operations.finish(token);
+        }
+        postMainForGeneration(
+                token.getServiceGeneration(),
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        deliverPendingTerminalCompletion();
+                    }
+                });
+    }
+
     private void postLifecycleFailure(
             RecordingOperationDispatcher.Token token,
             RecordingOperationResult failure) {
@@ -2155,6 +2470,45 @@ public class SportLoggerService extends Service {
             _pendingLifecycleFailure = null;
         }
         client.onRecordingLifecycleFailure(failure);
+    }
+
+    private void deliverPendingTerminalCompletion() {
+        ISportLoggerServiceClient client;
+        RecordingTerminalCompletion pending =
+                _terminalCompletions == null
+                        ? null
+                        : _terminalCompletions.pending();
+        if (pending == null) {
+            return;
+        }
+        RecordingOperationResult completion;
+        synchronized (this) {
+            client = _serviceClient;
+            if (client == null
+                    || _closing
+                    || _terminalDeliveryInFlightId
+                            == pending.getOperationId()) {
+                return;
+            }
+            _terminalDeliveryInFlightId = pending.getOperationId();
+            completion = RecordingOperationResult.terminalStopSuccess(
+                    pending, _terminalDeliveryOperationToken);
+        }
+        try {
+            client.onRecordingOperationCompleted(completion);
+        } catch (RuntimeException exception) {
+            synchronized (this) {
+                if (_terminalDeliveryInFlightId
+                        == pending.getOperationId()) {
+                    _terminalDeliveryInFlightId = 0L;
+                }
+            }
+            Log.e(
+                    TAG,
+                    "Terminal completion callback failed; durable replay "
+                            + "remains pending.",
+                    exception);
+        }
     }
 
     private static RecordingStateMachine.Operation stateOperation(
