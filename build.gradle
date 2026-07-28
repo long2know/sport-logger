@@ -3,25 +3,94 @@
 buildscript {
     repositories {
         google()
-        jcenter()
-        
+        mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.3.1'
-        
-        // NOTE: Do not place your application dependencies here; they belong
-        // in the individual module build.gradle files
+        classpath 'com.android.tools.build:gradle:8.10.1'
     }
 }
+
+ext.productVersionName = '1.0'
+ext.versionCodeRangeSize = 1_000_000
+ext.phoneVersionCodeLane = 1
+ext.wearVersionCodeLane = 2
+ext.phoneReleaseSequence = 1
+ext.wearReleaseSequence = 1
+ext.phoneVersionCode =
+        ext.phoneVersionCodeLane * ext.versionCodeRangeSize + ext.phoneReleaseSequence
+ext.wearVersionCode =
+        ext.wearVersionCodeLane * ext.versionCodeRangeSize + ext.wearReleaseSequence
 
 allprojects {
     repositories {
         google()
-        jcenter()
-        
+        mavenCentral()
     }
 }
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+tasks.register('verifyPublishedVersioning') {
+    group = 'verification'
+    description = 'Verifies Play-safe phone and Wear publication version metadata.'
+
+    doLast {
+        def phoneConfig = project(':mobile').android.defaultConfig
+        def wearConfig = project(':wear').android.defaultConfig
+        def phoneCode = phoneConfig.versionCode
+        def wearCode = wearConfig.versionCode
+        def rangeSize = rootProject.ext.versionCodeRangeSize
+
+        def requireVersioning = { boolean condition, String message ->
+            if (!condition) {
+                throw new GradleException(message)
+            }
+        }
+
+        requireVersioning(
+                phoneConfig.applicationId == wearConfig.applicationId,
+                'Phone and Wear artifacts must use the same application ID.')
+        requireVersioning(
+                phoneConfig.versionName == wearConfig.versionName
+                        && phoneConfig.versionName == rootProject.ext.productVersionName,
+                'Phone and Wear artifacts must use the shared product version name.')
+        requireVersioning(
+                phoneCode == rootProject.ext.phoneVersionCode
+                        && wearCode == rootProject.ext.wearVersionCode,
+                'Application modules must use the root publication version-code scheme.')
+        requireVersioning(
+                rootProject.ext.phoneReleaseSequence > 0
+                        && rootProject.ext.phoneReleaseSequence < rangeSize,
+                'Phone release sequence must stay inside its reserved version-code range.')
+        requireVersioning(
+                rootProject.ext.wearReleaseSequence > 0
+                        && rootProject.ext.wearReleaseSequence < rangeSize,
+                'Wear release sequence must stay inside its reserved version-code range.')
+        requireVersioning(
+                rootProject.ext.phoneVersionCodeLane == 1
+                        && rootProject.ext.wearVersionCodeLane == 2,
+                'Phone and Wear must remain in their documented, non-overlapping ranges.')
+        requireVersioning(
+                phoneCode.intdiv(rangeSize) == rootProject.ext.phoneVersionCodeLane,
+                'Phone version code is outside the reserved phone range.')
+        requireVersioning(
+                wearCode.intdiv(rangeSize) == rootProject.ext.wearVersionCodeLane,
+                'Wear version code is outside the reserved Wear range.')
+        requireVersioning(
+                phoneCode != wearCode && wearCode > phoneCode,
+                'Phone and Wear version codes must be unique, with Wear preferred on overlap.')
+        requireVersioning(
+                phoneCode <= 2_100_000_000 && wearCode <= 2_100_000_000,
+                'Version codes must not exceed the Google Play maximum.')
+    }
+}
+
+subprojects {
+    plugins.withId('com.android.application') {
+        tasks.named('preBuild').configure {
+            dependsOn rootProject.tasks.named('verifyPublishedVersioning')
+        }
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
 }
