@@ -5,27 +5,24 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
 import android.content.pm.PackageManager;
+import android.location.Criteria;
 import android.location.GnssMeasurementsEvent;
 import android.location.GnssStatus;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.location.LocationProvider;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
-
-import java.util.concurrent.ScheduledExecutorService;
-import android.location.Criteria;
-import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
-import android.content.SharedPreferences;
-import android.content.SharedPreferences.Editor;
 
 import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
@@ -33,121 +30,151 @@ import com.long2know.utilities.models.SharedData;
 
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Objects;
 import java.util.TimeZone;
+import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
-public class GpsListener implements Runnable  {
+public class GpsListener implements ListenerThreadOwner.ManagedListener {
     private static final String TAG = "GpsListener";
-    private static final int MESSAGE_STOP = 0;
-    private static final int MESSAGE_RETRY = 1;
 
-    public static Handler WorkerHandler;
-    private Handler _handler;
-    private ScheduledExecutorService _scheduler;
     private static String _deviceId;
+    private static final long _minTimeMillis = 750L;
+    private static final float _minDistanceMeters = 0.1f;
+    private static final float _minAccuracyMeters = 75.0f;
+    private static String _uniqueId;
+    private static final String PREF_UNIQUE_ID = "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
 
-    private static long _minTimeMillis = 750;
-    private static float _minDistanceMeters = (float) 0.1;
-    private static float _minAccuracyMeters = 75;
+    private final Context _registrationContext;
+    private final Handler _handler;
+    private final Object _lifecycleLock = new Object();
+    private final CountDownLatch _stopped = new CountDownLatch(1);
 
+    private boolean _runStarted;
+    private volatile boolean _stopRequested;
+    private Handler _workerHandler;
+    private Looper _workerLooper;
     private LocationManager _locationManager;
     private Criteria _criteria;
-    private LocationRegistration<LocationListener> _locationRegistration;
+    private GpsRegistrationLifecycle<LocationListener, LocationEnvironment> _registrationLifecycle;
     private GnssStatus.Callback _gnssStatusListener;
     private GnssMeasurementsEvent.Callback _gnssMeasurementsListener;
     private GnssStatus _gnssStatus;
+    private boolean _isGpsLocked;
 
-    private boolean _isGpsLocked = false;
-    private boolean _providerReceiverRegistered;
+    public GpsListener(Context context, Handler handler) {
+        Context applicationContext =
+                Objects.requireNonNull(context, "context").getApplicationContext();
+        _registrationContext = Objects.requireNonNull(
+                applicationContext,
+                "GpsListener requires an application context");
+        _handler = Objects.requireNonNull(handler, "handler");
+    }
 
-    private static String _uniqueId = null;
-    private static final String PREF_UNIQUE_ID = "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
-    private boolean _isStarted = true;
-    private final BroadcastReceiver _providersChangedReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (LocationManager.MODE_CHANGED_ACTION.equals(action)
-                    || LocationManager.PROVIDERS_CHANGED_ACTION.equals(action)) {
-                Handler workerHandler = WorkerHandler;
-                if (workerHandler != null) {
-                    workerHandler.sendEmptyMessage(MESSAGE_RETRY);
-                }
-            }
-        }
-    };
-
-    // Defines the code to run for this task.
     @Override
     public void run() {
-        // Moves the current Thread into the background
+        synchronized (_lifecycleLock) {
+            if (_runStarted) {
+                throw new IllegalStateException("GpsListener instances may only be run once");
+            }
+            _runStarted = true;
+        }
+
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-
         Looper.prepare();
-        _handler = Config.handler;
+        Handler workerHandler = new Handler(Objects.requireNonNull(Looper.myLooper()));
 
-        WorkerHandler = new Handler(Looper.myLooper()) {
-            public void handleMessage(Message msg) {
-                Log.d(TAG, "Received a message!");
-                // For now, the only messages are start/stop
-                if (msg.what == MESSAGE_STOP) {
-                    // The sensors are started by default
-                    if (_isStarted) {
-                        _isStarted = false;
-                        stopListeners();
-                        unregisterProviderChangesReceiver();
-                        Looper.myLooper().quit();
-                    }
-                } else if (msg.what == MESSAGE_RETRY && _isStarted) {
-                    startListeners();
+        try {
+            synchronized (_lifecycleLock) {
+                _workerHandler = workerHandler;
+                _workerLooper = workerHandler.getLooper();
+                if (!_stopRequested) {
+                    initializeRegistration(workerHandler);
+                    _registrationLifecycle.start();
                 }
             }
-        };
 
-        registerProviderChangesReceiver();
-        try {
-            startListeners();
-            Looper.loop();
+            if (!_stopRequested) {
+                Looper.loop();
+            }
         } finally {
-            stopListeners();
-            unregisterProviderChangesReceiver();
+            try {
+                synchronized (_lifecycleLock) {
+                    try {
+                        if (_registrationLifecycle != null) {
+                            _registrationLifecycle.stop();
+                        }
+                    } finally {
+                        workerHandler.removeCallbacksAndMessages(null);
+                        _workerHandler = null;
+                        _workerLooper = null;
+                    }
+                }
+            } finally {
+                try {
+                    SharedData.getInstance().setLocation(new LocationData());
+                } finally {
+                    _stopped.countDown();
+                }
+            }
         }
     }
 
-    public void startListeners() {
-        // Get a unique ID for the device
-        _deviceId = getUniqueId(Config.context);
-
-        if (_locationRegistration == null) {
-            _criteria = new Criteria();
-            _criteria.setAccuracy(Criteria.ACCURACY_FINE);
-//        criteria.setAltitudeRequired(true);
-//        criteria.setBearingRequired(true);
-//        criteria.setCostAllowed(true);
-//        criteria.setPowerRequirement(Criteria.POWER_LOW);
-
-            _locationManager =
-                    (LocationManager) Config.context.getSystemService(Context.LOCATION_SERVICE);
-            _locationRegistration = new LocationRegistration<>(
-                    new AndroidLocationBackend(),
-                    this::reportRouteStatus);
+    @Override
+    public void requestStop() {
+        RuntimeException failure = null;
+        Looper workerLooper;
+        synchronized (_lifecycleLock) {
+            if (_stopRequested) {
+                return;
+            }
+            _stopRequested = true;
+            if (_registrationLifecycle != null) {
+                try {
+                    _registrationLifecycle.stop();
+                } catch (RuntimeException exception) {
+                    failure = exception;
+                }
+            }
+            workerLooper = _workerLooper;
         }
-        _locationRegistration.start();
-//        initDatabase();
+
+        if (workerLooper != null) {
+            workerLooper.quitSafely();
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
-    public void stopListeners()    {
-        if (_locationRegistration != null) {
-            _locationRegistration.stop();
-        }
-        SharedData singleton = SharedData.getInstance();
-        singleton.setLocation(new LocationData());
+    @Override
+    public boolean awaitStopped(long timeout, TimeUnit unit) throws InterruptedException {
+        return _stopped.await(timeout, unit);
+    }
+
+    private void initializeRegistration(Handler workerHandler) {
+        _deviceId = getUniqueId(_registrationContext);
+        _criteria = new Criteria();
+        _criteria.setAccuracy(Criteria.ACCURACY_FINE);
+        _locationManager =
+                (LocationManager) _registrationContext.getSystemService(Context.LOCATION_SERVICE);
+
+        AndroidLocationPlatform platform =
+                new AndroidLocationPlatform(workerHandler, workerHandler.getLooper());
+        _registrationLifecycle = new GpsRegistrationLifecycle<>(
+                platform,
+                new HandlerRetryScheduler(workerHandler),
+                this::reportRouteStatus);
     }
 
     public synchronized static String getUniqueId(Context context) {
         if (_deviceId == null) {
             SharedPreferences sharedPrefs = context.getSharedPreferences(
-                    PREF_UNIQUE_ID, Context.MODE_PRIVATE);
+                    PREF_UNIQUE_ID,
+                    Context.MODE_PRIVATE);
             _uniqueId = sharedPrefs.getString(PREF_UNIQUE_ID, null);
             if (_uniqueId == null) {
                 _uniqueId = UUID.randomUUID().toString();
@@ -160,10 +187,9 @@ public class GpsListener implements Runnable  {
     }
 
     public LocationListener createLocationListener(final Location currentLocation) {
-        LocationListener listener = new LocationListener() {
-
-            Location _lastLocation = currentLocation;
-            double _totalDistance = 0;
+        return new LocationListener() {
+            private Location _lastLocation = currentLocation;
+            private double _totalDistance;
 
             @Override
             public void onLocationChanged(Location location) {
@@ -174,7 +200,7 @@ public class GpsListener implements Runnable  {
                     TimeZone tz = greg.getTimeZone();
                     int offset = tz.getOffset(System.currentTimeMillis());
                     greg.add(Calendar.SECOND, (offset / 1000) * -1);
-                    String ts = Config.DotnetTimestampFormat.format(greg.getTime());
+                    Config.DotnetTimestampFormat.format(greg.getTime());
                     double distance =
                             _lastLocation == null ? 0.0 : calculateDistance(_lastLocation, location);
                     _totalDistance += distance;
@@ -183,53 +209,148 @@ public class GpsListener implements Runnable  {
                     completeMessage.sendToTarget();
                     _lastLocation = location;
 
-                    SharedData singleton = SharedData.getInstance();
-                    singleton.setLocation(data);
+                    SharedData.getInstance().setLocation(data);
                 }
             }
 
             @Override
             public void onStatusChanged(String provider, int status, Bundle extras) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    if (status == LocationProvider.OUT_OF_SERVICE || status == LocationProvider.TEMPORARILY_UNAVAILABLE) {
-                        // We lost our lock
-                        _isGpsLocked = false;
-                    }
+                if (provider.equalsIgnoreCase(LocationManager.GPS_PROVIDER)
+                        && (status == LocationProvider.OUT_OF_SERVICE
+                        || status == LocationProvider.TEMPORARILY_UNAVAILABLE)) {
+                    _isGpsLocked = false;
                 }
             }
 
             @Override
             public void onProviderEnabled(String provider) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    // Our provider is enabled
+                if (provider.equalsIgnoreCase(LocationManager.GPS_PROVIDER)) {
                     _isGpsLocked = true;
                 }
-                if (_locationRegistration != null) {
-                    _locationRegistration.onProviderEnabled();
-                }
+                signalEnvironmentChanged();
             }
 
             @Override
             public void onProviderDisabled(String provider) {
-                if (provider.equalsIgnoreCase("gps")) {
-                    // We lost our lock
+                if (provider.equalsIgnoreCase(LocationManager.GPS_PROVIDER)) {
                     _isGpsLocked = false;
                 }
-                if (_locationRegistration != null) {
-                    _locationRegistration.onProviderDisabled(provider);
-                }
+                signalEnvironmentChanged();
             }
         };
-
-        return listener;
     }
 
-    private final class AndroidLocationBackend
-            implements LocationRegistration.Backend<LocationListener> {
+    private void signalEnvironmentChanged() {
+        GpsRegistrationLifecycle<LocationListener, LocationEnvironment> registrationLifecycle;
+        synchronized (_lifecycleLock) {
+            registrationLifecycle = _registrationLifecycle;
+        }
+        if (registrationLifecycle != null) {
+            registrationLifecycle.onEnvironmentChanged();
+        }
+    }
+
+    private final class AndroidLocationPlatform
+            implements GpsRegistrationLifecycle.Platform<LocationListener, LocationEnvironment> {
+        private final Handler registrationHandler;
+        private final Looper registrationLooper;
+        private BroadcastReceiver registeredReceiver;
+
+        private AndroidLocationPlatform(Handler registrationHandler, Looper registrationLooper) {
+            this.registrationHandler = registrationHandler;
+            this.registrationLooper = registrationLooper;
+        }
+
+        @Override
+        public LocationEnvironment getEnvironmentKey() {
+            boolean permissionGranted = hasLocationPermission();
+            if (!permissionGranted || _locationManager == null) {
+                return new LocationEnvironment(
+                        permissionGranted,
+                        false,
+                        false,
+                        null,
+                        false,
+                        "");
+            }
+
+            boolean hasAnyProvider = false;
+            boolean locationEnabled = false;
+            String provider = null;
+            boolean providerEnabled = false;
+            String providerSignature = "";
+            try {
+                List<String> providers = _locationManager.getAllProviders();
+                hasAnyProvider = providers != null && !providers.isEmpty();
+                providerSignature = providers == null
+                        ? ""
+                        : new TreeSet<>(providers).toString();
+                locationEnabled = hasAnyProvider && isLocationEnabled();
+                provider = locationEnabled ? getBestProvider() : null;
+                providerEnabled = provider != null && isProviderEnabled(provider);
+            } catch (SecurityException exception) {
+                permissionGranted = false;
+                hasAnyProvider = false;
+                locationEnabled = false;
+                provider = null;
+                providerEnabled = false;
+            } catch (IllegalArgumentException exception) {
+                provider = null;
+                providerEnabled = false;
+            }
+
+            return new LocationEnvironment(
+                    permissionGranted,
+                    hasAnyProvider,
+                    locationEnabled,
+                    provider,
+                    providerEnabled,
+                    providerSignature);
+        }
+
+        @Override
+        public void registerProviderChanges(Runnable callback) {
+            if (registeredReceiver != null) {
+                throw new IllegalStateException("Provider receiver already registered");
+            }
+
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    String action = intent.getAction();
+                    if (LocationManager.MODE_CHANGED_ACTION.equals(action)
+                            || LocationManager.PROVIDERS_CHANGED_ACTION.equals(action)) {
+                        callback.run();
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(LocationManager.MODE_CHANGED_ACTION);
+            filter.addAction(LocationManager.PROVIDERS_CHANGED_ACTION);
+            ContextCompat.registerReceiver(
+                    _registrationContext,
+                    receiver,
+                    filter,
+                    null,
+                    registrationHandler,
+                    ContextCompat.RECEIVER_NOT_EXPORTED);
+            registeredReceiver = receiver;
+        }
+
+        @Override
+        public void unregisterProviderChanges() {
+            BroadcastReceiver receiver = registeredReceiver;
+            if (receiver == null) {
+                throw new IllegalStateException("Provider receiver is not registered");
+            }
+            registeredReceiver = null;
+            _registrationContext.unregisterReceiver(receiver);
+        }
+
         @Override
         public boolean hasLocationPermission() {
             return ContextCompat.checkSelfPermission(
-                    Config.context,
+                    _registrationContext,
                     Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         }
 
@@ -275,12 +396,86 @@ public class GpsListener implements Runnable  {
                     provider,
                     _minTimeMillis,
                     _minDistanceMeters,
-                    listener);
+                    listener,
+                    registrationLooper);
         }
 
         @Override
         public void removeLocationUpdates(LocationListener listener) {
             _locationManager.removeUpdates(listener);
+        }
+    }
+
+    private static final class HandlerRetryScheduler
+            implements GpsRegistrationLifecycle.RetryScheduler {
+        private final Handler handler;
+
+        private HandlerRetryScheduler(Handler handler) {
+            this.handler = handler;
+        }
+
+        @Override
+        public void schedule(Runnable callback, long delayMillis) {
+            if (!handler.postDelayed(callback, delayMillis)) {
+                throw new IllegalStateException("Location retry handler is shutting down");
+            }
+        }
+
+        @Override
+        public void cancel(Runnable callback) {
+            handler.removeCallbacks(callback);
+        }
+    }
+
+    private static final class LocationEnvironment {
+        private final boolean permissionGranted;
+        private final boolean hasAnyProvider;
+        private final boolean locationEnabled;
+        private final String provider;
+        private final boolean providerEnabled;
+        private final String providerSignature;
+
+        private LocationEnvironment(
+                boolean permissionGranted,
+                boolean hasAnyProvider,
+                boolean locationEnabled,
+                String provider,
+                boolean providerEnabled,
+                String providerSignature) {
+            this.permissionGranted = permissionGranted;
+            this.hasAnyProvider = hasAnyProvider;
+            this.locationEnabled = locationEnabled;
+            this.provider = provider;
+            this.providerEnabled = providerEnabled;
+            this.providerSignature = providerSignature;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof LocationEnvironment)) {
+                return false;
+            }
+            LocationEnvironment that = (LocationEnvironment) other;
+            return permissionGranted == that.permissionGranted
+                    && hasAnyProvider == that.hasAnyProvider
+                    && locationEnabled == that.locationEnabled
+                    && providerEnabled == that.providerEnabled
+                    && Objects.equals(provider, that.provider)
+                    && Objects.equals(providerSignature, that.providerSignature);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(
+                    permissionGranted,
+                    hasAnyProvider,
+                    locationEnabled,
+                    provider,
+                    providerEnabled,
+                    providerSignature);
         }
     }
 
@@ -304,30 +499,7 @@ public class GpsListener implements Runnable  {
         }
     }
 
-    private void registerProviderChangesReceiver() {
-        if (_providerReceiverRegistered) {
-            return;
-        }
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(LocationManager.MODE_CHANGED_ACTION);
-        filter.addAction(LocationManager.PROVIDERS_CHANGED_ACTION);
-        ContextCompat.registerReceiver(
-                Config.context,
-                _providersChangedReceiver,
-                filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED);
-        _providerReceiverRegistered = true;
-    }
-
-    private void unregisterProviderChangesReceiver() {
-        if (!_providerReceiverRegistered) {
-            return;
-        }
-        Config.context.unregisterReceiver(_providersChangedReceiver);
-        _providerReceiverRegistered = false;
-    }
-
-    @SuppressWarnings({"MissingPermission"})
+    @SuppressWarnings("MissingPermission")
     private void addGnssStatusListener() {
         _gnssStatusListener = new GnssStatus.Callback() {
             @Override
@@ -348,10 +520,10 @@ public class GpsListener implements Runnable  {
             }
         };
 
-        _locationManager.registerGnssStatusCallback(_gnssStatusListener);
+        _locationManager.registerGnssStatusCallback(_gnssStatusListener, _workerHandler);
     }
 
-    @SuppressWarnings({"MissingPermission"})
+    @SuppressWarnings("MissingPermission")
     private void addGnssMeasurementsListener() {
         _gnssMeasurementsListener = new GnssMeasurementsEvent.Callback() {
             @Override
@@ -374,42 +546,45 @@ public class GpsListener implements Runnable  {
                     default:
                         statusMessage = "unknown";
                 }
-                Log.d(TAG, "GnssMeasurementsEvent.Callback.onStatusChanged() - " + statusMessage);
+                Log.d(
+                        TAG,
+                        "GnssMeasurementsEvent.Callback.onStatusChanged() - " + statusMessage);
             }
         };
 
-        _locationManager.registerGnssMeasurementsCallback(_gnssMeasurementsListener);
+        _locationManager.registerGnssMeasurementsCallback(
+                _gnssMeasurementsListener,
+                _workerHandler);
     }
 
-    public double calculateDistance(Location start, Location end)    {
+    public double calculateDistance(Location start, Location end) {
         double distance = 0.0;
-        boolean convertToMeters = true;
-        double factor = convertToMeters ? 1000.0 : 1.0;
+        double factor = 1000.0;
 
         double startLat = start.getLatitude();
         double startLon = start.getLongitude();
         double endLat = end.getLatitude();
         double endLon = end.getLongitude();
 
-        if (startLat != 0.0 && startLon != 0.0 && endLat != 0.0 && endLon != 0.0)
-        {
+        if (startLat != 0.0 && startLon != 0.0 && endLat != 0.0 && endLon != 0.0) {
             double lat1 = Math.toRadians(startLat);
             double lon1 = Math.toRadians(startLon);
             double lat2 = Math.toRadians(endLat);
             double lon2 = Math.toRadians(endLon);
 
-            double longdis = Math.toRadians(startLon - endLon); //calculating longitudinal difference
-            double angudis = Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(longdis);
-            angudis = Math.acos(angudis); //converted back to radians
-            distance = angudis * 6372.795; //multiplied by the radius of the Earth
+            double longitudeDistance = Math.toRadians(startLon - endLon);
+            double angularDistance = Math.sin(lat1) * Math.sin(lat2)
+                    + Math.cos(lat1) * Math.cos(lat2) * Math.cos(longitudeDistance);
+            angularDistance = Math.acos(angularDistance);
+            distance = angularDistance * 6372.795;
         }
 
-        // Distance will be in KM, but convert to meters if desired
         return distance / factor;
     }
 
-    // Determine if the watch has GPS
     private boolean hasGps() {
-        return Config.context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LOCATION_GPS);
+        return _registrationContext
+                .getPackageManager()
+                .hasSystemFeature(PackageManager.FEATURE_LOCATION_GPS);
     }
 }

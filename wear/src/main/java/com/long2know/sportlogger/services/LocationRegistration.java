@@ -111,12 +111,8 @@ final class LocationRegistration<L> {
         try {
             backend.requestLocationUpdates(provider, listener);
         } catch (SecurityException exception) {
-            cleanUpCandidate(listener);
             return transitionTo(Status.PERMISSION_DENIED);
         } catch (IllegalArgumentException exception) {
-            if (cleanUpCandidate(listener)) {
-                return transitionTo(Status.PERMISSION_DENIED);
-            }
             return transitionTo(Status.NO_PROVIDER);
         }
 
@@ -160,15 +156,6 @@ final class LocationRegistration<L> {
             } catch (SecurityException ignored) {
                 return true;
             }
-        }
-        return false;
-    }
-
-    private boolean cleanUpCandidate(L listener) {
-        try {
-            backend.removeLocationUpdates(listener);
-        } catch (SecurityException ignored) {
-            return true;
         }
         return false;
     }

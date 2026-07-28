@@ -64,6 +64,7 @@ public class MainActivity extends FragmentActivity implements
 
     private SportLoggerService _loggingService;
     private ServiceConnection _loggingServiceConnection;
+    private final ServiceBindingOwner _loggingServiceBinding = new ServiceBindingOwner();
     private static Intent _serviceIntent;
     private boolean _permissionRequestInFlight;
 
@@ -161,6 +162,8 @@ public class MainActivity extends FragmentActivity implements
             }
             public void onServiceConnected(ComponentName name, IBinder service)            {
                 _loggingService = ((SportLoggerService.LocalBinder) service).getService();
+                _loggingServiceBinding.setBound(true);
+                Session.setBoundToService(true);
                 SportLoggerService.setServiceClient(MainActivity.this);
             }
         };
@@ -183,10 +186,7 @@ public class MainActivity extends FragmentActivity implements
     @Override
     public void onDestroy() {
         if (SharedData.getInstance().IsRecording) {
-            if (Session.isBoundToService() && _loggingServiceConnection != null) {
-                unbindService(_loggingServiceConnection);
-                Session.setBoundToService(false);
-            }
+            unbindLoggingService();
         } else {
             stopAndUnbindServiceIfRequired();
         }
@@ -200,7 +200,7 @@ public class MainActivity extends FragmentActivity implements
 
     // Start the logger service and bind the activity to the service
     private void startAndBindServiceIfPermitted() {
-        if (!hasRequiredRecordingPermissions() || Session.isBoundToService()) {
+        if (!hasRequiredRecordingPermissions() || _loggingServiceBinding.isBound()) {
             return;
         }
 
@@ -216,20 +216,30 @@ public class MainActivity extends FragmentActivity implements
                 _serviceIntent,
                 _loggingServiceConnection,
                 Context.BIND_AUTO_CREATE);
+        _loggingServiceBinding.setBound(bound);
         Session.setBoundToService(bound);
     }
 
     // Start the logger service and bind the activity to the service
     private void stopAndUnbindServiceIfRequired() {
-        if(Session.isBoundToService())        {
-            unbindService(_loggingServiceConnection);
-            Session.setBoundToService(false);
-        }
+        unbindLoggingService();
 
         if (!Session.isStarted() && _serviceIntent != null) {
             //serviceIntent = new Intent(this, GpsLoggingService.class);
             stopService(_serviceIntent);
         }
+    }
+
+    private void unbindLoggingService() {
+        if (_loggingServiceConnection == null) {
+            return;
+        }
+
+        _loggingServiceBinding.unbindIfBound(() -> {
+            _loggingService = null;
+            Session.setBoundToService(false);
+            unbindService(_loggingServiceConnection);
+        });
     }
 
     public void startNewActivity() {
@@ -553,16 +563,7 @@ public class MainActivity extends FragmentActivity implements
          * Stops the service if it isn't logging. Also unbinds.
          */
         private void stopAndUnbindServiceIfRequired() {
-            if(Session.isBoundToService()) {
-                unbindService(_loggingServiceConnection);
-                Session.setBoundToService(false);
-            }
-
-            if(!Session.isStarted())            {
-                //serviceIntent = new Intent(this, GpsLoggingService.class);
-                stopService(_serviceIntent);
-            }
-
+            MainActivity.this.stopAndUnbindServiceIfRequired();
         }
     }
 }

@@ -47,13 +47,41 @@ public class LocationRegistrationTest {
     }
 
     @Test
-    public void providerDisappearingDuringRegistrationCleansPartialListener() {
+    public void providerDisappearingDuringRegistrationDoesNotRemoveUnconfirmedListener() {
         FakeBackend backend = new FakeBackend();
-        backend.registerBeforeRequestFailure = true;
         backend.requestFailure = new IllegalArgumentException("provider disappeared");
         LocationRegistration<TestLocationListener> registration = registrationFor(backend);
 
         assertEquals(LocationRegistration.Status.NO_PROVIDER, registration.start());
+        assertEquals(1, backend.requestCalls);
+        assertEquals(0, backend.removeCalls);
+        assertTrue(backend.activeListeners.isEmpty());
+        assertFalse(registration.isRegistered());
+    }
+
+    @Test
+    public void permissionRevokedDuringRegistrationDoesNotRemoveUnconfirmedListener() {
+        FakeBackend backend = new FakeBackend();
+        backend.requestFailure = new SecurityException("permission revoked");
+        LocationRegistration<TestLocationListener> registration = registrationFor(backend);
+
+        assertEquals(LocationRegistration.Status.PERMISSION_DENIED, registration.start());
+        assertEquals(1, backend.requestCalls);
+        assertEquals(0, backend.removeCalls);
+        assertTrue(backend.activeListeners.isEmpty());
+        assertFalse(registration.isRegistered());
+    }
+
+    @Test
+    public void permissionRevocationRemovesConfirmedListenerExactlyOnce() {
+        FakeBackend backend = new FakeBackend();
+        LocationRegistration<TestLocationListener> registration = registrationFor(backend);
+
+        assertEquals(LocationRegistration.Status.AVAILABLE, registration.start());
+        backend.permissionGranted = false;
+        assertEquals(LocationRegistration.Status.PERMISSION_DENIED, registration.start());
+        registration.stop();
+
         assertEquals(1, backend.requestCalls);
         assertEquals(1, backend.removeCalls);
         assertTrue(backend.activeListeners.isEmpty());
@@ -61,16 +89,17 @@ public class LocationRegistrationTest {
     }
 
     @Test
-    public void permissionRevokedDuringRegistrationCleansPartialListener() {
+    public void permissionRaceDuringRemovalResetsOwnershipAndRemainsIdempotent() {
         FakeBackend backend = new FakeBackend();
-        backend.registerBeforeRequestFailure = true;
-        backend.requestFailure = new SecurityException("permission revoked");
         LocationRegistration<TestLocationListener> registration = registrationFor(backend);
+        registration.start();
+        backend.removeFailure = new SecurityException("permission revoked during removal");
 
-        assertEquals(LocationRegistration.Status.PERMISSION_DENIED, registration.start());
-        assertEquals(1, backend.requestCalls);
+        registration.stop();
+        registration.stop();
+
+        assertEquals(LocationRegistration.Status.STOPPED, registration.getStatus());
         assertEquals(1, backend.removeCalls);
-        assertTrue(backend.activeListeners.isEmpty());
         assertFalse(registration.isRegistered());
     }
 
@@ -182,7 +211,7 @@ public class LocationRegistrationTest {
         boolean providerEnabled = true;
         String bestProvider = "gps";
         RuntimeException requestFailure;
-        boolean registerBeforeRequestFailure;
+        RuntimeException removeFailure;
 
         int bestProviderCalls;
         int requestCalls;
@@ -227,9 +256,6 @@ public class LocationRegistrationTest {
         public void requestLocationUpdates(String provider, TestLocationListener listener) {
             requestCalls++;
             requestedProvider = provider;
-            if (registerBeforeRequestFailure) {
-                activeListeners.add(listener);
-            }
             if (requestFailure != null) {
                 throw requestFailure;
             }
@@ -242,6 +268,9 @@ public class LocationRegistrationTest {
         public void removeLocationUpdates(TestLocationListener listener) {
             removeCalls++;
             activeListeners.remove(listener);
+            if (removeFailure != null) {
+                throw removeFailure;
+            }
         }
 
         void emitLocation() {

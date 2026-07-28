@@ -60,9 +60,10 @@ All versions are exact. `jcenter()`, dynamic dependencies, support-library artif
   `SqlLoggerOpenModeTest` proves the compile-only adaptation preserves the prior value.
 
 No `SportLoggerService` recording operation, `StopWatch`, STOP/export path, recovery state,
-listener ownership, Data Layer delivery, or database query/transaction behavior is redesigned.
-The service changes are limited to the AndroidX `NotificationCompat` signature, a local log tag,
-and the immutable `PendingIntent` flag required by current targets.
+Data Layer delivery, or database query/transaction behavior is redesigned. Beyond AndroidX and
+current-target compatibility changes, the only service/activity adaptation is the narrowly scoped
+instance ownership needed to stop the exact location listener and unbind the exact activity
+connection during teardown and recreation.
 
 ## Independent publication versioning
 
@@ -121,15 +122,26 @@ rather than widening the service or activity contract.
 Registration resolves a non-null, currently enabled provider before requesting updates. A provider
 that disappears during last-location lookup or registration is handled through the documented
 `IllegalArgumentException` boundary; permission revocation is handled through `SecurityException`.
-Candidate listeners are removed after either race, repeated starts do not register a second
-listener, and repeated stops are harmless. Provider-mode broadcasts retry resolution, so enabling
-Location recovers the route listener without restarting the recording service. Other runtime
-failures are not caught.
+Only a location request that returned successfully is recorded as registered and removed later.
+Other runtime failures remain visible.
 
-`LocationRegistrationTest` uses the existing local JUnit stack to deterministically cover no
-providers, a null best provider, a disabled provider, provider disappearance during registration,
-permission revocation during registration, successful registration, repeated start/stop,
-re-enable/retry, duplicate-callback prevention, and propagation of unexpected failures.
+Each `GpsListener` captures the application context, service forwarding handler, worker handler,
+worker looper, provider receiver, location callback, and retry callback used by that instance.
+Receiver removal never consults mutable `Config.context`. Receiver delivery and location updates
+both target the captured worker thread. Registration transitions are serialized, and teardown marks
+the lifecycle stopped and advances its generation before canceling the exact pending retry callback.
+Retries are single-flight, delayed 250 ms, limited to three attempts per distinct permission/provider
+environment, and cannot register after teardown even if a canceled callback races execution.
+
+`SportLoggerService` keeps the exact `GpsListener` beside its thread, requests stop, waits for
+listener teardown, and joins that thread before replacing or dropping it. Activity binding is also
+instance-owned, so an old activity cannot unbind a recreated activity's connection. Repeated
+start/stop/destroy remains idempotent.
+
+The local JUnit suite behaviorally injects context replacement, activity and service recreation,
+old/new listener overlap, receiver and location partial failures, queued retry/teardown races,
+retry floods, provider off/on, permission revocation, repeated stop, unexpected failures, and
+exactly-once cleanup of every successfully registered resource.
 
 ## Command-line build
 
@@ -189,6 +201,17 @@ ADB="$ANDROID_HOME/platform-tools/adb" \
   wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
+For the API-36 Wear teardown/recreation gate, the lifecycle helper grants the declared runtime
+permissions, floods Location off/on transitions, finishes and recreates the activity/service while
+a retry can be queued, requires exactly one active app location listener, and fails on process
+restart or receiver/service leak diagnostics:
+
+```bash
+ADB="$ANDROID_HOME/platform-tools/adb" \
+  ./scripts/wear-location-lifecycle-stress.sh emulator-5556 \
+  wear/build/outputs/apk/debug/wear-debug.apk 20
+```
+
 On a fresh Wear install, grant the foreground group first, then choose **All the time** for
 background fitness data. To confirm the recorder service after grants:
 
@@ -204,19 +227,20 @@ Local software-emulator/build validation on 2026-07-27:
 - `./gradlew clean assembleDebug assembleRelease test lint --no-daemon --stacktrace`: **passed**;
   the `preBuild` dependency also ran `verifyPublishedVersioning`. The run completed 273 actionable
   tasks (262 executed, 11 up-to-date).
-- Unit tests: 10 XML reports, **42 executions** (21 unique test methods across debug/release),
+- Unit tests: 16 XML reports, **80 executions** (40 unique test methods across debug/release),
   0 failures, 0 errors, 0 skipped.
 - Lint: **0 errors**, 81 unsuppressed legacy warnings (mobile 6, Wear 70, utilities 5); no baseline
   or suppression was added.
-- API-36 phone emulator: debug APK installed; cold launch reported `Status: ok`; process remained
-  alive with no fatal app log.
+- API-36 phone emulator: debug APK installed; cold launch reported `Status: ok`; 20 Location
+  off/on plus activity-recreation cycles kept PID 2816 and produced no fatal or lifecycle leak log.
 - Wear OS 6/API-36 emulator: with recording permissions granted and Location disabled, cold launch
   reported `Status: ok`; `SportLoggerService` remained foreground with inherited types `0x108`
-  (`health|location`), and `GpsListener` reported the nonfatal no-route state. Starting a recording
-  continued one-second persistence without a fatal or null-provider exception. Enabling Location
-  kept the same process, transitioned the route status to available, and produced exactly one
-  active app location listener in `dumpsys location`. Phone and Wear emulators were run
-  sequentially and stopped after validation.
+  (`health|location`), and `GpsListener` reported the nonfatal no-route state. The checked-in stress
+  helper ran 20 provider-flood plus activity/service teardown/recreation cycles: PID 11328 remained
+  unchanged, each cycle completed teardown, and `dumpsys location` showed exactly one app listener
+  whenever the service was active. Logs contained no `Receiver not registered`,
+  `IntentReceiverLeaked`, `Service not registered`, fatal exception, or process-death record. Phone
+  and Wear emulators were run sequentially and stopped after validation.
 
 Generated build outputs and temporary AVD files are not committed.
 

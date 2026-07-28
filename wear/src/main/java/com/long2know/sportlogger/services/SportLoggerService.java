@@ -35,9 +35,9 @@ public class SportLoggerService extends Service {
     public static ISportLoggerServiceClient _serviceClient;
 
     private Thread _sensorThread;
-    private Thread _locationThread;
     private SensorListener _sensorListener;
-    private GpsListener _locationListener;
+    private final ListenerThreadOwner _locationListenerOwner =
+            new ListenerThreadOwner("SportLoggerLocation", 2000L);
     private ScheduledExecutorService _scheduler;
     private StopWatch _stopWatch = new StopWatch();
 
@@ -46,7 +46,7 @@ public class SportLoggerService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        Config.context = this;
+        Config.context = getApplicationContext();
 
         // Pass through any messages
         Config.handler = new Handler(Looper.getMainLooper()) {
@@ -60,12 +60,9 @@ public class SportLoggerService extends Service {
         _notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         _sensorListener = new SensorListener();
-        _locationListener = new GpsListener();
-
-        _sensorThread = new Thread(new SensorListener());
-        _locationThread = new Thread(new GpsListener());
+        _sensorThread = new Thread(_sensorListener, "SportLoggerSensors");
         _sensorThread.start();
-        _locationThread.start();
+        _locationListenerOwner.replace(new GpsListener(Config.context, Config.handler));
 
 //        startLoggerService();
 //
@@ -87,6 +84,8 @@ public class SportLoggerService extends Service {
 
     @Override
     public void onDestroy() {
+        _locationListenerOwner.stop();
+
         if (_scheduler != null) {
             AsyncTask.execute(new Runnable() {
                 @Override
@@ -99,14 +98,13 @@ public class SportLoggerService extends Service {
             });
         }
 
-        Message lmsg = _sensorListener.WorkerHandler.obtainMessage(0);
-        _sensorListener.WorkerHandler.sendMessage(lmsg);
-
-        Message gmsg = _locationListener.WorkerHandler.obtainMessage(0);
-        _locationListener.WorkerHandler.sendMessage(gmsg);
+        Handler sensorWorkerHandler = SensorListener.WorkerHandler;
+        if (sensorWorkerHandler != null) {
+            Message message = sensorWorkerHandler.obtainMessage(0);
+            sensorWorkerHandler.sendMessage(message);
+        }
 
         _sensorThread.interrupt();
-        _locationThread.interrupt();
 
         _serviceClient = null;
         super.onDestroy();
