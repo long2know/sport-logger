@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
+import io
 import json
 import os
 import re
@@ -15,12 +17,13 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from pathlib import Path, PurePosixPath
+from typing import Callable, Iterable, Iterator, Sequence
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -29,11 +32,24 @@ MANIFEST_PATH = TOOL_DIR / "engines.json"
 LEGACY_SCHEMA_PATH = TOOL_DIR / "legacy_schema.sql"
 GATE_DRIVER_PATH = TOOL_DIR / "native" / "gate_driver.c"
 DEFAULT_CACHE_DIR = TOOL_DIR / ".cache"
+DEFAULT_WORK_DIR = TOOL_DIR / ".work"
 DEFAULT_REPORT_DIR = TOOL_DIR / "out"
 REPORT_SCHEMA = "sport-logger.sqlite-exact-compat/v1"
-BUILD_ATTESTATION_SCHEMA = 1
-BUILD_RECIPE_VERSION = 1
 REQUIRED_SOURCE_FILES = ("sqlite3.c", "sqlite3.h", "sqlite3ext.h", "shell.c")
+MAX_ARCHIVE_MEMBERS = 256
+MAX_ARCHIVE_FILE_SIZE = 64 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_SIZE = 128 * 1024 * 1024
+NATIVE_EXECUTABLE_MAGICS = {
+    b"\x7fELF",
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+}
 EXPECTED_ACTIVITY_COLUMNS = (
     "ID",
     "GMTSTART",
@@ -124,12 +140,99 @@ class RejectRedirects(urllib.request.HTTPRedirectHandler):
         raise HarnessError("UNEXPECTED_REDIRECT", f"archive request returned HTTP redirect {code}")
 
 
+def require_regular_file(
+    path: Path,
+    *,
+    code: str,
+    label: str,
+    executable: bool = False,
+    single_link: bool = False,
+) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise HarnessError(code, f"{label} is unavailable") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise HarnessError(code, f"{label} must be a regular non-symlink file")
+    if executable and metadata.st_mode & 0o111 == 0:
+        raise HarnessError(code, f"{label} is not executable")
+    if single_link and metadata.st_nlink != 1:
+        raise HarnessError(code, f"{label} must not be hard-linked")
+    return metadata
+
+
+def require_private_directory(path: Path, *, create: bool, label: str) -> None:
+    if create:
+        try:
+            path.mkdir(parents=True, mode=0o700, exist_ok=True)
+        except OSError as error:
+            raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} cannot be created") from error
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} is unavailable") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} must be a real directory")
+    if metadata.st_uid != os.geteuid():
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} is not owned by the current user")
+    try:
+        path.chmod(0o700)
+    except OSError as error:
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} permissions cannot be secured") from error
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    require_regular_file(path, code="UNSAFE_FILE", label=path.name)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise HarnessError("UNSAFE_FILE", f"{path.name} cannot be opened safely") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise HarnessError("UNSAFE_FILE", f"{path.name} changed before it could be read")
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def read_verified_archive(path: Path, spec: EngineSpec) -> bytes:
+    metadata = require_regular_file(
+        path,
+        code="UNAVAILABLE_ENGINE",
+        label=f"{spec.version} archive",
+        single_link=True,
+    )
+    if metadata.st_size != spec.archive_size:
+        raise HarnessError(
+            "ARCHIVE_SIZE_MISMATCH",
+            f"{spec.version} archive size {metadata.st_size} does not match pinned size {spec.archive_size}",
+        )
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise HarnessError("UNAVAILABLE_ENGINE", f"{spec.version} archive cannot be opened safely") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != spec.archive_size
+        ):
+            raise HarnessError("UNAVAILABLE_ENGINE", f"{spec.version} archive changed before verification")
+        data = stream.read(spec.archive_size + 1)
+    if len(data) != spec.archive_size:
+        raise HarnessError("ARCHIVE_SIZE_MISMATCH", f"{spec.version} archive size is not pinned")
+    actual_hash = hashlib.sha256(data).hexdigest()
+    if actual_hash != spec.archive_sha256:
+        raise HarnessError(
+            "CHECKSUM_MISMATCH",
+            f"{spec.version} archive SHA-256 {actual_hash} does not match the pinned SHA-256",
+        )
+    return data
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -210,20 +313,86 @@ def select_specs(specs: Sequence[EngineSpec], versions: Sequence[str] | None) ->
 
 
 def verify_archive_file(path: Path, spec: EngineSpec) -> None:
-    if path.is_symlink() or not path.is_file():
-        raise HarnessError("UNAVAILABLE_ENGINE", f"{spec.version} archive is unavailable")
-    actual_size = path.stat().st_size
-    if actual_size != spec.archive_size:
-        raise HarnessError(
-            "ARCHIVE_SIZE_MISMATCH",
-            f"{spec.version} archive size {actual_size} does not match pinned size {spec.archive_size}",
+    read_verified_archive(path, spec)
+
+
+def prepare_archive_cache(cache_dir: Path, specs: Sequence[EngineSpec]) -> Path:
+    allowed_archives = {spec.archive_name for spec in specs}
+    allowed_partials = {f"{name}.partial" for name in allowed_archives}
+    if cache_dir.exists() or cache_dir.is_symlink():
+        try:
+            metadata = cache_dir.lstat()
+        except OSError as error:
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive cache cannot be inspected") from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive cache must be a real directory")
+    else:
+        try:
+            cache_dir.mkdir(parents=True, mode=0o700)
+        except OSError as error:
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive cache cannot be created") from error
+    try:
+        cache_dir.chmod(0o700)
+        cache_entries = list(cache_dir.iterdir())
+    except OSError as error:
+        raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive cache cannot be secured") from error
+
+    for entry in cache_entries:
+        if entry.name != "archives":
+            raise HarnessError(
+                "UNTRUSTED_CACHE_CONTENT",
+                f"archive cache contains forbidden entry {entry.name!r}; cached builds and metadata are never trusted",
+            )
+
+    archive_dir = cache_dir / "archives"
+    if archive_dir.exists() or archive_dir.is_symlink():
+        try:
+            metadata = archive_dir.lstat()
+        except OSError as error:
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive directory cannot be inspected") from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive directory must be a real directory")
+    else:
+        try:
+            archive_dir.mkdir(mode=0o700)
+        except OSError as error:
+            raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive directory cannot be created") from error
+    try:
+        archive_dir.chmod(0o700)
+        archive_entries = list(archive_dir.iterdir())
+    except OSError as error:
+        raise HarnessError("UNTRUSTED_CACHE_CONTENT", "archive directory cannot be secured") from error
+
+    for entry in archive_entries:
+        if entry.name in allowed_partials:
+            try:
+                metadata = entry.lstat()
+                if not stat.S_ISLNK(metadata.st_mode) and not stat.S_ISREG(metadata.st_mode):
+                    raise HarnessError(
+                        "UNTRUSTED_CACHE_CONTENT",
+                        f"stale partial archive {entry.name!r} is not a file",
+                    )
+                entry.unlink()
+            except HarnessError:
+                raise
+            except OSError as error:
+                raise HarnessError(
+                    "UNTRUSTED_CACHE_CONTENT",
+                    f"stale partial archive {entry.name!r} cannot be removed",
+                ) from error
+            continue
+        if entry.name not in allowed_archives:
+            raise HarnessError(
+                "UNTRUSTED_CACHE_CONTENT",
+                f"archive cache contains untracked metadata or payload {entry.name!r}",
+            )
+        require_regular_file(
+            entry,
+            code="UNTRUSTED_CACHE_CONTENT",
+            label=f"cached archive {entry.name}",
+            single_link=True,
         )
-    actual_hash = sha256_file(path)
-    if actual_hash != spec.archive_sha256:
-        raise HarnessError(
-            "CHECKSUM_MISMATCH",
-            f"{spec.version} archive SHA-256 {actual_hash} does not match the pinned SHA-256",
-        )
+    return archive_dir
 
 
 def download_archive(spec: EngineSpec, archive_path: Path, offline: bool) -> None:
@@ -291,16 +460,65 @@ def download_archive(spec: EngineSpec, archive_path: Path, offline: bool) -> Non
 
 
 def extract_source(spec: EngineSpec, archive_path: Path, source_dir: Path) -> dict[str, str]:
-    if source_dir.exists():
-        shutil.rmtree(source_dir)
-    source_dir.mkdir(parents=True)
+    if source_dir.exists() or source_dir.is_symlink():
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{spec.version} source destination already exists")
+    source_dir.mkdir(parents=True, mode=0o700)
     source_hashes: dict[str, str] = {}
     try:
-        with tarfile.open(archive_path, mode="r:gz") as archive:
+        archive_bytes = read_verified_archive(archive_path, spec)
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+            members: dict[str, tarfile.TarInfo] = {}
+            total_size = 0
+            for member in archive.getmembers():
+                raw_name = member.name
+                normalized_name = raw_name[:-1] if member.isdir() and raw_name.endswith("/") else raw_name
+                parts = normalized_name.split("/")
+                posix_path = PurePosixPath(normalized_name)
+                if (
+                    not normalized_name
+                    or "\x00" in normalized_name
+                    or "\\" in normalized_name
+                    or posix_path.is_absolute()
+                    or any(part in ("", ".", "..") for part in parts)
+                    or parts[0] != spec.archive_root
+                ):
+                    raise HarnessError(
+                        "UNSAFE_ARCHIVE_MEMBER",
+                        f"{spec.version} archive contains an unsafe member path",
+                    )
+                if normalized_name in members:
+                    raise HarnessError(
+                        "UNSAFE_ARCHIVE_MEMBER",
+                        f"{spec.version} archive contains a duplicate member",
+                    )
+                if not member.isdir() and not member.isfile():
+                    raise HarnessError(
+                        "UNSAFE_ARCHIVE_MEMBER",
+                        f"{spec.version} archive contains a link or special file",
+                    )
+                if member.isfile():
+                    if member.size < 0 or member.size > MAX_ARCHIVE_FILE_SIZE:
+                        raise HarnessError(
+                            "UNSAFE_ARCHIVE_MEMBER",
+                            f"{spec.version} archive contains an oversized member",
+                        )
+                    total_size += member.size
+                    if total_size > MAX_ARCHIVE_TOTAL_SIZE:
+                        raise HarnessError(
+                            "UNSAFE_ARCHIVE_MEMBER",
+                            f"{spec.version} archive expands beyond the safe size limit",
+                        )
+                members[normalized_name] = member
+                if len(members) > MAX_ARCHIVE_MEMBERS:
+                    raise HarnessError(
+                        "UNSAFE_ARCHIVE_MEMBER",
+                        f"{spec.version} archive contains too many members",
+                    )
+
             for filename in REQUIRED_SOURCE_FILES:
                 member_name = f"{spec.archive_root}/{filename}"
                 try:
-                    member = archive.getmember(member_name)
+                    member = members[member_name]
                 except KeyError as error:
                     raise HarnessError("INVALID_ARCHIVE", f"{spec.version} archive lacks {filename}") from error
                 if not member.isfile() or member.size <= 0 or member.size > 20 * 1024 * 1024:
@@ -312,7 +530,11 @@ def extract_source(spec: EngineSpec, archive_path: Path, source_dir: Path) -> di
                 if len(data) != member.size:
                     raise HarnessError("INVALID_ARCHIVE", f"{spec.version} archive truncated {filename}")
                 destination = source_dir / filename
-                destination.write_bytes(data)
+                with destination.open("xb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                destination.chmod(0o600)
                 source_hashes[filename] = hashlib.sha256(data).hexdigest()
     except (OSError, tarfile.TarError) as error:
         raise HarnessError("INVALID_ARCHIVE", f"{spec.version} archive cannot be extracted") from error
@@ -328,15 +550,38 @@ def extract_source(spec: EngineSpec, archive_path: Path, source_dir: Path) -> di
 
 
 def minimal_environment(home: Path) -> dict[str, str]:
+    require_private_directory(home, create=True, label="command home")
+    temporary = home / "tmp"
+    require_private_directory(temporary, create=True, label="command temporary directory")
     return {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PATH": os.defpath,
         "HOME": str(home),
         "LC_ALL": "C",
         "LANG": "C",
         "TZ": "UTC",
         "SOURCE_DATE_EPOCH": "0",
         "ZERO_AR_DATE": "1",
+        "TMPDIR": str(temporary),
+        "TMP": str(temporary),
+        "TEMP": str(temporary),
     }
+
+
+def resolve_system_tool(name: str, *, missing_code: str) -> Path:
+    candidate = shutil.which(name, path=os.defpath)
+    if candidate is None:
+        raise HarnessError(missing_code, f"required system tool {name!r} is unavailable")
+    try:
+        resolved = Path(candidate).resolve(strict=True)
+    except OSError as error:
+        raise HarnessError(missing_code, f"required system tool {name!r} cannot be resolved") from error
+    require_regular_file(
+        resolved,
+        code="UNSAFE_EXECUTABLE",
+        label=f"system tool {name}",
+        executable=True,
+    )
+    return resolved
 
 
 def run_command(
@@ -347,9 +592,32 @@ def run_command(
     stdin: str | None = None,
     timeout: int = 180,
 ) -> CommandResult:
+    if not arguments:
+        raise HarnessError("MISSING_TOOL", "command has no executable")
+    executable = Path(arguments[0])
+    if not executable.is_absolute():
+        raise HarnessError(
+            "PATH_EXECUTION_FORBIDDEN",
+            f"refusing PATH-selected executable {arguments[0]!r}",
+        )
+    require_regular_file(
+        executable,
+        code="UNSAFE_EXECUTABLE",
+        label=f"executable {executable.name}",
+        executable=True,
+    )
+    if not cwd.is_absolute() or not home.is_absolute():
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", "command directories must be absolute")
+    for directory, label in ((cwd, "command working directory"), (home, "command home")):
+        try:
+            metadata = directory.lstat()
+        except OSError as error:
+            raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} is unavailable") from error
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError("UNSAFE_WORK_DIRECTORY", f"{label} must be a real directory")
     try:
         completed = subprocess.run(
-            list(arguments),
+            [os.fspath(argument) for argument in arguments],
             cwd=cwd,
             env=minimal_environment(home),
             input=stdin,
@@ -360,9 +628,9 @@ def run_command(
             check=False,
         )
     except FileNotFoundError as error:
-        raise HarnessError("MISSING_TOOL", f"required executable {arguments[0]} is unavailable") from error
+        raise HarnessError("MISSING_TOOL", f"required executable {executable.name} is unavailable") from error
     except subprocess.TimeoutExpired as error:
-        raise HarnessError("COMMAND_TIMEOUT", f"command {Path(arguments[0]).name} timed out") from error
+        raise HarnessError("COMMAND_TIMEOUT", f"command {executable.name} timed out") from error
     return CommandResult(completed.returncode, completed.stdout, completed.stderr)
 
 
@@ -400,99 +668,116 @@ def build_flags(source_dir: Path) -> tuple[list[str], list[str]]:
     return compile_flags, link_flags
 
 
-def artifact_path(build_dir: Path, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise HarnessError("INVALID_ATTESTATION", "build attestation contains an unsafe artifact path")
-    resolved = (build_dir / relative).resolve()
+def require_fresh_output(path: Path, build_dir: Path, label: str, *, executable: bool) -> None:
+    if not path.is_absolute() or not build_dir.is_absolute():
+        raise HarnessError("UNSAFE_BUILD_OUTPUT", f"{label} path is not absolute")
+    require_regular_file(
+        path,
+        code="UNSAFE_BUILD_OUTPUT",
+        label=label,
+        executable=executable,
+        single_link=True,
+    )
     try:
-        resolved.relative_to(build_dir.resolve())
-    except ValueError as error:
-        raise HarnessError("ARTIFACT_OUTSIDE_CACHE", "build artifact resolves outside its cache") from error
-    return resolved
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(build_dir.resolve(strict=True))
+    except (OSError, ValueError) as error:
+        raise HarnessError("UNSAFE_BUILD_OUTPUT", f"{label} is outside the fresh build tree") from error
+    if resolved != path:
+        raise HarnessError("UNSAFE_BUILD_OUTPUT", f"{label} path traverses a symlink")
+    if executable:
+        require_native_executable(path, label)
 
 
-def verify_build_attestation(build_dir: Path, spec: EngineSpec) -> dict[str, object]:
-    attestation_path = build_dir / "build-attestation.json"
-    if not attestation_path.is_file() or attestation_path.is_symlink():
-        raise HarnessError("BUILD_UNAVAILABLE", f"{spec.version} build attestation is unavailable")
+def source_tree_sha256(source_hashes: dict[str, str]) -> str:
+    digest = hashlib.sha256()
+    for filename in sorted(source_hashes):
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(source_hashes[filename].encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def require_native_executable(path: Path, label: str) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise HarnessError("INVALID_ATTESTATION", f"{spec.version} build attestation is invalid") from error
-    if (
-        attestation.get("schema_version") != BUILD_ATTESTATION_SCHEMA
-        or attestation.get("build_recipe_version") != BUILD_RECIPE_VERSION
-        or attestation.get("requested_version") != spec.version
-        or attestation.get("archive_sha256") != spec.archive_sha256
-        or attestation.get("source_id") != spec.source_id
-        or attestation.get("gate_driver_sha256") != sha256_file(GATE_DRIVER_PATH)
-    ):
-        raise HarnessError("INVALID_ATTESTATION", f"{spec.version} build attestation identity mismatch")
-    source_dir = build_dir / "source"
-    expected_compile_flags, expected_link_flags = build_flags(source_dir)
-    normalized_compile_flags = [flag.replace(str(source_dir), "sqlite-src") for flag in expected_compile_flags]
-    if (
-        attestation.get("compile_flags") != normalized_compile_flags
-        or attestation.get("link_flags") != expected_link_flags
-    ):
-        raise HarnessError("INVALID_ATTESTATION", f"{spec.version} build recipe mismatch")
-    artifacts = attestation.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise HarnessError("INVALID_ATTESTATION", f"{spec.version} build artifacts are absent")
-    for name in ("sqlite3", "libsqlite3", "gate_driver"):
-        item = artifacts.get(name)
-        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-            raise HarnessError("INVALID_ATTESTATION", f"{spec.version} build lacks {name}")
-        path = artifact_path(build_dir, item["path"])
-        if path.is_symlink() or not path.is_file():
-            raise HarnessError("BUILD_ARTIFACT_MISMATCH", f"{spec.version} {name} artifact is unavailable")
-        actual_hash = sha256_file(path)
-        if actual_hash != item.get("sha256"):
-            raise HarnessError("BUILD_ARTIFACT_MISMATCH", f"{spec.version} {name} artifact checksum mismatch")
-    return attestation
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise HarnessError("UNSAFE_BUILD_OUTPUT", f"{label} cannot be inspected safely") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        magic = stream.read(4)
+    if magic not in NATIVE_EXECUTABLE_MAGICS:
+        raise HarnessError("UNSAFE_BUILD_OUTPUT", f"{label} is not a native executable")
+
+
+@contextlib.contextmanager
+def fresh_build_tree(work_dir: Path, spec: EngineSpec) -> Iterator[Path]:
+    if not work_dir.is_absolute():
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", "fresh-build parent must be absolute")
+    require_private_directory(work_dir, create=True, label="fresh-build parent")
+    try:
+        build_dir = Path(tempfile.mkdtemp(prefix=f"sqlite-{spec.release_code}-", dir=work_dir))
+    except OSError as error:
+        raise HarnessError("UNSAFE_WORK_DIRECTORY", "fresh-build tree cannot be created") from error
+    require_private_directory(build_dir, create=False, label="fresh-build tree")
+    try:
+        yield build_dir
+    finally:
+        try:
+            shutil.rmtree(build_dir)
+        except OSError as error:
+            raise HarnessError("BUILD_CLEANUP_FAILED", "fresh-build tree could not be deleted") from error
+        if build_dir.exists() or build_dir.is_symlink():
+            raise HarnessError("BUILD_CLEANUP_FAILED", "fresh-build tree remained after deletion")
+        try:
+            work_dir.rmdir()
+        except OSError:
+            pass
 
 
 def build_engine(
     spec: EngineSpec,
     archive_path: Path,
-    cache_dir: Path,
-    *,
-    force_rebuild: bool,
-) -> tuple[Path, dict[str, object]]:
-    cc = shutil.which("cc")
-    ar = shutil.which("ar")
-    if cc is None:
-        raise HarnessError("MISSING_COMPILER", "required C compiler 'cc' is unavailable")
-    if ar is None:
-        raise HarnessError("MISSING_TOOL", "required archive tool 'ar' is unavailable")
-
-    build_dir = cache_dir / "builds" / spec.release_code
-    if force_rebuild and build_dir.exists():
-        shutil.rmtree(build_dir)
-    if build_dir.exists():
-        return build_dir, verify_build_attestation(build_dir, spec)
+    build_dir: Path,
+) -> tuple["ExactEngine", dict[str, object]]:
+    cc = resolve_system_tool("cc", missing_code="MISSING_COMPILER")
+    require_private_directory(build_dir, create=False, label="fresh-build tree")
 
     source_dir = build_dir / "source"
     object_dir = build_dir / "obj"
     binary_dir = build_dir / "bin"
     home_dir = build_dir / "home"
-    object_dir.mkdir(parents=True)
-    binary_dir.mkdir(parents=True)
-    home_dir.mkdir(parents=True)
+    object_dir.mkdir(mode=0o700)
+    binary_dir.mkdir(mode=0o700)
+    home_dir.mkdir(mode=0o700)
     source_hashes = extract_source(spec, archive_path, source_dir)
     compile_flags, link_flags = build_flags(source_dir)
 
+    require_regular_file(
+        GATE_DRIVER_PATH,
+        code="UNSAFE_BUILD_INPUT",
+        label="tracked gate driver source",
+        single_link=True,
+    )
     sqlite_object = object_dir / "sqlite3.o"
     sqlite_binary = binary_dir / "sqlite3"
-    sqlite_library = binary_dir / "libsqlite3.a"
     gate_driver = binary_dir / "gate_driver"
-    compile_sqlite = [cc, *compile_flags, "-c", str(source_dir / "sqlite3.c"), "-o", str(sqlite_object)]
+    compile_sqlite = [
+        str(cc),
+        *compile_flags,
+        "-c",
+        str(source_dir / "sqlite3.c"),
+        "-o",
+        str(sqlite_object),
+    ]
     result = run_command(compile_sqlite, cwd=build_dir, home=home_dir, timeout=300)
     require_success(result, "BUILD_FAILED", f"{spec.version} amalgamation compile")
+    require_fresh_output(sqlite_object, build_dir, "fresh SQLite object", executable=False)
+    sqlite_object.chmod(0o600)
 
     compile_shell = [
-        cc,
+        str(cc),
         *compile_flags,
         str(source_dir / "shell.c"),
         str(sqlite_object),
@@ -502,16 +787,11 @@ def build_engine(
     ]
     result = run_command(compile_shell, cwd=build_dir, home=home_dir, timeout=300)
     require_success(result, "BUILD_FAILED", f"{spec.version} CLI link")
-
-    result = run_command(
-        [ar, "rcs", str(sqlite_library), str(sqlite_object)],
-        cwd=build_dir,
-        home=home_dir,
-    )
-    require_success(result, "BUILD_FAILED", f"{spec.version} static library archive")
+    require_fresh_output(sqlite_binary, build_dir, "fresh SQLite CLI", executable=True)
+    sqlite_binary.chmod(0o700)
 
     compile_driver = [
-        cc,
+        str(cc),
         *compile_flags,
         "-I",
         str(source_dir),
@@ -523,41 +803,41 @@ def build_engine(
     ]
     result = run_command(compile_driver, cwd=build_dir, home=home_dir, timeout=300)
     require_success(result, "BUILD_FAILED", f"{spec.version} gate driver link")
-    sqlite_binary.chmod(sqlite_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    gate_driver.chmod(gate_driver.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    require_fresh_output(gate_driver, build_dir, "fresh gate driver", executable=True)
+    gate_driver.chmod(0o700)
 
-    attestation: dict[str, object] = {
-        "schema_version": BUILD_ATTESTATION_SCHEMA,
-        "build_recipe_version": BUILD_RECIPE_VERSION,
-        "requested_version": spec.version,
-        "archive_sha256": spec.archive_sha256,
-        "source_id": spec.source_id,
-        "gate_driver_sha256": sha256_file(GATE_DRIVER_PATH),
-        "compiler": "cc",
-        "archiver": "ar",
+    engine = ExactEngine(build_dir, sqlite_binary, gate_driver)
+    evidence: dict[str, object] = {
+        "mode": "fresh_from_verified_archive",
+        "cache_artifacts_used": False,
+        "compiler": cc.name,
         "compile_flags": [flag.replace(str(source_dir), "sqlite-src") for flag in compile_flags],
         "link_flags": link_flags,
+        "gate_driver_source_sha256": sha256_file(GATE_DRIVER_PATH),
         "source_sha256": source_hashes,
+        "source_tree_sha256": source_tree_sha256(source_hashes),
         "artifacts": {
-            "sqlite3": {"path": "bin/sqlite3", "sha256": sha256_file(sqlite_binary)},
-            "libsqlite3": {"path": "bin/libsqlite3.a", "sha256": sha256_file(sqlite_library)},
-            "gate_driver": {"path": "bin/gate_driver", "sha256": sha256_file(gate_driver)},
+            "sqlite3_sha256": sha256_file(sqlite_binary),
+            "gate_driver_sha256": sha256_file(gate_driver),
         },
     }
-    atomic_json(build_dir / "build-attestation.json", attestation)
-    return build_dir, verify_build_attestation(build_dir, spec)
+    return engine, evidence
 
 
 class ExactEngine:
-    def __init__(self, build_dir: Path, attestation: dict[str, object]):
-        artifacts = attestation["artifacts"]
-        assert isinstance(artifacts, dict)
+    def __init__(self, build_dir: Path, binary: Path, driver_binary: Path):
         self.build_dir = build_dir
         self.home_dir = build_dir / "home"
-        self.binary = artifact_path(build_dir, artifacts["sqlite3"]["path"])  # type: ignore[index]
-        self.driver_binary = artifact_path(build_dir, artifacts["gate_driver"]["path"])  # type: ignore[index]
+        self.binary = binary
+        self.driver_binary = driver_binary
+        self._verify_outputs()
+
+    def _verify_outputs(self) -> None:
+        require_fresh_output(self.binary, self.build_dir, "fresh SQLite CLI", executable=True)
+        require_fresh_output(self.driver_binary, self.build_dir, "fresh gate driver", executable=True)
 
     def sql(self, database: Path | str, sql: str, *, timeout: int = 180) -> CommandResult:
+        self._verify_outputs()
         return run_command(
             [
                 str(self.binary),
@@ -575,6 +855,7 @@ class ExactEngine:
         )
 
     def script(self, database: Path | str, sql: str, *, timeout: int = 180) -> CommandResult:
+        self._verify_outputs()
         return run_command(
             [str(self.binary), "-batch", "-bail", str(database)],
             cwd=self.build_dir,
@@ -584,6 +865,7 @@ class ExactEngine:
         )
 
     def driver(self, command: str, database: Path | None = None, *, timeout: int = 180) -> CommandResult:
+        self._verify_outputs()
         arguments = [str(self.driver_binary), command]
         if database is not None:
             arguments.append(str(database))
@@ -1034,9 +1316,9 @@ def gate_summary(gates: Iterable[GateResult]) -> dict[str, int]:
 def run_engine(
     spec: EngineSpec,
     cache_dir: Path,
+    work_dir: Path,
     *,
     offline: bool,
-    force_rebuild: bool,
     point_count: int,
 ) -> dict[str, object]:
     started = time.perf_counter()
@@ -1051,7 +1333,11 @@ def run_engine(
             "size": spec.archive_size,
             "verified": False,
         },
-        "build_attestation": "UNVERIFIED",
+        "build": {
+            "mode": "not_started",
+            "cache_artifacts_used": False,
+            "evidence": None,
+        },
         "compile_capabilities": {"diagnostics": "UNKNOWN", "options": [], "reason": "engine not started"},
         "runtime_capabilities": {},
         "gates": [],
@@ -1063,107 +1349,108 @@ def run_engine(
     try:
         download_archive(spec, archive_path, offline)
         base["archive"]["verified"] = True  # type: ignore[index]
-        build_dir, attestation = build_engine(
-            spec,
-            archive_path,
-            cache_dir,
-            force_rebuild=force_rebuild,
-        )
-        base["build_attestation"] = "VERIFIED"
-        engine = ExactEngine(build_dir, attestation)
+        with fresh_build_tree(work_dir, spec) as build_dir:
+            engine, build_evidence = build_engine(spec, archive_path, build_dir)
+            base["build"] = build_evidence
 
-        observed_version, observed_source_id = assert_exact_identity(spec, engine)
-        base["observed_version"] = observed_version
-        base["observed_source_id"] = observed_source_id
-        base["compile_capabilities"] = compile_capabilities(engine)
+            observed_version, observed_source_id = assert_exact_identity(spec, engine)
+            base["observed_version"] = observed_version
+            base["observed_source_id"] = observed_source_id
+            base["compile_capabilities"] = compile_capabilities(engine)
 
-        run_root = fresh_workspace(cache_dir / "runs", spec.release_code)
-        runtime_capabilities: dict[str, object] = {
-            "table_ddl": {"status": "UNKNOWN", "evidence": "gate_pending"},
-            "index": {"status": "UNKNOWN", "evidence": "gate_pending"},
-        }
-        gates: list[GateResult] = []
-        gates.append(
-            timed_gate(
-                "legacy_schema",
-                lambda: legacy_schema_gate(engine, fresh_workspace(run_root, "legacy-schema")),
-            )
-        )
-        if gates[-1].status == "PASS":
-            runtime_capabilities["table_ddl"] = {"status": "SUPPORTED", "evidence": "runtime_schema_gate"}
-        gates.append(
-            timed_gate(
-                "table_index",
-                lambda: table_index_gate(engine, fresh_workspace(run_root, "table-index")),
-            )
-        )
-        if gates[-1].status == "PASS":
-            runtime_capabilities["index"] = {"status": "SUPPORTED", "evidence": "runtime_index_gate"}
-        gates.append(
-            timed_gate(
-                "api26_schema_fallback",
-                lambda: schema_fallback_gate(
-                    engine,
-                    fresh_workspace(run_root, "schema-fallback"),
-                    runtime_capabilities,
-                ),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "fts5_runtime",
-                lambda: fts_gate(engine, fresh_workspace(run_root, "fts"), runtime_capabilities),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "readonly_reopen",
-                lambda: readonly_gate(engine, fresh_workspace(run_root, "readonly")),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "wal_snapshot",
-                lambda: wal_gate(engine, fresh_workspace(run_root, "wal"), runtime_capabilities),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "interrupted_wal_receipt",
-                lambda: interrupted_gate(
-                    engine,
-                    fresh_workspace(run_root, "interrupted"),
-                    runtime_capabilities,
-                ),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "corruption_open_failure",
-                lambda: corruption_gate(engine, fresh_workspace(run_root, "corruption")),
-            )
-        )
-        gates.append(
-            timed_gate(
-                "large_point_transaction_query",
-                lambda: large_point_gate(
-                    engine,
-                    fresh_workspace(run_root, "large"),
-                    point_count,
-                ),
-            )
-        )
-        summary = gate_summary(gates)
-        base["runtime_capabilities"] = runtime_capabilities
-        base["gates"] = [gate.as_dict() for gate in gates]
-        base["gate_summary"] = summary
-        if summary["fail"] == 0:
-            base["status"] = "PASS"
-        else:
-            base["failure_cause"] = {
-                "code": "GATE_FAILURE",
-                "message": f"{summary['fail']} compatibility gate(s) failed",
+            run_root = fresh_workspace(build_dir / "runs", spec.release_code)
+            runtime_capabilities: dict[str, object] = {
+                "table_ddl": {"status": "UNKNOWN", "evidence": "gate_pending"},
+                "index": {"status": "UNKNOWN", "evidence": "gate_pending"},
             }
+            gates: list[GateResult] = []
+            gates.append(
+                timed_gate(
+                    "legacy_schema",
+                    lambda: legacy_schema_gate(engine, fresh_workspace(run_root, "legacy-schema")),
+                )
+            )
+            if gates[-1].status == "PASS":
+                runtime_capabilities["table_ddl"] = {
+                    "status": "SUPPORTED",
+                    "evidence": "runtime_schema_gate",
+                }
+            gates.append(
+                timed_gate(
+                    "table_index",
+                    lambda: table_index_gate(engine, fresh_workspace(run_root, "table-index")),
+                )
+            )
+            if gates[-1].status == "PASS":
+                runtime_capabilities["index"] = {
+                    "status": "SUPPORTED",
+                    "evidence": "runtime_index_gate",
+                }
+            gates.append(
+                timed_gate(
+                    "api26_schema_fallback",
+                    lambda: schema_fallback_gate(
+                        engine,
+                        fresh_workspace(run_root, "schema-fallback"),
+                        runtime_capabilities,
+                    ),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "fts5_runtime",
+                    lambda: fts_gate(engine, fresh_workspace(run_root, "fts"), runtime_capabilities),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "readonly_reopen",
+                    lambda: readonly_gate(engine, fresh_workspace(run_root, "readonly")),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "wal_snapshot",
+                    lambda: wal_gate(engine, fresh_workspace(run_root, "wal"), runtime_capabilities),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "interrupted_wal_receipt",
+                    lambda: interrupted_gate(
+                        engine,
+                        fresh_workspace(run_root, "interrupted"),
+                        runtime_capabilities,
+                    ),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "corruption_open_failure",
+                    lambda: corruption_gate(engine, fresh_workspace(run_root, "corruption")),
+                )
+            )
+            gates.append(
+                timed_gate(
+                    "large_point_transaction_query",
+                    lambda: large_point_gate(
+                        engine,
+                        fresh_workspace(run_root, "large"),
+                        point_count,
+                    ),
+                )
+            )
+            summary = gate_summary(gates)
+            base["runtime_capabilities"] = runtime_capabilities
+            base["gates"] = [gate.as_dict() for gate in gates]
+            base["gate_summary"] = summary
+            if summary["fail"] == 0:
+                base["status"] = "PASS"
+            else:
+                base["failure_cause"] = {
+                    "code": "GATE_FAILURE",
+                    "message": f"{summary['fail']} compatibility gate(s) failed",
+                }
     except BaseException as error:
         base["failure_cause"] = failure_cause(error)
         if not base["gates"]:
@@ -1206,6 +1493,19 @@ def human_report(report: dict[str, object]) -> str:
         archive = engine["archive"]
         assert isinstance(archive, dict)
         lines.append(f"  archive SHA-256: {archive['sha256']} ({'verified' if archive['verified'] else 'FAILED'})")
+        build = engine["build"]
+        assert isinstance(build, dict)
+        lines.append(
+            f"  build mode: {build['mode']} "
+            f"(cached artifacts used: {str(build['cache_artifacts_used']).lower()})"
+        )
+        artifacts = build.get("artifacts")
+        if isinstance(artifacts, dict):
+            lines.append(
+                "  fresh output SHA-256: "
+                f"sqlite3={artifacts['sqlite3_sha256']}, "
+                f"gate_driver={artifacts['gate_driver_sha256']}"
+            )
         compile_info = engine["compile_capabilities"]
         assert isinstance(compile_info, dict)
         lines.append(f"  compile diagnostics: {compile_info['diagnostics']}")
@@ -1246,20 +1546,21 @@ def run_harness(
     cache_dir: Path,
     report_dir: Path,
     *,
+    work_dir: Path,
     offline: bool,
-    force_rebuild: bool,
     point_count: int,
+    known_specs: Sequence[EngineSpec] | None = None,
 ) -> dict[str, object]:
     if point_count <= 0:
         raise HarnessError("INVALID_POINT_COUNT", "large-point count must be positive")
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    prepare_archive_cache(cache_dir, known_specs or specs)
     report_dir.mkdir(parents=True, exist_ok=True)
     engines = [
         run_engine(
             spec,
             cache_dir,
+            work_dir,
             offline=offline,
-            force_rebuild=force_rebuild,
             point_count=point_count,
         )
         for spec in specs
@@ -1277,7 +1578,14 @@ def run_harness(
     return report
 
 
-def fetch_archives(specs: Sequence[EngineSpec], cache_dir: Path, offline: bool) -> None:
+def fetch_archives(
+    specs: Sequence[EngineSpec],
+    cache_dir: Path,
+    offline: bool,
+    *,
+    known_specs: Sequence[EngineSpec] | None = None,
+) -> None:
+    prepare_archive_cache(cache_dir, known_specs or specs)
     for spec in specs:
         archive_path = cache_dir / "archives" / spec.archive_name
         download_archive(spec, archive_path, offline)
@@ -1298,9 +1606,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="build exact engines and run every compatibility gate")
     run.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    run.add_argument("--work-dir", type=Path, default=DEFAULT_WORK_DIR)
     run.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     run.add_argument("--offline", action="store_true")
-    run.add_argument("--force-rebuild", action="store_true")
     run.add_argument("--version", action="append", dest="versions")
     run.add_argument("--large-points", type=int, default=100_000)
     return parser
@@ -1315,17 +1623,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(arguments.manifest.read_text(encoding="utf-8"), end="")
             return 0
         selected = select_specs(specs, arguments.versions)
-        cache_dir = arguments.cache_dir.resolve()
+        cache_dir = Path(os.path.abspath(arguments.cache_dir))
         if arguments.command == "fetch":
-            fetch_archives(selected, cache_dir, arguments.offline)
+            fetch_archives(selected, cache_dir, arguments.offline, known_specs=specs)
             return 0
         report = run_harness(
             selected,
             cache_dir,
-            arguments.report_dir.resolve(),
+            Path(os.path.abspath(arguments.report_dir)),
+            work_dir=Path(os.path.abspath(arguments.work_dir)),
             offline=arguments.offline,
-            force_rebuild=arguments.force_rebuild,
             point_count=arguments.large_points,
+            known_specs=specs,
         )
         return 0 if report["status"] == "PASS" else 1
     except HarnessError as error:

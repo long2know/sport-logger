@@ -18,29 +18,40 @@ closed.
 | 3.33.0 | `https://www.sqlite.org/2020/sqlite-autoconf-3330000.tar.gz` | `106a2c48c7f75a298a7557bcc0d5f4f454e5b43811cc738b7ca294d6956bbb15` |
 
 `engines.json` also pins archive byte sizes and upstream `SQLITE_SOURCE_ID` values. The harness
-extracts only `sqlite3.c`, `sqlite3.h`, `sqlite3ext.h`, and `shell.c`, then builds a CLI, static
-library, and native gate driver with explicit hardening and capability flags. Every cached artifact
-is covered by a build attestation. Before any compatibility gate, both the CLI and linked static
-library must report the requested `sqlite_version()` and pinned `sqlite_source_id()`.
+accepts only regular, non-symlink archive files and rejects local sidecars, metadata, build trees,
+wrappers, and other cache content. On every run it re-verifies the archive bytes, scans every tar
+member for traversal, links, duplicate paths, special files, and expansion limits, then copies only
+`sqlite3.c`, `sqlite3.h`, `sqlite3ext.h`, and `shell.c` into a new private build tree.
 
-The compile recipe is recorded in each attestation and includes `-O2`, `-g0`, `-fPIC`,
+The CLI and native gate driver are compiled fresh in that tree with explicit hardening and
+capability flags. They are invoked only by absolute path, must remain regular non-symlink,
+single-link files inside the private tree, and are deleted with the source and gate databases after
+the run. No locally recomputable attestation authorizes an executable. Before any compatibility
+gate, both the fresh CLI and independently linked driver must report the requested
+`sqlite_version()` and pinned `sqlite_source_id()`.
+
+The compile recipe is recorded as non-authorizing report evidence and includes `-O2`, `-g0`, `-fPIC`,
 `-fno-strict-aliasing`, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`, format-security checking,
 thread-safe SQLite, column metadata, FTS4/FTS5, JSON1, and R-Tree. Linux links use RELRO and immediate
-binding. The static amalgamation object is linked directly; `-lsqlite3` is never used.
+binding. The amalgamation object is linked directly into both outputs; `-lsqlite3` is never used.
+Compiler lookup uses the fixed system path rather than the caller's `PATH`, and child processes get
+a minimal environment with private temporary storage.
 
 ## Requirements
 
 - Linux or macOS with POSIX process semantics
 - Python 3.9 or newer
-- `cc` and `ar`
+- system `cc`
 - HTTPS access to `www.sqlite.org` for a cold cache
 
 No Python packages, host `sqlite3` command, or host SQLite development library are used.
 
 ## Run locally
 
-All commands are repository-relative. Disposable archives, sources, binaries, databases, and
-reports live under ignored `tools/sqlite-compat/.cache/` and `tools/sqlite-compat/out/`.
+All commands are repository-relative. The only persistent cache entries are the four official
+archives under ignored `tools/sqlite-compat/.cache/archives/`. Fresh sources, binaries, and gate
+databases exist only under an ignored private `tools/sqlite-compat/.work/` tree while a run is
+active; that tree is removed afterward. Reports live under ignored `tools/sqlite-compat/out/`.
 
 Unit tests do not use the network:
 
@@ -51,19 +62,22 @@ python3 -m unittest discover -s tools/sqlite-compat/tests -p 'test_*.py' -v
 Cold-cache download, build, exact identity check, and four-engine matrix:
 
 ```bash
-rm -rf tools/sqlite-compat/.cache tools/sqlite-compat/out
+rm -rf tools/sqlite-compat/.cache tools/sqlite-compat/.work tools/sqlite-compat/out
 python3 tools/sqlite-compat/sqlite_compat.py run
 ```
 
 Verified offline-cache rebuild and full rerun:
 
 ```bash
-python3 tools/sqlite-compat/sqlite_compat.py run --offline --force-rebuild
+python3 tools/sqlite-compat/sqlite_compat.py run --offline
 ```
 
 `--offline` never attempts a request. Every cached archive is rechecked against its pinned byte
-size and SHA-256 before use. A missing or altered required archive fails the run. `--force-rebuild`
-deletes only ignored build outputs and rebuilds them from the verified cached archives.
+size and SHA-256 before use, and every engine is rebuilt fresh. A missing or altered required
+archive fails closed. To prepopulate an offline machine, run `fetch` on a connected machine, copy
+only the verified `archives/*.tar.gz` files into the same cache directory, then run with
+`--offline`. Any copied metadata, executable, attestation, symlink, or legacy `builds/`/`runs/`
+directory is rejected as `UNTRUSTED_CACHE_CONTENT`.
 
 Useful diagnostics:
 
@@ -106,9 +120,11 @@ On every run the harness writes:
 
 The JSON schema identifier is `sport-logger.sqlite-exact-compat/v1`. It contains requested and
 observed engine identities, archive provenance, normalized compile diagnostics, runtime
-capabilities, every gate result, duration classes, and stable failure codes. It contains no run
-timestamp or host path. A consumer such as issue #19 must require overall `PASS`, the four requested
-versions, exact observed identities, and zero failed gates.
+capabilities, every gate result, duration classes, and stable failure codes. Fresh source-tree and
+output hashes are recorded only as run evidence; they are not an authorization or reusable trust
+root. Reports contain no run timestamp or host path. A consumer such as issue #19 must require
+overall `PASS`, the four requested versions, exact observed identities, the
+`fresh_from_verified_archive` build mode with `cache_artifacts_used: false`, and zero failed gates.
 
 Reports are disposable and ignored. A deterministic sanitized golden may be added later only with a
 specific test and review.
