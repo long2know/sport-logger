@@ -1,11 +1,15 @@
 package com.long2know.sportlogger.services;
 
 import android.Manifest;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.GnssMeasurementsEvent;
 import android.location.GnssStatus;
 import android.location.LocationProvider;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -34,6 +38,8 @@ import java.util.UUID;
 
 public class GpsListener implements Runnable  {
     private static final String TAG = "GpsListener";
+    private static final int MESSAGE_STOP = 0;
+    private static final int MESSAGE_RETRY = 1;
 
     public static Handler WorkerHandler;
     private Handler _handler;
@@ -45,18 +51,31 @@ public class GpsListener implements Runnable  {
     private static float _minAccuracyMeters = 75;
 
     private LocationManager _locationManager;
-    private LocationListener _locationListener;
+    private Criteria _criteria;
+    private LocationRegistration<LocationListener> _locationRegistration;
     private GnssStatus.Callback _gnssStatusListener;
     private GnssMeasurementsEvent.Callback _gnssMeasurementsListener;
     private GnssStatus _gnssStatus;
 
-    private boolean _isGpsEnabled;
-    private boolean _isNetworkEnabled;
     private boolean _isGpsLocked = false;
+    private boolean _providerReceiverRegistered;
 
     private static String _uniqueId = null;
     private static final String PREF_UNIQUE_ID = "PREF_UNIQUE_ID_LONGTOKNOW_SPORTLOGGER";
     private boolean _isStarted = true;
+    private final BroadcastReceiver _providersChangedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (LocationManager.MODE_CHANGED_ACTION.equals(action)
+                    || LocationManager.PROVIDERS_CHANGED_ACTION.equals(action)) {
+                Handler workerHandler = WorkerHandler;
+                if (workerHandler != null) {
+                    workerHandler.sendEmptyMessage(MESSAGE_RETRY);
+                }
+            }
+        }
+    };
 
     // Defines the code to run for this task.
     @Override
@@ -71,72 +90,55 @@ public class GpsListener implements Runnable  {
             public void handleMessage(Message msg) {
                 Log.d(TAG, "Received a message!");
                 // For now, the only messages are start/stop
-                if (msg.what == 0) {
+                if (msg.what == MESSAGE_STOP) {
                     // The sensors are started by default
                     if (_isStarted) {
-                        stopListeners();
-                        Looper.myLooper().quit();
                         _isStarted = false;
+                        stopListeners();
+                        unregisterProviderChangesReceiver();
+                        Looper.myLooper().quit();
                     }
-                } else {
-                    if (!_isStarted) {
-                        startListeners();
-                        _isStarted = true;
-                    }
+                } else if (msg.what == MESSAGE_RETRY && _isStarted) {
+                    startListeners();
                 }
             }
         };
 
-        int res = Config.context.checkCallingPermission(Manifest.permission.ACCESS_FINE_LOCATION);
-        boolean hasPerms = res == PackageManager.PERMISSION_GRANTED;
-
-        if (!hasPerms) {
+        registerProviderChangesReceiver();
+        try {
             startListeners();
+            Looper.loop();
+        } finally {
+            stopListeners();
+            unregisterProviderChangesReceiver();
         }
-        else {
-            Log.e(TAG, "We do not have location permissions!");
-        }
-
-        Looper.loop();
     }
 
     public void startListeners() {
         // Get a unique ID for the device
         _deviceId = getUniqueId(Config.context);
 
-        Criteria criteria = new Criteria();
-        criteria.setAccuracy(Criteria.ACCURACY_FINE);
+        if (_locationRegistration == null) {
+            _criteria = new Criteria();
+            _criteria.setAccuracy(Criteria.ACCURACY_FINE);
 //        criteria.setAltitudeRequired(true);
 //        criteria.setBearingRequired(true);
 //        criteria.setCostAllowed(true);
 //        criteria.setPowerRequirement(Criteria.POWER_LOW);
 
-        // Use the LocationManager class to obtain GPS locations---
-        _locationManager = (LocationManager) Config.context.getSystemService(Config.context.LOCATION_SERVICE);
-        String provider = _locationManager.getBestProvider(criteria, true);
-
-        if (ContextCompat.checkSelfPermission(Config.context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-
-            // Get GPS and network status
-            _isGpsEnabled = _locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
-            _isNetworkEnabled = _locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
-
-            if (_isGpsEnabled) {
-                // Get the last location
-                _locationManager.getLastKnownLocation(provider);
-            }
-
-            // Get the last location
-            Location currentLocation = _locationManager.getLastKnownLocation(provider);
-            _locationListener = createLocationListener(currentLocation);
-            _locationManager.requestLocationUpdates(provider, _minTimeMillis, _minDistanceMeters, _locationListener);
+            _locationManager =
+                    (LocationManager) Config.context.getSystemService(Context.LOCATION_SERVICE);
+            _locationRegistration = new LocationRegistration<>(
+                    new AndroidLocationBackend(),
+                    this::reportRouteStatus);
         }
+        _locationRegistration.start();
 //        initDatabase();
     }
 
     public void stopListeners()    {
-        if (_locationManager != null && _locationListener != null) {
-            _locationManager.removeUpdates(_locationListener);
+        if (_locationRegistration != null) {
+            _locationRegistration.stop();
         }
         SharedData singleton = SharedData.getInstance();
         singleton.setLocation(new LocationData());
@@ -165,29 +167,24 @@ public class GpsListener implements Runnable  {
 
             @Override
             public void onLocationChanged(Location location) {
-                if (location != null) {
-                    try {
-                        if (location.hasAccuracy() && location.getAccuracy() <= _minAccuracyMeters) {
-                            GregorianCalendar greg = new GregorianCalendar();
-                            TimeZone tz = greg.getTimeZone();
-                            int offset = tz.getOffset(System.currentTimeMillis());
-                            greg.add(Calendar.SECOND, (offset / 1000) * -1);
-                            String ts = Config.DotnetTimestampFormat.format(greg.getTime());
-                            double distance = calculateDistance(_lastLocation, location);
-                            _totalDistance += distance;
-                            LocationData data = new LocationData(location, _totalDistance, distance);
-                            Message completeMessage = _handler.obtainMessage(0, 1, 1, data);
-                            completeMessage.sendToTarget();
-                            _lastLocation = location;
+                if (location != null
+                        && location.hasAccuracy()
+                        && location.getAccuracy() <= _minAccuracyMeters) {
+                    GregorianCalendar greg = new GregorianCalendar();
+                    TimeZone tz = greg.getTimeZone();
+                    int offset = tz.getOffset(System.currentTimeMillis());
+                    greg.add(Calendar.SECOND, (offset / 1000) * -1);
+                    String ts = Config.DotnetTimestampFormat.format(greg.getTime());
+                    double distance =
+                            _lastLocation == null ? 0.0 : calculateDistance(_lastLocation, location);
+                    _totalDistance += distance;
+                    LocationData data = new LocationData(location, _totalDistance, distance);
+                    Message completeMessage = _handler.obtainMessage(0, 1, 1, data);
+                    completeMessage.sendToTarget();
+                    _lastLocation = location;
 
-                            SharedData singleton = SharedData.getInstance();
-                            singleton.setLocation(data);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, e.toString());
-                    } finally {
-
-                    }
+                    SharedData singleton = SharedData.getInstance();
+                    singleton.setLocation(data);
                 }
             }
 
@@ -207,6 +204,9 @@ public class GpsListener implements Runnable  {
                     // Our provider is enabled
                     _isGpsLocked = true;
                 }
+                if (_locationRegistration != null) {
+                    _locationRegistration.onProviderEnabled();
+                }
             }
 
             @Override
@@ -215,10 +215,116 @@ public class GpsListener implements Runnable  {
                     // We lost our lock
                     _isGpsLocked = false;
                 }
+                if (_locationRegistration != null) {
+                    _locationRegistration.onProviderDisabled(provider);
+                }
             }
         };
 
         return listener;
+    }
+
+    private final class AndroidLocationBackend
+            implements LocationRegistration.Backend<LocationListener> {
+        @Override
+        public boolean hasLocationPermission() {
+            return ContextCompat.checkSelfPermission(
+                    Config.context,
+                    Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        }
+
+        @Override
+        public boolean hasAnyProvider() {
+            return _locationManager != null && !_locationManager.getAllProviders().isEmpty();
+        }
+
+        @Override
+        public boolean isLocationEnabled() {
+            if (_locationManager == null) {
+                return false;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return _locationManager.isLocationEnabled();
+            }
+            return !_locationManager.getProviders(true).isEmpty();
+        }
+
+        @Override
+        public String getBestProvider() {
+            return _locationManager == null
+                    ? null
+                    : _locationManager.getBestProvider(_criteria, true);
+        }
+
+        @Override
+        public boolean isProviderEnabled(String provider) {
+            return _locationManager != null && _locationManager.isProviderEnabled(provider);
+        }
+
+        @Override
+        @SuppressWarnings("MissingPermission")
+        public LocationListener createLocationListener(String provider) {
+            Location currentLocation = _locationManager.getLastKnownLocation(provider);
+            return GpsListener.this.createLocationListener(currentLocation);
+        }
+
+        @Override
+        @SuppressWarnings("MissingPermission")
+        public void requestLocationUpdates(String provider, LocationListener listener) {
+            _locationManager.requestLocationUpdates(
+                    provider,
+                    _minTimeMillis,
+                    _minDistanceMeters,
+                    listener);
+        }
+
+        @Override
+        public void removeLocationUpdates(LocationListener listener) {
+            _locationManager.removeUpdates(listener);
+        }
+    }
+
+    private void reportRouteStatus(LocationRegistration.Status status) {
+        switch (status) {
+            case AVAILABLE:
+                Log.i(TAG, "Location route available.");
+                break;
+            case NO_PROVIDER:
+                Log.w(TAG, "No compatible location provider; route recording is unavailable.");
+                break;
+            case LOCATION_DISABLED:
+                Log.w(TAG, "Location is disabled; recording continues without route updates.");
+                break;
+            case PERMISSION_DENIED:
+                Log.w(TAG, "Location permission is unavailable; route recording is unavailable.");
+                break;
+            case STOPPED:
+                Log.d(TAG, "Location route listener stopped.");
+                break;
+        }
+    }
+
+    private void registerProviderChangesReceiver() {
+        if (_providerReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(LocationManager.MODE_CHANGED_ACTION);
+        filter.addAction(LocationManager.PROVIDERS_CHANGED_ACTION);
+        ContextCompat.registerReceiver(
+                Config.context,
+                _providersChangedReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+        _providerReceiverRegistered = true;
+    }
+
+    private void unregisterProviderChangesReceiver() {
+        if (!_providerReceiverRegistered) {
+            return;
+        }
+        Config.context.unregisterReceiver(_providersChangedReceiver);
+        _providerReceiverRegistered = false;
     }
 
     @SuppressWarnings({"MissingPermission"})

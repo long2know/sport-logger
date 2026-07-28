@@ -110,6 +110,27 @@ matching `health|location` types from the service manifest, as defined by the pl
 API 36 with target 36, separate background requests, optional notification denial, and required
 permission denial. The permission planner performs no I/O.
 
+### Location-provider degraded mode
+
+The foreground service may start while Location is disabled. `GpsListener` now treats that as a
+nonfatal no-route state: heart-rate, step, timer, and persistence work continue, while the listener
+logs a location-disabled status distinct from missing runtime permission. The legacy service/UI has
+no route-availability callback, so this correction uses its existing listener logging convention
+rather than widening the service or activity contract.
+
+Registration resolves a non-null, currently enabled provider before requesting updates. A provider
+that disappears during last-location lookup or registration is handled through the documented
+`IllegalArgumentException` boundary; permission revocation is handled through `SecurityException`.
+Candidate listeners are removed after either race, repeated starts do not register a second
+listener, and repeated stops are harmless. Provider-mode broadcasts retry resolution, so enabling
+Location recovers the route listener without restarting the recording service. Other runtime
+failures are not caught.
+
+`LocationRegistrationTest` uses the existing local JUnit stack to deterministically cover no
+providers, a null best provider, a disabled provider, provider disappearance during registration,
+permission revocation during registration, successful registration, repeated start/stop,
+re-enable/retry, duplicate-callback prevention, and propagation of unexpected failures.
+
 ## Command-line build
 
 Install JDK 17, Android SDK Platform 36, and Build Tools 36.0.0, then set:
@@ -183,16 +204,19 @@ Local software-emulator/build validation on 2026-07-27:
 - `./gradlew clean assembleDebug assembleRelease test lint --no-daemon --stacktrace`: **passed**;
   the `preBuild` dependency also ran `verifyPublishedVersioning`. The run completed 273 actionable
   tasks (262 executed, 11 up-to-date).
-- Unit tests: 8 XML reports, **22 executions** (11 unique test methods across debug/release),
+- Unit tests: 10 XML reports, **42 executions** (21 unique test methods across debug/release),
   0 failures, 0 errors, 0 skipped.
 - Lint: **0 errors**, 81 unsuppressed legacy warnings (mobile 6, Wear 70, utilities 5); no baseline
   or suppression was added.
 - API-36 phone emulator: debug APK installed; cold launch reported `Status: ok`; process remained
   alive with no fatal app log.
-- Wear OS 6/API-36 emulator: debug APK installed; cold launch reached the platform health
-  permission UI without a crash. After foreground and all-time grants, `MainActivity` resumed and
-  `SportLoggerService` was foreground with inherited types `0x108` (`health|location`) and no
-  `AndroidRuntime` fatal entry.
+- Wear OS 6/API-36 emulator: with recording permissions granted and Location disabled, cold launch
+  reported `Status: ok`; `SportLoggerService` remained foreground with inherited types `0x108`
+  (`health|location`), and `GpsListener` reported the nonfatal no-route state. Starting a recording
+  continued one-second persistence without a fatal or null-provider exception. Enabling Location
+  kept the same process, transitioned the route status to available, and produced exactly one
+  active app location listener in `dumpsys location`. Phone and Wear emulators were run
+  sequentially and stopped after validation.
 
 Generated build outputs and temporary AVD files are not committed.
 
