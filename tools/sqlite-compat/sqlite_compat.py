@@ -854,6 +854,26 @@ class ExactEngine:
             timeout=timeout,
         )
 
+    def readonly_sql(
+        self,
+        database: Path,
+        sql: str,
+        *,
+        timeout: int = 180,
+    ) -> CommandResult:
+        self._verify_outputs()
+        return run_command(
+            [
+                str(self.driver_binary),
+                "readonly-sql",
+                str(database),
+                sql,
+            ],
+            cwd=self.build_dir,
+            home=self.home_dir,
+            timeout=timeout,
+        )
+
     def script(self, database: Path | str, sql: str, *, timeout: int = 180) -> CommandResult:
         self._verify_outputs()
         return run_command(

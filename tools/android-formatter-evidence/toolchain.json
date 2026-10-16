@@ -1,0 +1,156 @@
+{
+  "candidate_algorithm": {
+    "detail": "getAvailableNames;record-nulls;retain-all-non-null;String.compareTo;probe-unique-decimal;metadata-only-non-decimal;batch-size=8",
+    "id": "android-icu-numbering-system-v2"
+  },
+  "fixed_instants": [
+    {
+      "epoch_ms": -2208891355000,
+      "id": "i1",
+      "utc": "1900-01-02T03:04:05.000Z"
+    },
+    {
+      "epoch_ms": -885743450000,
+      "id": "i2",
+      "utc": "1941-12-07T08:09:10.000Z"
+    },
+    {
+      "epoch_ms": 0,
+      "id": "i3",
+      "utc": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "epoch_ms": 1250527532000,
+      "id": "i4",
+      "utc": "2009-08-17T16:45:32.000Z"
+    },
+    {
+      "epoch_ms": 1709251198000,
+      "id": "i5",
+      "utc": "2024-02-29T23:59:58.000Z"
+    },
+    {
+      "epoch_ms": 2147483647000,
+      "id": "i6",
+      "utc": "2038-01-19T03:14:07.000Z"
+    }
+  ],
+  "formatter": {
+    "class": "java.text.SimpleDateFormat",
+    "constructor": "java.text.SimpleDateFormat(String)",
+    "pattern": "yyyyMMddHHmmss",
+    "timezone": "UTC"
+  },
+  "host_java": {
+    "java_runtime_version": "17.0.20+8",
+    "java_vendor": "Eclipse Adoptium",
+    "java_version": "17.0.20",
+    "javac_version": "17.0.20"
+  },
+  "legacy_writer": {
+    "config_relative_path": "utilities/src/main/java/com/long2know/utilities/models/Config.java",
+    "config_sha256": "07e2df9f92373672da6f02d5ffef3abbf4836882f652473d5822da01627d7cfc",
+    "pattern": "yyyyMMddHHmmss",
+    "writer_relative_path": "utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java",
+    "writer_sha256": "cd69c8c08315c7b237ec8fc2817db97dda6fa9939f52e0cc6dcc8f3dba662510"
+  },
+  "probe": {
+    "instrumentation_class": "com.long2know.sportlogger.formatterevidence.FormatterEvidenceInstrumentation",
+    "manifest_sha256": "c29d44df1d0943c3144c5029326976986c0562704eb4a387a4c29ed9ec4dda9e",
+    "min_sdk": 26,
+    "package": "com.long2know.sportlogger.formatterevidence",
+    "source_sha256": "63d8033c0ec91140f1edcec4deb2000d2823c21d4abf204f3a42e0687e1aefd5",
+    "target_sdk": 36
+  },
+  "representative_locales": [
+    {
+      "id": "ar_eg",
+      "language_tag": "ar-EG"
+    },
+    {
+      "id": "ar_sa",
+      "language_tag": "ar-SA"
+    },
+    {
+      "id": "bn_bd",
+      "language_tag": "bn-BD"
+    },
+    {
+      "id": "en_us",
+      "language_tag": "en-US"
+    },
+    {
+      "id": "fa_ir",
+      "language_tag": "fa-IR"
+    },
+    {
+      "id": "hi_in",
+      "language_tag": "hi-IN"
+    },
+    {
+      "id": "ja_jp",
+      "language_tag": "ja-JP"
+    },
+    {
+      "id": "ja_jp_japanese",
+      "language_tag": "ja-JP-u-ca-japanese"
+    },
+    {
+      "id": "my_mm",
+      "language_tag": "my-MM"
+    },
+    {
+      "id": "th_th",
+      "language_tag": "th-TH"
+    },
+    {
+      "id": "th_th_buddhist",
+      "language_tag": "th-TH-u-ca-buddhist"
+    }
+  ],
+  "schema_version": 1,
+  "sdk_packages": {
+    "build_tools": {
+      "package": "build-tools;36.0.0",
+      "relative_path": "build-tools/36.0.0",
+      "revision": "36.0.0"
+    },
+    "cmdline_tools": {
+      "package": "cmdline-tools;22.0",
+      "relative_path": "cmdline-tools/latest",
+      "revision": "22.0"
+    },
+    "compile_sdk": {
+      "package": "platforms;android-36",
+      "relative_path": "platforms/android-36",
+      "revision": "2"
+    },
+    "emulator": {
+      "package": "emulator",
+      "relative_path": "emulator",
+      "reported_version": "36.6.11.0 (build_id 15507667)",
+      "revision": "36.6.11"
+    },
+    "platform_tools": {
+      "package": "platform-tools",
+      "relative_path": "platform-tools",
+      "revision": "37.0.0"
+    }
+  },
+  "system_images": {
+    "26": {
+      "abi": "x86_64",
+      "package": "system-images;android-26;google_apis;x86_64",
+      "relative_path": "system-images/android-26/google_apis/x86_64",
+      "revision": "16",
+      "tag": "google_apis"
+    },
+    "36": {
+      "abi": "x86_64",
+      "package": "system-images;android-36;google_apis;x86_64",
+      "relative_path": "system-images/android-36/google_apis/x86_64",
+      "revision": "7",
+      "tag": "google_apis"
+    }
+  }
+}
