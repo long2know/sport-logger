@@ -1,10 +1,10 @@
 # SportLogger
 
-**Workouts on your wrist. Activity files you can take with you.**
+**A watch-first workout recorder. A foundation for a better Android companion.**
 
-SportLogger is an open-source Wear OS workout tracker with an Android phone companion.
-Record heart rate, steps, and optional GPS data on a compatible watch, transfer activities
-to your phone, and export them in TCX format.
+SportLogger is an open-source Wear OS workout recorder with an Android companion prototype.
+It brings together heart-rate, step, and optional GPS recording, watch-to-phone activity
+transfer, and shared activity/TCX-oriented utilities.
 
 [![Android build](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml)
 [![SQLite compatibility](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml)
@@ -15,7 +15,9 @@ to your phone, and export them in TCX format.
 > **Development status:** SportLogger is being modernized incrementally from its original
 > Java Android/Wear OS application. The existing three-module structure and activity formats
 > are retained while build, recording, and migration foundations are improved. Planned
-> features below are not advertised as shipped integrations.
+> features below are not advertised as shipped integrations. The phone still has a minimal
+> developer UI: received activities are stored privately, not exposed in an activity browser.
+> **User-facing TCX export is not implemented yet.**
 
 ## What it does
 
@@ -23,8 +25,8 @@ to your phone, and export them in TCX format.
 |---|---|
 | Watch recording | Heart rate, steps, and location where the device and granted permissions support them. |
 | Indoor workouts | Track workouts without requiring a GPS route. |
-| Phone companion | Receive activities from a paired Wear OS watch. |
-| Portable activities | Export TCX files for use outside the app. |
+| Phone receiver | Persist activities received from a paired watch in app-private storage; no history/browser UI yet. |
+| TCX-oriented utilities | Shared models and serializers exist, but the apps do not yet build or save TCX through the UI. |
 | Migration verification | Standalone Android formatter and exact-SQLite tools support reproducible legacy-data migration work. |
 
 SportLogger started as a way to record indoor and treadmill workouts without a cumbersome
@@ -36,7 +38,8 @@ post-processing workflow. Keeping recorded data usable and portable remains the 
 
 - **JDK 17**, selected both for your terminal and Android Studio's Gradle JDK.
 - **Android SDK command-line tools**, platform tools, Android SDK Platform 36, and Build Tools 36.0.0.
-- An Android phone and a paired Wear OS watch for real recording and transfer checks.
+- An Android phone and a paired Wear OS watch, both running Android API 26 or newer,
+  for real recording and transfer checks.
   Emulators are useful for development but do not prove physical sensor behavior.
 - Network access for the first Gradle/dependency download.
 
@@ -52,7 +55,8 @@ The project uses its checked-in Gradle wrapper; a separate Gradle installation i
 | Wear target SDK | 35 |
 
 These versions are one project build tuple, not a claim that each component is the newest
-available release. Module build files define the supported minimum Android versions.
+available release. See the [Android foundation guide](docs/android-foundation.md) for the
+implemented lifecycle, transfer, compatibility, and build details.
 
 ### Clone and configure
 
@@ -106,8 +110,11 @@ adb -s WATCH_SERIAL install -r wear/build/outputs/apk/debug/wear-debug.apk
 
 Pair the phone and watch, open the apps, and grant the permissions requested for the
 measurements you want to record. Heart rate and step availability depend on hardware;
-location is optional for indoor workouts. Check recording, stopping, export, and transfer
-on your own devices before relying on a development build for an important workout.
+location is optional for indoor workouts. Check recording, stopping, and transfer on your own
+devices before relying on a development build for an important workout.
+
+The current phone screen is a developer placeholder. Receiving an activity does not create a
+user-browsable history entry or a downloadable TCX file; those experiences remain roadmap work.
 
 Debug APKs are development builds. Release signing, physical-device acceptance, and store
 submission requirements are separate release gates.
@@ -147,10 +154,10 @@ The [modernization roadmap](docs/modernization-roadmap.md) describes the staged 
 and its acceptance gates. It is a dated design document; use the checked-in build files and
 tool guides for the implemented build and verification commands.
 
-Future milestones include canonical activity contracts and storage, durable watch-to-phone
-sync, capability-aware Health Services recording, refreshed phone/watch interfaces,
-Health Connect, and Endurain integration. These are roadmap items, not promises that the
-current app implements them.
+Future milestones include canonical activity contracts and storage, the broader durable-sync
+architecture, capability-aware Health Services recording, refreshed phone/watch interfaces,
+phone activity browsing and TCX export, Health Connect, and Endurain integration. These are
+roadmap items, not promises that the current app implements them.
 
 See the [open issues](https://github.com/long2know/sport-logger/issues) for the active backlog
 and [platform research](docs/research/open-source-and-platform-research.md) for the evidence
