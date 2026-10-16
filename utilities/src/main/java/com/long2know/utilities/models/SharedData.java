@@ -1,12 +1,11 @@
 package com.long2know.utilities.models;
 
 public class SharedData {
-    private LocationData data;
-    public String Duration;
-    public boolean IsRecording;
-    public boolean IsPaused;
-
-    public int ActivityId;
+    private final LocationData data;
+    private String duration = "00:00:00";
+    private boolean recording;
+    private boolean paused;
+    private int activityId;
 
     private static class Loader {
         static volatile SharedData INSTANCE = new SharedData();
@@ -20,31 +19,78 @@ public class SharedData {
         return Loader.INSTANCE;
     }
 
-    public LocationData getData() {
-        return data;
+    public synchronized LocationData getData() {
+        return new LocationData(data);
     }
 
-    public void setLocation(LocationData data) {
-        this.data.Latitude = data.Latitude;
-        this.data.Longitude = data.Longitude;
-        this.data.Accuracy = data.Accuracy;
-        this.data.Altitude = data.Altitude;
-        this.data.Speed = data.Speed;
-        this.data.Bearing = data.Bearing;
-
-        this.data.HasAccuracy = data.HasAccuracy;
-        this.data.HasAltitude = data.HasAltitude;
-        this.data.HasBearing = data.HasBearing;
-        this.data.HasSpeed = data.HasSpeed;
-
-        this.data.Distance = data.Distance;
-        this.data.TotalDistance = data.TotalDistance;
+    public synchronized void setLocation(LocationData location) {
+        this.data.Latitude = location.Latitude;
+        this.data.Longitude = location.Longitude;
+        this.data.Accuracy = location.Accuracy;
+        this.data.Altitude = location.Altitude;
+        this.data.Speed = location.Speed;
+        this.data.Bearing = location.Bearing;
+        this.data.HasAccuracy = location.HasAccuracy;
+        this.data.HasAltitude = location.HasAltitude;
+        this.data.HasBearing = location.HasBearing;
+        this.data.HasSpeed = location.HasSpeed;
+        this.data.Distance = location.Distance;
+        this.data.TotalDistance = location.TotalDistance;
     }
 
-    public void setHeartRate(float heartRate) {
+    public synchronized void setHeartRate(float heartRate) {
         this.data.HeartRate = heartRate;
     }
-    public void setSteps(int steps) {
+
+    public synchronized void setSteps(int steps) {
         this.data.Steps = steps;
+    }
+
+    public synchronized void resetMeasurements() {
+        this.data.Latitude = 0D;
+        this.data.Longitude = 0D;
+        this.data.Accuracy = 0D;
+        this.data.Altitude = 0D;
+        this.data.Speed = 0D;
+        this.data.Bearing = 0D;
+        this.data.Distance = 0D;
+        this.data.TotalDistance = 0D;
+        this.data.HeartRate = 0F;
+        this.data.Steps = 0;
+        this.data.HasAccuracy = false;
+        this.data.HasAltitude = false;
+        this.data.HasBearing = false;
+        this.data.HasSpeed = false;
+    }
+
+    public synchronized String getDuration() {
+        return duration;
+    }
+
+    public synchronized void setDuration(String duration) {
+        this.duration = duration;
+    }
+
+    public synchronized boolean isRecording() {
+        return recording;
+    }
+
+    public synchronized boolean isPaused() {
+        return paused;
+    }
+
+    public synchronized int getActivityId() {
+        return activityId;
+    }
+
+    public synchronized void setRecordingState(
+            boolean recording,
+            boolean paused,
+            int activityId,
+            String duration) {
+        this.recording = recording;
+        this.paused = paused;
+        this.activityId = activityId;
+        this.duration = duration;
     }
 }
