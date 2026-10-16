@@ -39,4 +39,21 @@ public class LocationData {
         this.Distance = distance;
         this.TotalDistance = totalDistance;
     }
+
+    public LocationData(LocationData source) {
+        this.Latitude = source.Latitude;
+        this.Longitude = source.Longitude;
+        this.Accuracy = source.Accuracy;
+        this.Altitude = source.Altitude;
+        this.Speed = source.Speed;
+        this.Bearing = source.Bearing;
+        this.Distance = source.Distance;
+        this.TotalDistance = source.TotalDistance;
+        this.HeartRate = source.HeartRate;
+        this.Steps = source.Steps;
+        this.HasAccuracy = source.HasAccuracy;
+        this.HasAltitude = source.HasAltitude;
+        this.HasBearing = source.HasBearing;
+        this.HasSpeed = source.HasSpeed;
+    }
 }

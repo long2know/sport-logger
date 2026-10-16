@@ -2,13 +2,13 @@ name: Exact SQLite Compatibility
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [dev, main]
     paths:
       - '.github/workflows/sqlite-exact-compat.yml'
       - 'tools/sqlite-compat/**'
       - 'utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java'
   push:
-    branches: [dev]
+    branches: [dev, main]
     paths:
       - '.github/workflows/sqlite-exact-compat.yml'
       - 'tools/sqlite-compat/**'
