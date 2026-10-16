@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,6 +32,99 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class SharedPreferencesRecordingJournalTest {
+    @Test
+    public void mainCallbackNeverWaitsForFiveSecondCommitAndLeaseHandoverFencesQueuedState()
+            throws Exception {
+        BlockingPreferences preferences = new BlockingPreferences();
+        SharedPreferencesRecordingJournal oldJournal =
+                new SharedPreferencesRecordingJournal(preferences.instance());
+        SharedPreferencesRecordingJournal replacementJournal =
+                new SharedPreferencesRecordingJournal(preferences.instance());
+        BlockingCreateStore store = new BlockingCreateStore();
+        ScheduledThreadPoolExecutor worker = new ScheduledThreadPoolExecutor(1);
+        LinkedBlockingQueue<Runnable> mainCallbacks = new LinkedBlockingQueue<>();
+        List<RecordingState> delivered = Collections.synchronizedList(new ArrayList<>());
+        RecordingController controller = new RecordingController(
+                oldJournal,
+                store,
+                (activity, callback) -> callback.onQueued(),
+                worker,
+                mainCallbacks::add,
+                () -> 1_000L,
+                snapshot -> delivered.add(snapshot.getState()),
+                attempt -> 1L);
+        ExecutorService replacementExecutor = Executors.newSingleThreadExecutor();
+        try {
+            assertTrue(controller.start());
+            assertTrue(store.createEntered.await(1, TimeUnit.SECONDS));
+            Runnable startingCallback = mainCallbacks.poll(1, TimeUnit.SECONDS);
+            assertTrue("STARTING callback was not queued", startingCallback != null);
+            assertTrue(oldJournal.isCurrent(1L));
+
+            preferences.blockNextCommit();
+            store.releaseCreate.countDown();
+            assertTrue(preferences.commitEntered.await(1, TimeUnit.SECONDS));
+            long holdStarted = System.nanoTime();
+
+            Future<Long> replacementLease =
+                    replacementExecutor.submit(replacementJournal::acquireLease);
+            Thread.sleep(100L);
+            assertFalse("replacement lease bypassed in-flight commit", replacementLease.isDone());
+
+            long callbackStarted = System.nanoTime();
+            startingCallback.run();
+            long callbackMillis =
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - callbackStarted);
+            assertTrue(
+                    "main callback waited " + callbackMillis + "ms behind journal commit",
+                    callbackMillis < 100L);
+            assertEquals(
+                    Collections.singletonList(RecordingState.STARTING),
+                    new ArrayList<>(delivered));
+
+            long remainingNanos = TimeUnit.SECONDS.toNanos(5L)
+                    - (System.nanoTime() - holdStarted);
+            if (remainingNanos > 0L) {
+                TimeUnit.NANOSECONDS.sleep(remainingNanos);
+            }
+            long heldMillis =
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - holdStarted);
+            preferences.releaseCommit.countDown();
+
+            long newLease = replacementLease.get(2, TimeUnit.SECONDS);
+            assertEquals(2L, newLease);
+            assertEquals(RecordingState.RECORDING, replacementJournal.read().getState());
+
+            CountDownLatch workerReached = new CountDownLatch(1);
+            worker.execute(workerReached::countDown);
+            assertTrue(workerReached.await(1, TimeUnit.SECONDS));
+            for (Runnable callback = mainCallbacks.poll();
+                 callback != null;
+                 callback = mainCallbacks.poll()) {
+                callback.run();
+            }
+            assertEquals(
+                    "queued state escaped replacement fencing",
+                    Collections.singletonList(RecordingState.STARTING),
+                    new ArrayList<>(delivered));
+            assertThrows(
+                    IllegalStateException.class,
+                    () -> oldJournal.write(1L, recording(RecordingState.IDLE)));
+            System.out.println(
+                    "TIMING_EVIDENCE journalCommitHeldMillis="
+                            + heldMillis
+                            + " mainCallbackMillis="
+                            + callbackMillis);
+            assertTrue("journal commit held only " + heldMillis + "ms", heldMillis >= 5_000L);
+        } finally {
+            store.releaseCreate.countDown();
+            preferences.releaseCommit.countDown();
+            controller.closeAsync();
+            worker.shutdownNow();
+            replacementExecutor.shutdownNow();
+        }
+    }
+
     @Test
     public void writeCommitAndLeaseTransitionAreAtomicAcrossJournalInstances()
             throws Exception {
@@ -140,9 +234,9 @@ public class SharedPreferencesRecordingJournalTest {
         boolean evaluate() throws Exception;
     }
 
-    private static final class NoOpStore implements RecordingStore {
+    private static class NoOpStore implements RecordingStore {
         @Override
-        public int createActivity(long startedAtMillis) {
+        public int createActivity(long startedAtMillis) throws Exception {
             return 1;
         }
 
@@ -164,6 +258,20 @@ public class SharedPreferencesRecordingJournalTest {
             activity.Id = activityId;
             activity.StartTimeUTC = new Date(1_000L);
             return activity;
+        }
+    }
+
+    private static final class BlockingCreateStore extends NoOpStore {
+        private final CountDownLatch createEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseCreate = new CountDownLatch(1);
+
+        @Override
+        public int createActivity(long startedAtMillis) throws Exception {
+            createEntered.countDown();
+            if (!releaseCreate.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to release activity creation");
+            }
+            return super.createActivity(startedAtMillis);
         }
     }
 

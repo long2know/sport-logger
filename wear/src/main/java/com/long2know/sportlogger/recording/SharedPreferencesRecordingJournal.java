@@ -3,8 +3,16 @@ package com.long2know.sportlogger.recording;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.IdentityHashMap;
+import java.util.Map;
+
 public final class SharedPreferencesRecordingJournal implements RecordingJournal {
-    private static final Object LEASE_LOCK = new Object();
+    private static final Object DURABLE_LOCK = new Object();
+    private static final Object OWNERSHIP_REGISTRY_LOCK = new Object();
+    private static final CallbackOwnership PRODUCTION_CALLBACK_OWNERSHIP =
+            new CallbackOwnership();
+    private static final Map<SharedPreferences, CallbackOwnership> CALLBACK_OWNERSHIPS =
+            new IdentityHashMap<>();
     private static final String PREFERENCES_NAME = "sport_logger_recording";
     private static final String KEY_LEASE = "lease";
     private static final String KEY_STATE = "state";
@@ -17,31 +25,43 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
     private static final String KEY_ERROR_MESSAGE = "error_message";
 
     private final SharedPreferences preferences;
+    private final CallbackOwnership callbackOwnership;
 
     public SharedPreferencesRecordingJournal(Context context) {
-        this(context.getApplicationContext().getSharedPreferences(
-                PREFERENCES_NAME,
-                Context.MODE_PRIVATE));
+        this(
+                context.getApplicationContext().getSharedPreferences(
+                        PREFERENCES_NAME,
+                        Context.MODE_PRIVATE),
+                PRODUCTION_CALLBACK_OWNERSHIP);
     }
 
     SharedPreferencesRecordingJournal(SharedPreferences preferences) {
+        this(preferences, callbackOwnershipFor(preferences));
+    }
+
+    private SharedPreferencesRecordingJournal(
+            SharedPreferences preferences,
+            CallbackOwnership callbackOwnership) {
         this.preferences = preferences;
+        this.callbackOwnership = callbackOwnership;
     }
 
     @Override
     public long acquireLease() {
-        synchronized (LEASE_LOCK) {
-            long lease = preferences.getLong(KEY_LEASE, 0L) + 1L;
+        long lease;
+        synchronized (DURABLE_LOCK) {
+            lease = preferences.getLong(KEY_LEASE, 0L) + 1L;
             if (!preferences.edit().putLong(KEY_LEASE, lease).commit()) {
                 throw new IllegalStateException("Recording lease was not persisted");
             }
-            return lease;
         }
+        callbackOwnership.activate(lease);
+        return lease;
     }
 
     @Override
     public PersistentRecording read() {
-        synchronized (LEASE_LOCK) {
+        synchronized (DURABLE_LOCK) {
             String storedState =
                     preferences.getString(KEY_STATE, RecordingState.IDLE.name());
             RecordingState state;
@@ -88,7 +108,7 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
 
     @Override
     public void write(long lease, PersistentRecording recording) {
-        synchronized (LEASE_LOCK) {
+        synchronized (DURABLE_LOCK) {
             if (preferences.getLong(KEY_LEASE, 0L) != lease) {
                 throw new IllegalStateException("Recording lease is stale");
             }
@@ -115,15 +135,38 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
 
     @Override
     public boolean isCurrent(long lease) {
-        synchronized (LEASE_LOCK) {
+        synchronized (DURABLE_LOCK) {
             return preferences.getLong(KEY_LEASE, 0L) == lease;
         }
     }
 
     @Override
     public boolean runIfCurrent(long lease, Runnable callback) {
-        synchronized (LEASE_LOCK) {
-            if (preferences.getLong(KEY_LEASE, 0L) != lease) {
+        return callbackOwnership.runIfCurrent(lease, callback);
+    }
+
+    private static CallbackOwnership callbackOwnershipFor(SharedPreferences preferences) {
+        synchronized (OWNERSHIP_REGISTRY_LOCK) {
+            CallbackOwnership ownership = CALLBACK_OWNERSHIPS.get(preferences);
+            if (ownership == null) {
+                ownership = new CallbackOwnership();
+                CALLBACK_OWNERSHIPS.put(preferences, ownership);
+            }
+            return ownership;
+        }
+    }
+
+    private static final class CallbackOwnership {
+        private long currentLease;
+
+        private synchronized void activate(long lease) {
+            if (lease > currentLease) {
+                currentLease = lease;
+            }
+        }
+
+        private synchronized boolean runIfCurrent(long lease, Runnable callback) {
+            if (currentLease != lease) {
                 return false;
             }
             callback.run();

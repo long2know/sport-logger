@@ -13,17 +13,24 @@ public final class ActivityTransferReceiver {
                 String sourceUri) throws Exception;
     }
 
+    public interface RetryScheduler {
+        void schedule() throws Exception;
+    }
+
     private final String activityPath;
     private final PhoneActivityStore store;
     private final Acknowledger acknowledger;
+    private final RetryScheduler retryScheduler;
 
     public ActivityTransferReceiver(
             String activityPath,
             PhoneActivityStore store,
-            Acknowledger acknowledger) {
+            Acknowledger acknowledger,
+            RetryScheduler retryScheduler) {
         this.activityPath = Objects.requireNonNull(activityPath);
         this.store = Objects.requireNonNull(store);
         this.acknowledger = Objects.requireNonNull(acknowledger);
+        this.retryScheduler = Objects.requireNonNull(retryScheduler);
     }
 
     public SportActivity receive(
@@ -61,11 +68,24 @@ public final class ActivityTransferReceiver {
                                 sourceNodeId,
                                 expectedTransferId),
                         sourceUri);
-        acknowledger.acknowledge(
-                pending.getAcknowledgementPath(),
-                pending.getTransferId(),
-                pending.getSourceUri());
-        store.acknowledgementQueued(pending);
+        Exception schedulingFailure = null;
+        try {
+            retryScheduler.schedule();
+        } catch (Exception error) {
+            schedulingFailure = error;
+        }
+        try {
+            acknowledger.acknowledge(
+                    pending.getAcknowledgementPath(),
+                    pending.getTransferId(),
+                    pending.getSourceUri());
+            store.acknowledgementQueued(pending);
+        } catch (Exception error) {
+            if (schedulingFailure != null) {
+                error.addSuppressed(schedulingFailure);
+            }
+            throw error;
+        }
         return activity;
     }
 

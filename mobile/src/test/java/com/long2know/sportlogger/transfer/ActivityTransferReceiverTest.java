@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -42,7 +43,9 @@ public class ActivityTransferReceiverTest {
                 "/sportactivity",
                 store,
                 (path, transferId, sourceUri) ->
-                        acknowledgements.add(path + "|" + transferId + "|" + sourceUri));
+                        acknowledgements.add(path + "|" + transferId + "|" + sourceUri),
+                () -> {
+                });
         SportActivity first = activity(1, 1_000L);
         SportActivity second = activity(2, 2_000L);
         byte[] firstBytes = SportActivity.serialize(first);
@@ -67,7 +70,9 @@ public class ActivityTransferReceiverTest {
         ActivityTransferReceiver receiver = new ActivityTransferReceiver(
                 "/sportactivity",
                 store,
-                (path, transferId, sourceUri) -> acknowledgements.add(path));
+                (path, transferId, sourceUri) -> acknowledgements.add(path),
+                () -> {
+                });
         SportActivity activity = activity(7, 7_000L);
         byte[] payload = SportActivity.serialize(activity);
 
@@ -104,34 +109,70 @@ public class ActivityTransferReceiverTest {
     }
 
     @Test
-    public void failedAcknowledgementRemainsDurableAcrossPhoneRestart() throws Exception {
+    public void restartJobEntryRetriesFailedDataLayerQueueUntilMarkerClears()
+            throws Exception {
         PhoneActivityStore store = new PhoneActivityStore(storeDirectory);
+        RecordingDataLayer dataLayer = new RecordingDataLayer(2);
+        AtomicInteger scheduled = new AtomicInteger();
         ActivityTransferReceiver receiver = new ActivityTransferReceiver(
                 "/sportactivity",
                 store,
-                (path, transferId, sourceUri) -> {
-                    throw new IOException("data layer unavailable");
+                new WearDataLayerAcknowledger(dataLayer),
+                () -> {
+                    assertEquals(1, store.pendingAcknowledgements().size());
+                    scheduled.incrementAndGet();
                 });
         SportActivity activity = activity(8, 8_000L);
         byte[] payload = SportActivity.serialize(activity);
+        String transferId = ActivityTransferProtocol.transferId(activity, payload);
+        String sourceUri = "wear://watch-node"
+                + ActivityTransferProtocol.activityPath("/sportactivity", transferId);
+        String acknowledgementPath =
+                ActivityTransferProtocol.acknowledgementPath(
+                        "/sportactivity",
+                        "watch-node",
+                        transferId);
 
         try {
             receive(receiver, "watch-node", activity, payload);
             fail("Expected acknowledgement failure");
         } catch (IOException expected) {
-            assertEquals("data layer unavailable", expected.getMessage());
+            assertEquals("data layer unavailable 1", expected.getMessage());
         }
+        assertEquals(1, scheduled.get());
         assertEquals(1, store.storedActivityCount());
         assertEquals(1, store.pendingAcknowledgements().size());
+        assertEquals(1, dataLayer.attempts.size());
 
         PhoneActivityStore restartedStore = new PhoneActivityStore(storeDirectory);
-        PhoneActivityStore.PendingAcknowledgement pending =
-                restartedStore.pendingAcknowledgements().get(0);
-        assertTrue(pending.getAcknowledgementPath().startsWith("/sportactivity-ack/"));
-        assertTrue(pending.getSourceUri().startsWith("wear://watch-node/"));
-        restartedStore.acknowledgementQueued(pending);
+        PendingAcknowledgementRetry.Result failedRetry =
+                new PendingAcknowledgementRetry(
+                        restartedStore,
+                        new WearDataLayerAcknowledger(dataLayer))
+                        .run();
+        assertTrue(failedRetry.needsRetry());
+        assertEquals(1, failedRetry.getPendingCount());
+        assertEquals(0, failedRetry.getQueuedCount());
+        assertEquals(1, restartedStore.pendingAcknowledgements().size());
+        assertEquals(2, dataLayer.attempts.size());
+
+        PendingAcknowledgementRetry.Result successfulRetry =
+                new PendingAcknowledgementRetry(
+                        restartedStore,
+                        new WearDataLayerAcknowledger(dataLayer))
+                        .run();
+        assertFalse(successfulRetry.needsRetry());
+        assertEquals(1, successfulRetry.getPendingCount());
+        assertEquals(1, successfulRetry.getQueuedCount());
         assertTrue(restartedStore.pendingAcknowledgements().isEmpty());
         assertEquals(1, restartedStore.storedActivityCount());
+        assertEquals(3, dataLayer.attempts.size());
+        for (DataLayerAttempt attempt : dataLayer.attempts) {
+            assertEquals(acknowledgementPath, attempt.acknowledgementPath);
+            assertEquals(transferId, attempt.transferId);
+            assertEquals(sourceUri, attempt.sourceUri);
+            assertTrue(attempt.attempt != 0L);
+        }
     }
 
     private static void receive(
@@ -158,6 +199,51 @@ public class ActivityTransferReceiverTest {
         activity.Id = id;
         activity.StartTimeUTC = new Date(startedAt);
         return activity;
+    }
+
+    private static final class RecordingDataLayer
+            implements WearDataLayerAcknowledger.DataLayer {
+        private final List<DataLayerAttempt> attempts = new ArrayList<>();
+        private int failuresRemaining;
+
+        private RecordingDataLayer(int failuresRemaining) {
+            this.failuresRemaining = failuresRemaining;
+        }
+
+        @Override
+        public void queue(
+                String acknowledgementPath,
+                String transferId,
+                String sourceUri,
+                long attempt) throws IOException {
+            attempts.add(new DataLayerAttempt(
+                    acknowledgementPath,
+                    transferId,
+                    sourceUri,
+                    attempt));
+            if (failuresRemaining > 0) {
+                failuresRemaining--;
+                throw new IOException("data layer unavailable " + attempts.size());
+            }
+        }
+    }
+
+    private static final class DataLayerAttempt {
+        private final String acknowledgementPath;
+        private final String transferId;
+        private final String sourceUri;
+        private final long attempt;
+
+        private DataLayerAttempt(
+                String acknowledgementPath,
+                String transferId,
+                String sourceUri,
+                long attempt) {
+            this.acknowledgementPath = acknowledgementPath;
+            this.transferId = transferId;
+            this.sourceUri = sourceUri;
+            this.attempt = attempt;
+        }
     }
 
     private static void deleteRecursively(File file) throws IOException {

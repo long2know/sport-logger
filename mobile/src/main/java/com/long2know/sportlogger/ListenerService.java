@@ -11,12 +11,13 @@ import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.MessageEvent;
-import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
 
 import com.long2know.sportlogger.transfer.ActivityTransferReceiver;
+import com.long2know.sportlogger.transfer.PendingAcknowledgementRetry;
 import com.long2know.sportlogger.transfer.PhoneActivityStore;
+import com.long2know.sportlogger.transfer.WearDataLayerAcknowledger;
 import com.long2know.utilities.models.SportActivity;
 import com.long2know.utilities.transfer.ActivityTransferProtocol;
 
@@ -50,12 +51,14 @@ public class ListenerService extends WearableListenerService {
     public void onDataChanged(DataEventBuffer dataEvents) {
         String activityPath = getString(R.string.wear_path);
         PhoneActivityStore store = new PhoneActivityStore(this);
-        ActivityTransferReceiver.Acknowledger acknowledger = this::queueAcknowledgement;
+        ActivityTransferReceiver.Acknowledger acknowledger =
+                new WearDataLayerAcknowledger(this);
         retryPendingAcknowledgements(store, acknowledger);
         ActivityTransferReceiver receiver = new ActivityTransferReceiver(
                 activityPath,
                 store,
-                acknowledger);
+                acknowledger,
+                () -> PendingAcknowledgementRetry.schedule(this));
 
         for (DataEvent event : dataEvents) {
             String itemPath = event.getDataItem().getUri().getPath();
@@ -126,42 +129,19 @@ public class ListenerService extends WearableListenerService {
             PhoneActivityStore store,
             ActivityTransferReceiver.Acknowledger acknowledger) {
         try {
-            for (PhoneActivityStore.PendingAcknowledgement pending
-                    : store.pendingAcknowledgements()) {
-                try {
-                    acknowledger.acknowledge(
-                            pending.getAcknowledgementPath(),
-                            pending.getTransferId(),
-                            pending.getSourceUri());
-                    store.acknowledgementQueued(pending);
-                } catch (Exception error) {
-                    Log.e(TAG, "Could not retry durable activity acknowledgement", error);
-                }
+            PendingAcknowledgementRetry.Result result =
+                    new PendingAcknowledgementRetry(store, acknowledger).run();
+            if (result.needsRetry()) {
+                Log.e(
+                        TAG,
+                        "Could not retry "
+                                + result.getFailureCount()
+                                + " durable activity acknowledgement(s)",
+                        result.getFirstFailure());
+                PendingAcknowledgementRetry.schedule(this);
             }
         } catch (Exception error) {
-            Log.e(TAG, "Could not read pending activity acknowledgements", error);
+            Log.e(TAG, "Could not retry or schedule pending activity acknowledgements", error);
         }
-    }
-
-    private void queueAcknowledgement(
-            String acknowledgementPath,
-            String transferId,
-            String sourceUri) throws Exception {
-        PutDataMapRequest acknowledgement =
-                PutDataMapRequest.create(acknowledgementPath);
-        acknowledgement.getDataMap().putString(
-                ActivityTransferProtocol.TRANSFER_ID_KEY,
-                transferId);
-        acknowledgement.getDataMap().putString(
-                ActivityTransferProtocol.SOURCE_URI_KEY,
-                sourceUri);
-        acknowledgement.getDataMap().putLong(
-                ActivityTransferProtocol.ATTEMPT_KEY,
-                System.nanoTime());
-        Tasks.await(
-                Wearable.getDataClient(this).putDataItem(
-                        acknowledgement.asPutDataRequest().setUrgent()),
-                DATA_LAYER_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS);
     }
 }
