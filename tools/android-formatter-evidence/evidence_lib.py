@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import hashlib
 import io
 import json
@@ -15,6 +16,13 @@ from typing import Iterable, Mapping, Sequence
 
 
 API_LEVELS = (26, 36)
+CURRENT_SCHEMA_RELATIVE_PATH = "tools/sqlite-compat/legacy_schema.sql"
+CURRENT_WRITER_LOCALE_POLICIES = ("locale_us",)
+REQUIRED_TIMESTAMP_COLUMN_SYMBOLS = (
+    "A_END_TIME_UTC",
+    "A_START_TIME_UTC",
+    "T_TIMESTAMP_UTC",
+)
 
 ADVERTISED_HEADER = (
     "sorted_index",
@@ -196,6 +204,576 @@ def load_toolchain(root: Path) -> dict[str, object]:
     return value
 
 
+def load_writer_contract(root: Path) -> dict[str, object]:
+    path = root / "writer-contract.json"
+    raw = path.read_bytes()
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvidenceError(f"{path}: invalid UTF-8 JSON: {error}") from error
+    if raw != canonical_json_bytes(value):
+        raise EvidenceError(f"{path}: JSON is not canonical")
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        raise EvidenceError(f"{path}: unsupported schema")
+    return value
+
+
+def resolve_safe_file(
+    base: Path,
+    relative_path: str,
+    boundary: Path,
+    context: str,
+) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute():
+        raise EvidenceError(f"{context}: absolute path is prohibited")
+    resolved = (base / relative).resolve()
+    boundary = boundary.resolve()
+    if (
+        resolved == boundary
+        or boundary not in resolved.parents
+        or resolved.is_symlink()
+        or not resolved.is_file()
+    ):
+        raise EvidenceError(f"{context}: path is unavailable or unsafe")
+    return resolved
+
+
+def read_captured_source(path: Path) -> bytes:
+    try:
+        value = gzip.decompress(path.read_bytes())
+    except (OSError, EOFError) as error:
+        raise EvidenceError(f"{path}: invalid captured-source gzip") from error
+    if not value:
+        raise EvidenceError(f"{path}: captured source is empty")
+    return value
+
+
+def strip_java_comments(value: str) -> str:
+    output: list[str] = []
+    index = 0
+    state = "code"
+    while index < len(value):
+        character = value[index]
+        next_character = value[index + 1] if index + 1 < len(value) else ""
+        if state == "code":
+            if character == '"':
+                state = "string"
+                output.append(character)
+            elif character == "'":
+                state = "character"
+                output.append(character)
+            elif character == "/" and next_character == "/":
+                state = "line_comment"
+                output.extend((" ", " "))
+                index += 1
+            elif character == "/" and next_character == "*":
+                state = "block_comment"
+                output.extend((" ", " "))
+                index += 1
+            else:
+                output.append(character)
+        elif state == "string":
+            output.append(character)
+            if character == "\\" and next_character:
+                output.append(next_character)
+                index += 1
+            elif character == '"':
+                state = "code"
+        elif state == "character":
+            output.append(character)
+            if character == "\\" and next_character:
+                output.append(next_character)
+                index += 1
+            elif character == "'":
+                state = "code"
+        elif state == "line_comment":
+            output.append("\n" if character == "\n" else " ")
+            if character == "\n":
+                state = "code"
+        else:
+            output.append("\n" if character == "\n" else " ")
+            if character == "*" and next_character == "/":
+                output.append(" ")
+                index += 1
+                state = "code"
+        index += 1
+    if state in {"string", "character", "block_comment"}:
+        raise EvidenceError("Java source contains an unterminated token")
+    return "".join(output)
+
+
+JAVA_STRING_TOKEN = r'"(?:\\.|[^"\\])*"'
+
+
+def decode_java_string(token: str) -> str:
+    try:
+        value = json.loads(token)
+    except json.JSONDecodeError as error:
+        raise EvidenceError(f"invalid Java string literal {token!r}") from error
+    if not isinstance(value, str):
+        raise EvidenceError("Java string literal did not decode to text")
+    return value
+
+
+def java_string_constants(source: str) -> dict[str, str]:
+    constants: dict[str, str] = {}
+    pattern = re.compile(
+        rf"\bstatic\s+final\s+String\s+([A-Za-z_][A-Za-z0-9_]*)"
+        rf"\s*=\s*({JAVA_STRING_TOKEN})\s*;"
+    )
+    for match in pattern.finditer(strip_java_comments(source)):
+        constants[match.group(1)] = decode_java_string(match.group(2))
+    return constants
+
+
+def evaluate_java_string_concatenation(
+    expression: str,
+    constants: Mapping[str, str],
+) -> str:
+    token_pattern = re.compile(
+        rf"{JAVA_STRING_TOKEN}|[A-Za-z_][A-Za-z0-9_]*|\+|\s+"
+    )
+    parts: list[str] = []
+    position = 0
+    for match in token_pattern.finditer(expression):
+        if match.start() != position:
+            raise EvidenceError("execSQL expression contains a non-constant token")
+        token = match.group(0)
+        position = match.end()
+        if token.isspace() or token == "+":
+            continue
+        if token.startswith('"'):
+            parts.append(decode_java_string(token))
+        elif token in constants:
+            parts.append(constants[token])
+        else:
+            raise EvidenceError(f"execSQL expression uses unknown constant {token}")
+    if position != len(expression):
+        raise EvidenceError("execSQL expression contains trailing non-constant text")
+    return "".join(parts)
+
+
+def normalize_sql(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    normalized = re.sub(r"\s*([(),;])\s*", r"\1", normalized)
+    return normalized.upper()
+
+
+def extract_java_call_arguments(
+    source: str,
+    method_name: str,
+) -> tuple[str, ...]:
+    arguments: list[str] = []
+    pattern = re.compile(
+        rf"\b[A-Za-z_][A-Za-z0-9_]*\.{re.escape(method_name)}\s*\("
+    )
+    for match in pattern.finditer(source):
+        opening = source.find("(", match.start())
+        depth = 1
+        state = "code"
+        index = opening + 1
+        while index < len(source):
+            character = source[index]
+            next_character = source[index + 1] if index + 1 < len(source) else ""
+            if state == "code":
+                if character == '"':
+                    state = "string"
+                elif character == "'":
+                    state = "character"
+                elif character == "(":
+                    depth += 1
+                elif character == ")":
+                    depth -= 1
+                    if depth == 0:
+                        arguments.append(source[opening + 1:index])
+                        break
+            elif state == "string":
+                if character == "\\" and next_character:
+                    index += 1
+                elif character == '"':
+                    state = "code"
+            else:
+                if character == "\\" and next_character:
+                    index += 1
+                elif character == "'":
+                    state = "code"
+            index += 1
+        else:
+            raise EvidenceError(f"Java call {method_name} has unbalanced parentheses")
+    return tuple(arguments)
+
+
+def extract_create_table_statements(source: str) -> tuple[str, ...]:
+    stripped = strip_java_comments(source)
+    constants = java_string_constants(stripped)
+    statements: list[str] = []
+    for expression in extract_java_call_arguments(stripped, "execSQL"):
+        try:
+            statement = evaluate_java_string_concatenation(
+                expression, constants
+            )
+        except EvidenceError:
+            continue
+        if re.match(r"\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b", statement, re.I):
+            statements.append(normalize_sql(statement))
+    return tuple(sorted(statements))
+
+
+def expected_create_table_statements(schema_source: str) -> tuple[str, ...]:
+    statements = re.findall(
+        r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b.*?;",
+        schema_source,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return tuple(sorted(normalize_sql(statement) for statement in statements))
+
+
+def extract_formatter_model(
+    config_source: str,
+    expected_pattern: str,
+    allowed_locale_policies: Sequence[str],
+) -> dict[str, str]:
+    stripped = strip_java_comments(config_source)
+    assignment_pattern = re.compile(
+        rf"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+SimpleDateFormat"
+        rf"\s*\(\s*({JAVA_STRING_TOKEN})\s*(,\s*[^)]*?)?\)\s*;"
+    )
+    matches = [
+        match
+        for match in assignment_pattern.finditer(stripped)
+        if decode_java_string(match.group(2)) == expected_pattern
+    ]
+    if len(matches) != 1:
+        raise EvidenceError(
+            "current Config.java must define exactly one compatible timestamp formatter"
+        )
+    match = matches[0]
+    field = match.group(1)
+    trailing = re.sub(r"\s+", "", match.group(3) or "")
+    if not trailing:
+        locale_policy = "default_locale"
+        constructor = "java.text.SimpleDateFormat(String)"
+    elif trailing == ",Locale.US":
+        locale_policy = "locale_us"
+        constructor = "java.text.SimpleDateFormat(String,java.util.Locale)"
+    else:
+        raise EvidenceError(
+            "current Config.java uses an unsupported timestamp locale policy"
+        )
+    if locale_policy not in allowed_locale_policies:
+        raise EvidenceError(
+            f"current timestamp locale policy {locale_policy!r} is not allowed"
+        )
+
+    format_methods = re.findall(
+        rf"\bString\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*"
+        rf"(?:throws\s+[A-Za-z0-9_.,\s]+)?\{{[^{{}}]*\breturn\s+"
+        rf"{re.escape(field)}\.format\s*\(",
+        stripped,
+    )
+    parse_methods = re.findall(
+        rf"\bDate\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*"
+        rf"(?:throws\s+[A-Za-z0-9_.,\s]+)?\{{[^{{}}]*\breturn\s+"
+        rf"{re.escape(field)}\.parse\s*\(",
+        stripped,
+    )
+    public_field = re.search(
+        rf"\bpublic\s+static\s+final\s+DateFormat\s+{re.escape(field)}\b",
+        stripped,
+    )
+    if len(format_methods) == 1 and len(parse_methods) == 1:
+        format_api = f"Config.{format_methods[0]}"
+        parse_api = f"Config.{parse_methods[0]}"
+    elif public_field and not format_methods and not parse_methods:
+        format_api = f"Config.{field}.format"
+        parse_api = f"Config.{field}.parse"
+    else:
+        raise EvidenceError(
+            "current Config.java does not expose one matching format/parse surface"
+        )
+    return {
+        "constructor": constructor,
+        "format_api": format_api,
+        "locale_policy": locale_policy,
+        "parse_api": parse_api,
+        "pattern": expected_pattern,
+    }
+
+
+def extract_java_method_body(source: str, method_name: str) -> str:
+    match = re.search(
+        rf"\b{re.escape(method_name)}\s*\([^)]*\)\s*\{{",
+        source,
+    )
+    if match is None:
+        raise EvidenceError(f"Java method {method_name} is missing")
+    opening = source.find("{", match.start())
+    depth = 0
+    state = "code"
+    index = opening
+    while index < len(source):
+        character = source[index]
+        next_character = source[index + 1] if index + 1 < len(source) else ""
+        if state == "code":
+            if character == '"':
+                state = "string"
+            elif character == "'":
+                state = "character"
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[opening + 1:index]
+        elif state == "string":
+            if character == "\\" and next_character:
+                index += 1
+            elif character == '"':
+                state = "code"
+        else:
+            if character == "\\" and next_character:
+                index += 1
+            elif character == "'":
+                state = "code"
+        index += 1
+    raise EvidenceError(f"Java method {method_name} has an unterminated body")
+
+
+def validate_current_writer_text(
+    config_source: str,
+    writer_source: str,
+    schema_source: str,
+    expected_pattern: str,
+    allowed_locale_policies: Sequence[str],
+    required_timestamp_columns: Sequence[str],
+    *,
+    require_column_writes: bool,
+) -> dict[str, object]:
+    model = extract_formatter_model(
+        config_source,
+        expected_pattern,
+        allowed_locale_policies,
+    )
+    writer = strip_java_comments(writer_source)
+    format_api = str(model["format_api"])
+    parse_api = str(model["parse_api"])
+    if not re.search(rf"\b{re.escape(format_api)}\s*\(", writer):
+        raise EvidenceError("SqlLogger.java no longer uses the compatible formatter")
+    if not re.search(rf"\b{re.escape(parse_api)}\s*\(", writer):
+        raise EvidenceError("SqlLogger.java no longer uses the compatible parser")
+
+    if require_column_writes:
+        for column in required_timestamp_columns:
+            direct = re.search(
+                rf"\bvalues\.put\s*\(\s*{re.escape(column)}\s*,\s*"
+                rf"{re.escape(format_api)}\s*\(",
+                writer,
+            )
+            helper = re.search(
+                rf"\bputDate\s*\(\s*values\s*,\s*{re.escape(column)}\s*,",
+                writer,
+            )
+            if not direct and not helper:
+                raise EvidenceError(
+                    f"SqlLogger.java no longer formats timestamp column {column}"
+                )
+        if "putDate" in writer and not re.search(
+            rf"\b{re.escape(format_api)}\s*\(",
+            extract_java_method_body(writer, "putDate"),
+        ):
+            raise EvidenceError(
+                "SqlLogger.java putDate helper bypasses the compatible formatter"
+            )
+
+    observed_schema = extract_create_table_statements(writer)
+    expected_schema = expected_create_table_statements(schema_source)
+    if len(expected_schema) != 2 or observed_schema != expected_schema:
+        raise EvidenceError(
+            "current SqlLogger.java schema no longer matches legacy_schema.sql"
+        )
+    return {
+        **model,
+        "schema_statements": list(observed_schema),
+    }
+
+
+def validate_writer_boundaries(
+    root: Path,
+    toolchain: Mapping[str, object],
+) -> dict[str, object]:
+    contract = load_writer_contract(root)
+    capture = require_mapping(contract, "capture")
+    current = require_mapping(contract, "current_compatibility")
+    legacy_writer = require_mapping(toolchain, "legacy_writer")
+    formatter = require_mapping(toolchain, "formatter")
+    repository_root = root.parent.parent.resolve()
+
+    for contract_key, toolchain_key in (
+        ("config_logical_path", "config_relative_path"),
+        ("config_sha256", "config_sha256"),
+        ("writer_logical_path", "writer_relative_path"),
+        ("writer_sha256", "writer_sha256"),
+        ("pattern", "pattern"),
+    ):
+        if capture.get(contract_key) != legacy_writer.get(toolchain_key):
+            raise EvidenceError(
+                f"writer-contract.json: capture {contract_key} disagrees with toolchain.json"
+            )
+    if capture.get("formatter_constructor") != formatter.get("constructor"):
+        raise EvidenceError(
+            "writer-contract.json: captured constructor disagrees with toolchain.json"
+        )
+    if not re.fullmatch(
+        r"[0-9a-f]{40}",
+        str(capture.get("base_commit", "")),
+    ):
+        raise EvidenceError(
+            "writer-contract.json: capture base commit must be a full object ID"
+        )
+    if (
+        capture.get("config_snapshot_relative_path")
+        != f"captured-source/{capture.get('config_logical_path')}.gz"
+        or capture.get("writer_snapshot_relative_path")
+        != f"captured-source/{capture.get('writer_logical_path')}.gz"
+    ):
+        raise EvidenceError(
+            "writer-contract.json: captured snapshots do not mirror logical source paths"
+        )
+
+    config_snapshot = resolve_safe_file(
+        root,
+        require_nonempty_string(
+            capture, "config_snapshot_relative_path", "capture"
+        ),
+        root,
+        "captured Config.java",
+    )
+    writer_snapshot = resolve_safe_file(
+        root,
+        require_nonempty_string(
+            capture, "writer_snapshot_relative_path", "capture"
+        ),
+        root,
+        "captured SqlLogger.java",
+    )
+    captured_config = read_captured_source(config_snapshot)
+    captured_writer = read_captured_source(writer_snapshot)
+    if sha256_bytes(captured_config) != capture.get("config_sha256"):
+        raise EvidenceError("captured Config.java SHA-256 mismatch")
+    if sha256_bytes(captured_writer) != capture.get("writer_sha256"):
+        raise EvidenceError("captured SqlLogger.java SHA-256 mismatch")
+
+    schema_path = resolve_safe_file(
+        repository_root,
+        require_nonempty_string(
+            current, "schema_relative_path", "current_compatibility"
+        ),
+        repository_root,
+        "legacy schema",
+    )
+    if (
+        current.get("config_relative_path") != capture.get("config_logical_path")
+        or current.get("writer_relative_path")
+        != capture.get("writer_logical_path")
+    ):
+        raise EvidenceError(
+            "writer-contract.json: current writer paths must retain the captured logical paths"
+        )
+    if current.get("schema_relative_path") != CURRENT_SCHEMA_RELATIVE_PATH:
+        raise EvidenceError(
+            "writer-contract.json: current schema path is not the exact harness schema"
+        )
+    required_columns = require_sequence(
+        current, "required_timestamp_columns"
+    )
+    if not all(isinstance(item, str) and item for item in required_columns):
+        raise EvidenceError(
+            "writer-contract.json: timestamp columns must be non-empty strings"
+        )
+    if tuple(required_columns) != REQUIRED_TIMESTAMP_COLUMN_SYMBOLS:
+        raise EvidenceError(
+            "writer-contract.json: required timestamp columns changed"
+        )
+    allowed_policies = require_sequence(current, "allowed_locale_policies")
+    if not all(isinstance(item, str) and item for item in allowed_policies):
+        raise EvidenceError(
+            "writer-contract.json: locale policies must be non-empty strings"
+        )
+    if tuple(allowed_policies) != CURRENT_WRITER_LOCALE_POLICIES:
+        raise EvidenceError(
+            "writer-contract.json: current locale policy changed"
+        )
+    expected_pattern = require_nonempty_string(
+        current, "expected_pattern", "current_compatibility"
+    )
+    if expected_pattern != legacy_writer.get("pattern"):
+        raise EvidenceError(
+            "writer-contract.json: current pattern disagrees with captured pattern"
+        )
+    capture_model = validate_current_writer_text(
+        captured_config.decode("utf-8"),
+        captured_writer.decode("utf-8"),
+        schema_path.read_text(encoding="utf-8"),
+        expected_pattern,
+        ("default_locale",),
+        tuple(str(item) for item in required_columns),
+        require_column_writes=False,
+    )
+    if capture_model["constructor"] != formatter.get("constructor"):
+        raise EvidenceError(
+            "captured formatter constructor no longer matches evidence"
+        )
+
+    current_config = resolve_safe_file(
+        repository_root,
+        require_nonempty_string(
+            current, "config_relative_path", "current_compatibility"
+        ),
+        repository_root,
+        "current Config.java",
+    )
+    current_writer = resolve_safe_file(
+        repository_root,
+        require_nonempty_string(
+            current, "writer_relative_path", "current_compatibility"
+        ),
+        repository_root,
+        "current SqlLogger.java",
+    )
+    current_model = validate_current_writer_text(
+        current_config.read_text(encoding="utf-8"),
+        current_writer.read_text(encoding="utf-8"),
+        schema_path.read_text(encoding="utf-8"),
+        expected_pattern,
+        tuple(str(item) for item in allowed_policies),
+        tuple(str(item) for item in required_columns),
+        require_column_writes=True,
+    )
+    return {
+        "capture": {
+            "base_commit": require_nonempty_string(
+                capture, "base_commit", "capture"
+            ),
+            "config_sha256": str(capture["config_sha256"]),
+            "constructor": str(capture_model["constructor"]),
+            "locale_policy": str(capture_model["locale_policy"]),
+            "pattern": expected_pattern,
+            "writer_sha256": str(capture["writer_sha256"]),
+        },
+        "contract_sha256": sha256_file(root / "writer-contract.json"),
+        "current": {
+            "config_sha256": sha256_file(current_config),
+            "constructor": str(current_model["constructor"]),
+            "format_api": str(current_model["format_api"]),
+            "locale_policy": str(current_model["locale_policy"]),
+            "parse_api": str(current_model["parse_api"]),
+            "pattern": expected_pattern,
+            "writer_sha256": sha256_file(current_writer),
+        },
+    }
+
+
 def validate_toolchain(root: Path) -> dict[str, object]:
     toolchain = load_toolchain(root)
     if toolchain.get("schema_version") != 1:
@@ -214,41 +792,10 @@ def validate_toolchain(root: Path) -> dict[str, object]:
         raise EvidenceError("toolchain.json: manifest SHA-256 mismatch")
 
     legacy_writer = require_mapping(toolchain, "legacy_writer")
-    repository_root = root.parent.parent.resolve()
-    config_path = (
-        repository_root
-        / require_nonempty_string(
-            legacy_writer, "config_relative_path", "legacy_writer"
-        )
-    ).resolve()
-    writer_path = (
-        repository_root
-        / require_nonempty_string(
-            legacy_writer, "writer_relative_path", "legacy_writer"
-        )
-    ).resolve()
-    for path in (config_path, writer_path):
-        if repository_root not in path.parents or path.is_symlink() or not path.is_file():
-            raise EvidenceError(
-                "toolchain.json: legacy source path is outside the repository or unsafe"
-            )
-    if legacy_writer.get("config_sha256") != sha256_file(config_path):
-        raise EvidenceError("toolchain.json: legacy Config.java SHA-256 mismatch")
-    if legacy_writer.get("writer_sha256") != sha256_file(writer_path):
-        raise EvidenceError("toolchain.json: legacy SqlLogger.java SHA-256 mismatch")
+    validate_writer_boundaries(root, toolchain)
     legacy_pattern = require_nonempty_string(
         legacy_writer, "pattern", "legacy_writer"
     )
-    config_text = config_path.read_text(encoding="utf-8")
-    if (
-        f'new SimpleDateFormat("{legacy_pattern}")' not in config_text
-        or "Config.TimestampFormat.format" not in writer_path.read_text(
-            encoding="utf-8"
-        )
-    ):
-        raise EvidenceError(
-            "toolchain.json: legacy formatter provenance no longer matches production"
-        )
 
     sdk_packages = require_mapping(toolchain, "sdk_packages")
     for name in (
@@ -912,6 +1459,7 @@ def build_union_summary(
 
 def validate_all(root: Path) -> dict[str, object]:
     toolchain = validate_toolchain(root)
+    writer_provenance = validate_writer_boundaries(root, toolchain)
     evidence_by_api = {
         api_level: load_api_evidence(root, api_level) for api_level in API_LEVELS
     }
@@ -936,6 +1484,7 @@ def validate_all(root: Path) -> dict[str, object]:
         "toolchain": toolchain,
         "evidence": evidence_by_api,
         "summary": json.loads(expected_summary.decode("utf-8")),
+        "writer_provenance": writer_provenance,
     }
 
 

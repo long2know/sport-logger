@@ -1330,7 +1330,7 @@ def run_oracle(
             "INVALID_POINT_COUNT",
             "acceptance runs require exactly 100,000 points",
         )
-    catalog, _ = load_digit_catalog()
+    catalog, formatter_result = load_digit_catalog()
     scenarios = load_scenarios()
     exact_report = validate_exact_report(exact_report_path)
     exact_report_sha256 = sha256_file(exact_report_path)
@@ -1503,6 +1503,7 @@ def run_oracle(
             if result["codes"] != ["SOURCE_MUTATED"]
         ),
         "status": "PASS",
+        "writer_provenance": formatter_result["writer_provenance"],
     }
     atomic_json(output_dir / "report.json", report)
     atomic_text(output_dir / "report.txt", human_report(report))

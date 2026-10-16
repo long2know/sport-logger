@@ -14,6 +14,11 @@ The oracle consumes two independent trust roots:
 It never imports Python's host `sqlite3` module. Every source database is created and read with a
 fresh exact SQLite binary built by the merged harness from a pinned official archive.
 
+The formatter trust root has two explicit boundaries. Immutable snapshots retain the exact legacy
+writer bytes used for the emulator evidence, while `writer-contract.json` semantically verifies
+that the current combined Android tree still uses the same pattern, timestamp columns, and SQLite
+schema. The oracle report records both captured and current source hashes and locale policies.
+
 ## Acceptance run
 
 Run from the repository root:
@@ -80,11 +85,16 @@ The source schema is the `ACTIVITY` and `GPS_POINTS` schema loaded directly from
 the oracle verifies the exact column order, declared types, nullability, and primary keys through
 the runtime-compatible `sqlite_master` and `table_info` path.
 
-The legacy writer contract is pinned to:
+The immutable historical writer contract is pinned to:
 
 ```java
 new SimpleDateFormat("yyyyMMddHHmmss")
 ```
+
+The current approved Android implementation wraps
+`new SimpleDateFormat("yyyyMMddHHmmss", Locale.US)` behind
+`Config.formatTimestamp` / `Config.parseTimestamp`. That reviewed change does not rewrite the
+historical evidence: current compatibility is checked separately before any oracle gate runs.
 
 The parser:
 

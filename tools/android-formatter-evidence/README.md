@@ -1,7 +1,7 @@
 # Android formatter runtime evidence
 
-This directory independently records what the Android runtime emits for the production call shape
-used by `Config.TimestampFormat` and `SqlLogger`:
+This directory independently records what the Android runtime emits for the historical production
+call shape captured before the Android foundation refactor:
 
 ```java
 new java.text.SimpleDateFormat("yyyyMMddHHmmss")
@@ -9,6 +9,30 @@ new java.text.SimpleDateFormat("yyyyMMddHHmmss")
 
 The probe targets the legacy source-runtime question only. It does **not** contain a migration parser,
 acceptance oracle, SQLite ETL, fixture importer, or migration policy.
+
+## Immutable capture versus current compatibility
+
+The committed evidence was generated from the exact `Config.java` and `SqlLogger.java` bytes at
+base commit `6a14abd0ae652ff753433ff3ae30758719864256`. Those bytes are retained as
+deterministic gzip snapshots below `captured-source/`; their decompressed SHA-256 values remain the
+`pin.legacy_*` values in the evidence metadata and `toolchain.json`. They are not rewritten to
+resemble later source.
+
+[`writer-contract.json`](writer-contract.json) defines a separate current-tree compatibility gate.
+The combined Android implementation now uses:
+
+```java
+new SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
+Config.formatTimestamp(...)
+Config.parseTimestamp(...)
+```
+
+Host validation permits that reviewed locale/API refactor while requiring the same 14-digit
+pattern, the same timestamp columns, and the exact `ACTIVITY` / `GPS_POINTS` schema represented by
+`tools/sqlite-compat/legacy_schema.sql`. Comments, whitespace, imports, and unrelated surrounding
+source may change. Pattern, locale-policy, writer-call, timestamp-column, or schema changes fail.
+This preserves the truthful historical evidence boundary without pretending the original emulator
+runs used the refactored source.
 
 ## Pinned local prerequisites
 
@@ -25,9 +49,9 @@ The local regeneration gate requires Linux x86_64, Python 3, and these exact too
 | API 26 image | `system-images;android-26;google_apis;x86_64`, revision `16` |
 | API 36 image | `system-images;android-36;google_apis;x86_64`, revision `7` |
 
-All pins, production-source hashes, probe-source hashes, fixed instants, and representative locales are in
-[`toolchain.json`](toolchain.json). The probe has no Gradle, Maven, or third-party dependency.
-It is compiled and packaged only with the pinned JDK and Android SDK tools.
+All runtime pins, captured-source hashes, probe-source hashes, fixed instants, and representative
+locales are in [`toolchain.json`](toolchain.json). The probe has no Gradle, Maven, or third-party
+dependency. It is compiled and packaged only with the pinned JDK and Android SDK tools.
 
 ## Regenerate and compare
 
@@ -77,7 +101,8 @@ python3 tools/android-formatter-evidence/run_probe.py --validate-only
 These checks enforce schema, canonical bytes, sorting, uniqueness, complete candidate and instant
 coverage, candidate union accuracy, provenance pins, UTF-8 and Unicode scalar validity, code-point
 sequences, strict parse consumption, parsed instant equality, reformat equality, calendar metadata,
-fixed-instant semantics, sanitized content, and deterministic union rendering.
+fixed-instant semantics, sanitized content, deterministic union rendering, immutable capture
+snapshots, and semantic compatibility with the current production writer.
 
 ## Evidence layout
 

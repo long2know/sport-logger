@@ -5,12 +5,15 @@ from pathlib import Path
 
 from evidence_lib import (
     API_LEVELS,
+    EvidenceError,
     build_union_summary,
     canonical_json_bytes,
     code_points,
+    load_writer_contract,
     parse_code_points_strict,
     utf16_length,
     validate_all,
+    validate_current_writer_text,
 )
 
 
@@ -24,6 +27,7 @@ class EvidenceValidationTest(unittest.TestCase):
         cls.toolchain = cls.result["toolchain"]
         cls.evidence = cls.result["evidence"]
         cls.summary = cls.result["summary"]
+        cls.writer_provenance = cls.result["writer_provenance"]
 
     def test_candidate_union_is_exact(self) -> None:
         candidate_sets = {
@@ -168,6 +172,100 @@ class EvidenceValidationTest(unittest.TestCase):
             keys = "\n".join(evidence.metadata)
             for fragment in forbidden_fragments:
                 self.assertNotIn(fragment, keys)
+
+    def test_immutable_capture_and_current_compatibility_are_distinct(self) -> None:
+        capture = self.writer_provenance["capture"]
+        current = self.writer_provenance["current"]
+        self.assertEqual(
+            "07e2df9f92373672da6f02d5ffef3abbf4836882f652473d5822da01627d7cfc",
+            capture["config_sha256"],
+        )
+        self.assertEqual(
+            "cd69c8c08315c7b237ec8fc2817db97dda6fa9939f52e0cc6dcc8f3dba662510",
+            capture["writer_sha256"],
+        )
+        self.assertNotEqual(capture["config_sha256"], current["config_sha256"])
+        self.assertNotEqual(capture["writer_sha256"], current["writer_sha256"])
+        self.assertEqual("default_locale", capture["locale_policy"])
+        self.assertEqual("locale_us", current["locale_policy"])
+        self.assertEqual("Config.formatTimestamp", current["format_api"])
+        self.assertEqual("Config.parseTimestamp", current["parse_api"])
+        for evidence in self.evidence.values():
+            self.assertEqual(
+                capture["config_sha256"],
+                evidence.metadata["pin.legacy_config_sha256"],
+            )
+            self.assertEqual(
+                capture["writer_sha256"],
+                evidence.metadata["pin.legacy_writer_sha256"],
+            )
+
+    def test_current_writer_gate_ignores_surrounding_refactors_but_rejects_contract_changes(
+        self,
+    ) -> None:
+        repository_root = ROOT.parent.parent
+        contract = load_writer_contract(ROOT)
+        compatibility = contract["current_compatibility"]
+        config_path = repository_root / compatibility["config_relative_path"]
+        writer_path = repository_root / compatibility["writer_relative_path"]
+        schema_path = repository_root / compatibility["schema_relative_path"]
+        config_source = config_path.read_text(encoding="utf-8")
+        writer_source = writer_path.read_text(encoding="utf-8")
+        schema_source = schema_path.read_text(encoding="utf-8")
+        arguments = (
+            schema_source,
+            compatibility["expected_pattern"],
+            compatibility["allowed_locale_policies"],
+            compatibility["required_timestamp_columns"],
+        )
+
+        unrelated_config = config_source.replace(
+            "public final class Config {",
+            "/* unrelated class-level documentation */\npublic final class Config {",
+            1,
+        )
+        unrelated_writer = writer_source.replace(
+            "public final class SqlLogger",
+            "/* unrelated writer documentation */\npublic final class SqlLogger",
+            1,
+        )
+        model = validate_current_writer_text(
+            unrelated_config,
+            unrelated_writer,
+            *arguments,
+            require_column_writes=True,
+        )
+        self.assertEqual("locale_us", model["locale_policy"])
+
+        with self.assertRaises(EvidenceError):
+            validate_current_writer_text(
+                config_source.replace(
+                    '"yyyyMMddHHmmss"',
+                    '"yyyy-MM-dd HH:mm:ss"',
+                    1,
+                ),
+                writer_source,
+                *arguments,
+                require_column_writes=True,
+            )
+        with self.assertRaises(EvidenceError):
+            validate_current_writer_text(
+                config_source,
+                writer_source.replace(
+                    "HEARTRATE REAL",
+                    "HEARTRATE INTEGER",
+                    1,
+                ),
+                *arguments,
+                require_column_writes=True,
+            )
+        with self.assertRaises(EvidenceError):
+            validate_current_writer_text(
+                config_source.replace("Locale.US", "Locale.CANADA", 1),
+                writer_source,
+                *arguments,
+                require_column_writes=True,
+            )
 
 
 class UnicodeHelperTest(unittest.TestCase):

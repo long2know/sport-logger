@@ -28,6 +28,14 @@ def main() -> int:
         f"candidates={len(summary['candidate_union_names'])}, "
         f"decimal-blocks={len(summary['emitted_decimal_zero_code_point_union'])}"
     )
+    provenance = result["writer_provenance"]
+    print(
+        "Writer boundary: "
+        f"capture={provenance['capture']['base_commit'][:12]} "
+        f"({provenance['capture']['locale_policy']}), "
+        f"current={provenance['current']['locale_policy']} "
+        f"via {provenance['current']['format_api']}"
+    )
     return 0
 
 

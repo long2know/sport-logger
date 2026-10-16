@@ -86,6 +86,13 @@ class OracleTestCase(unittest.TestCase):
             "yyyyMMddHHmmss",
             toolchain["legacy_writer"]["pattern"],
         )
+        provenance = self.evidence["writer_provenance"]
+        self.assertEqual("default_locale", provenance["capture"]["locale_policy"])
+        self.assertEqual("locale_us", provenance["current"]["locale_policy"])
+        self.assertEqual(
+            "Config.formatTimestamp",
+            provenance["current"]["format_api"],
+        )
 
     def test_scenario_manifest_hashes_match_disk_and_cover_each_detector_once(self) -> None:
         scenarios = oracle.load_scenarios()
