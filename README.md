@@ -8,16 +8,18 @@ transfer, and shared activity/TCX-oriented utilities.
 
 [![Android build](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml)
 [![SQLite compatibility](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml)
+[![Migration oracle](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml)
 
 [Get started](#get-started) | [Build and run](#build-and-run) |
 [Project layout](#project-layout) | [Roadmap](#roadmap) | [Contributing](#contributing)
 
-> **Development status:** SportLogger is being modernized incrementally from its original
+> **Developer preview:** SportLogger is being modernized incrementally from its original
 > Java Android/Wear OS application. The existing three-module structure and activity formats
 > are retained while build, recording, and migration foundations are improved. Planned
 > features below are not advertised as shipped integrations. The phone still has a minimal
 > developer UI: received activities are stored privately, not exposed in an activity browser.
-> **User-facing TCX export is not implemented yet.**
+> **User-facing TCX export is not implemented yet.** Real paired-device end-to-end acceptance
+> remains a release gate; this development baseline is not a release-ready app.
 
 ## What it does
 
@@ -57,6 +59,12 @@ The project uses its checked-in Gradle wrapper; a separate Gradle installation i
 These versions are one project build tuple, not a claim that each component is the newest
 available release. See the [Android foundation guide](docs/android-foundation.md) for the
 implemented lifecycle, transfer, compatibility, and build details.
+
+The app's API minimum does not override the phone OS requirements of your watch's companion app.
+For emulator-based end-to-end testing, follow the
+[official phone/watch pairing instructions](https://developer.android.com/training/wearables/get-started/connect-phone).
+Pairing and first-party companion-app setup are separate from building the APKs and may require
+interactive Play Store setup. Never put account credentials in the repository.
 
 ### Clone and configure
 
@@ -116,8 +124,9 @@ devices before relying on a development build for an important workout.
 The current phone screen is a developer placeholder. Receiving an activity does not create a
 user-browsable history entry or a downloadable TCX file; those experiences remain roadmap work.
 
-Debug APKs are development builds. Release signing, physical-device acceptance, and store
-submission requirements are separate release gates.
+Debug APKs are development builds. Real paired phone/watch transfer and acknowledgement/restart
+acceptance, release signing, physical-device acceptance, and store submission requirements remain
+separate release gates. A passing build or host test suite is not a claim that these gates passed.
 
 ### Checks
 
@@ -133,6 +142,9 @@ The standalone migration-verification tools have their own prerequisites and com
   SQLite engines and checks real engine behavior, including a 100,000-point gate.
 - [Android legacy formatter evidence](tools/android-formatter-evidence/README.md): API 26/API 36
   instrumentation probes, sanitized evidence, and reproducibility checks.
+- [Legacy migration oracle](tools/legacy-migration-oracle/README.md): read-only migration checks
+  against exact SQLite engines, verified Android numbering definitions, real flawed candidates,
+  and deterministic 100,000-point inputs.
 
 Do not commit SDK installations, emulator data, generated databases, build output, or local
 activity files.
