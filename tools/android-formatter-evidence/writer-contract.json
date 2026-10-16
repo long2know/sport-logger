@@ -1,0 +1,28 @@
+{
+  "capture": {
+    "base_commit": "6a14abd0ae652ff753433ff3ae30758719864256",
+    "config_logical_path": "utilities/src/main/java/com/long2know/utilities/models/Config.java",
+    "config_sha256": "07e2df9f92373672da6f02d5ffef3abbf4836882f652473d5822da01627d7cfc",
+    "config_snapshot_relative_path": "captured-source/utilities/src/main/java/com/long2know/utilities/models/Config.java.gz",
+    "formatter_constructor": "java.text.SimpleDateFormat(String)",
+    "pattern": "yyyyMMddHHmmss",
+    "writer_logical_path": "utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java",
+    "writer_sha256": "cd69c8c08315c7b237ec8fc2817db97dda6fa9939f52e0cc6dcc8f3dba662510",
+    "writer_snapshot_relative_path": "captured-source/utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java.gz"
+  },
+  "current_compatibility": {
+    "allowed_locale_policies": [
+      "locale_us"
+    ],
+    "config_relative_path": "utilities/src/main/java/com/long2know/utilities/models/Config.java",
+    "expected_pattern": "yyyyMMddHHmmss",
+    "required_timestamp_columns": [
+      "A_END_TIME_UTC",
+      "A_START_TIME_UTC",
+      "T_TIMESTAMP_UTC"
+    ],
+    "schema_relative_path": "tools/sqlite-compat/legacy_schema.sql",
+    "writer_relative_path": "utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java"
+  },
+  "schema_version": 1
+}

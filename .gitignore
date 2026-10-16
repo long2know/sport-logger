@@ -27,3 +27,17 @@
 
 # Local Copilot CLI MCP examples and overrides
 .copilot/
+
+# Disposable Android formatter evidence build, AVD, and probe output state
+/tools/android-formatter-evidence/.work/
+/tools/android-formatter-evidence/__pycache__/
+/tools/android-formatter-evidence/*.pyc
+
+# Disposable legacy migration oracle databases, reports, and Python caches
+/tools/legacy-migration-oracle/.work/
+/tools/legacy-migration-oracle/.test-work/
+/tools/legacy-migration-oracle/out/
+/tools/legacy-migration-oracle/__pycache__/
+/tools/legacy-migration-oracle/tests/__pycache__/
+/tools/legacy-migration-oracle/*.pyc
+/tools/legacy-migration-oracle/tests/*.pyc

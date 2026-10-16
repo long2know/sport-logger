@@ -1,0 +1,7 @@
+{
+  "expected_code": "MANIFEST_HASH_MISMATCH",
+  "expected_status": "QUARANTINED",
+  "id": "manifest-hash",
+  "mutation": "manifest_hash",
+  "schema_version": 1
+}

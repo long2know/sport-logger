@@ -128,3 +128,8 @@ overall `PASS`, the four requested versions, exact observed identities, the
 
 Reports are disposable and ignored. A deterministic sanitized golden may be added later only with a
 specific test and review.
+
+The linked native gate driver also exposes the harness-internal `readonly-sql DB SQL` operation used
+by the migration oracle. It opens the supplied source with `SQLITE_OPEN_READONLY`, accepts exactly
+one query, rejects tab/newline-bearing result fields, and is rebuilt and identity-checked with the
+same exact amalgamation as every other gate. It is not a cached executable or general shell.

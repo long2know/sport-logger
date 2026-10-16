@@ -1,0 +1,7 @@
+{
+  "expected_code": "MANIFEST_COUNT_MISMATCH",
+  "expected_status": "QUARANTINED",
+  "id": "manifest-count",
+  "mutation": "manifest_count",
+  "schema_version": 1
+}

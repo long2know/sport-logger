@@ -1,0 +1,7 @@
+{
+  "expected_code": "SCHEMA_DRIFT",
+  "expected_status": "QUARANTINED",
+  "id": "schema-drift",
+  "mutation": "schema_drift",
+  "schema_version": 1
+}

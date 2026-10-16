@@ -1,0 +1,7 @@
+{
+  "expected_code": "UNKNOWN_DIGIT_BLOCK",
+  "expected_status": "QUARANTINED",
+  "id": "unknown-digit-block",
+  "mutation": "unknown_digit_block",
+  "schema_version": 1
+}

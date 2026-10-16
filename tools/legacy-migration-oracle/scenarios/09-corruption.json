@@ -1,0 +1,7 @@
+{
+  "expected_code": "SOURCE_CORRUPT",
+  "expected_status": "QUARANTINED",
+  "id": "corruption",
+  "mutation": "corruption",
+  "schema_version": 1
+}

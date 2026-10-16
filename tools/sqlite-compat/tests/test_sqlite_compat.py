@@ -147,6 +147,31 @@ class HarnessUnitTests(WorkspaceTestCase):
             )
         self.assertEqual("ENGINE_SOURCE_ID_MISMATCH", context.exception.code)
 
+    def test_readonly_sql_uses_fresh_exact_static_driver_in_readonly_mode(self) -> None:
+        engine = object.__new__(harness.ExactEngine)
+        engine.build_dir = self.workspace
+        engine.home_dir = self.workspace / "home"
+        engine.home_dir.mkdir()
+        engine.binary = self.workspace / "bin" / "sqlite3"
+        engine.driver_binary = self.workspace / "bin" / "gate_driver"
+        database = self.workspace / "legacy.db"
+        with (
+            mock.patch.object(engine, "_verify_outputs") as verify,
+            mock.patch.object(
+                harness,
+                "run_command",
+                return_value=harness.CommandResult(0, "1\n", ""),
+            ) as invoke,
+        ):
+            result = engine.readonly_sql(database, "SELECT 1;")
+        self.assertEqual(0, result.returncode)
+        verify.assert_called_once_with()
+        arguments = invoke.call_args.args[0]
+        self.assertEqual(str(engine.driver_binary), arguments[0])
+        self.assertEqual("readonly-sql", arguments[1])
+        self.assertEqual(str(database), arguments[-2])
+        self.assertEqual("SELECT 1;", arguments[-1])
+
     def test_cached_wrapper_and_recomputed_attestation_are_rejected_without_execution(self) -> None:
         cache = self.workspace / "cache"
         build = cache / "builds" / self.spec.release_code
