@@ -124,6 +124,10 @@ devices before relying on a development build for an important workout.
 The current phone screen is a developer placeholder. Receiving an activity does not create a
 user-browsable history entry or a downloadable TCX file; those experiences remain roadmap work.
 
+With location disabled, the preview can show recurring availability toasts while health-only
+recording continues. The [route-availability UI follow-up](https://github.com/long2know/sport-logger/issues/22)
+tracks that unfinished presentation.
+
 Debug APKs are development builds. Real paired phone/watch transfer and acknowledgement/restart
 acceptance, release signing, physical-device acceptance, and store submission requirements remain
 separate release gates. A passing build or host test suite is not a claim that these gates passed.
