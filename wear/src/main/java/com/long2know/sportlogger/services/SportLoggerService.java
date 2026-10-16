@@ -9,6 +9,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.location.LocationManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
@@ -17,6 +18,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
@@ -61,7 +63,9 @@ public final class SportLoggerService extends Service {
     private NotificationManager notificationManager;
     private RecordingController recordingController;
     private MeasurementRuntime measurementRuntime;
+    private ForegroundServiceController foregroundController;
     private boolean foreground;
+    private boolean locationStatusErrorReported;
 
     @Override
     public void onCreate() {
@@ -69,6 +73,9 @@ public final class SportLoggerService extends Service {
         mainHandler = new Handler(Looper.getMainLooper());
         notificationManager = getSystemService(NotificationManager.class);
         createNotificationChannel();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            foregroundController = createForegroundController();
+        }
 
         ScheduledThreadPoolExecutor recordingWorker =
                 new ScheduledThreadPoolExecutor(1, namedThreadFactory("recording"));
@@ -154,6 +161,10 @@ public final class SportLoggerService extends Service {
             stopForeground(STOP_FOREGROUND_REMOVE);
             foreground = false;
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && foregroundController != null) {
+            foregroundController.clear();
+        }
         super.onDestroy();
     }
 
@@ -215,12 +226,23 @@ public final class SportLoggerService extends Service {
 
     private void handleRecordingSnapshot(RecordingSnapshot snapshot) {
         RecordingState state = snapshot.getState();
-        boolean recording = state != RecordingState.IDLE && state != RecordingState.ERROR;
+        SharedData sharedData = SharedData.getInstance();
+        if (state == RecordingState.RECORDING
+                && snapshot.getActivityId() > 0
+                && sharedData.getActivityId() != snapshot.getActivityId()) {
+            sharedData.resetMeasurements();
+        }
+        boolean recording = state == RecordingState.STARTING
+                || state == RecordingState.RECORDING
+                || state == RecordingState.PAUSED
+                || state == RecordingState.STOPPING
+                || state == RecordingState.DISCARDING
+                || state == RecordingState.EXPORT_PENDING;
         boolean paused = state == RecordingState.PAUSED
                 || state == RecordingState.STOPPING
                 || state == RecordingState.DISCARDING
                 || state == RecordingState.EXPORT_PENDING;
-        SharedData.getInstance().setRecordingState(
+        sharedData.setRecordingState(
                 recording,
                 paused,
                 snapshot.getActivityId(),
@@ -229,10 +251,15 @@ public final class SportLoggerService extends Service {
         if (snapshot.isActive() && state != RecordingState.STARTING) {
             mainHandler.removeCallbacks(idleStop);
             ensureForeground();
-        } else if (state == RecordingState.IDLE) {
+        } else if (state == RecordingState.IDLE
+                || state == RecordingState.EXPORT_QUEUED) {
             if (foreground) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 foreground = false;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                        && foregroundController != null) {
+                    foregroundController.clear();
+                }
             }
             scheduleStopIfIdle();
         }
@@ -286,32 +313,29 @@ public final class SportLoggerService extends Service {
     }
 
     private boolean ensureForeground() {
-        if (foreground) {
-            return true;
-        }
-        Notification notification = buildNotification();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                int type = 0;
-                if (hasLocationPermission()) {
-                    type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
-                }
-                if (hasHealthPermission()) {
-                    type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH;
-                }
-                if (type == 0) {
-                    reportError(
-                            RecordingError.Code.FOREGROUND.name(),
-                            "Location or health permission is required to record");
-                    return false;
-                }
-                startForeground(NOTIFICATION_ID, notification, type);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-                    && hasLocationPermission()) {
+                boolean promoted = foregroundController.ensure(
+                        hasLocationPermission(),
+                        isLocationEnabled(),
+                        hasHealthPermission());
+                foreground = foregroundController.isForeground();
+                return promoted;
+            }
+            if (foreground) {
+                return true;
+            }
+            Notification notification = buildNotification();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    && hasLocationPermission()
+                    && isLocationEnabled()) {
                 startForeground(
                         NOTIFICATION_ID,
                         notification,
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    && hasHealthPermission()) {
+                startForeground(NOTIFICATION_ID, notification);
             } else {
                 startForeground(NOTIFICATION_ID, notification);
             }
@@ -323,6 +347,47 @@ public final class SportLoggerService extends Service {
                     "Could not start recording foreground service: " + error.getMessage());
             return false;
         }
+    }
+
+    @RequiresApi(34)
+    private ForegroundServiceController createForegroundController() {
+        return new ForegroundServiceController(
+                types -> startForeground(NOTIFICATION_ID, buildNotification(), types),
+                (message, error) -> reportError(
+                        RecordingError.Code.FOREGROUND.name(),
+                        describe(message, error)));
+    }
+
+    private boolean isLocationEnabled() {
+        LocationManager locationManager = getSystemService(LocationManager.class);
+        if (locationManager == null) {
+            reportLocationStatusError(
+                    "Location service is unavailable; continuing without location foreground type");
+            return false;
+        }
+        try {
+            boolean enabled;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                enabled = locationManager.isLocationEnabled();
+            } else {
+                enabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                        || locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            }
+            locationStatusErrorReported = false;
+            return enabled;
+        } catch (RuntimeException error) {
+            reportLocationStatusError(
+                    describe("Could not determine whether location is enabled", error));
+            return false;
+        }
+    }
+
+    private void reportLocationStatusError(String message) {
+        if (locationStatusErrorReported) {
+            return;
+        }
+        locationStatusErrorReported = true;
+        reportError(RecordingError.Code.FOREGROUND.name(), message);
     }
 
     private boolean hasLocationPermission() {
@@ -379,7 +444,8 @@ public final class SportLoggerService extends Service {
             return;
         }
         RecordingState state = recordingController.getSnapshot().getState();
-        if (state == RecordingState.IDLE && clients.isEmpty()) {
+        if ((state == RecordingState.IDLE || state == RecordingState.EXPORT_QUEUED)
+                && clients.isEmpty()) {
             stopSelf();
         }
     }
@@ -414,6 +480,17 @@ public final class SportLoggerService extends Service {
         long minutes = (totalSeconds / 60L) % 60L;
         long seconds = totalSeconds % 60L;
         return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
+    }
+
+    private static String describe(String message, Throwable error) {
+        if (error == null) {
+            return message;
+        }
+        String detail = error.getMessage();
+        if (detail == null || detail.trim().isEmpty()) {
+            detail = error.getClass().getSimpleName();
+        }
+        return message + ": " + detail;
     }
 
     public final class LocalBinder extends Binder {

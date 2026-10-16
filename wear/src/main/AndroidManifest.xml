@@ -47,6 +47,19 @@
             android:foregroundServiceType="health|location"
             android:label="@string/service_name"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".recording.WearTransferAckService"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="@string/wear_ack_path"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -32,7 +33,7 @@ public class RecordingControllerTest {
     }
 
     @Test
-    public void stopAndDestroyReturnWithin100msAndReplacementFinishesDelayedWork()
+    public void stopAndDestroyReturnWithin100msWhileFinishIsHeldForFiveSeconds()
             throws Exception {
         InMemoryJournal journal = new InMemoryJournal();
         FakeStore store = new FakeStore();
@@ -57,14 +58,30 @@ public class RecordingControllerTest {
         long stopMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - stopStarted);
         assertTrue("stop took " + stopMillis + "ms", stopMillis < 100L);
         assertTrue(store.finishEntered.await(1, TimeUnit.SECONDS));
+        long holdStarted = System.nanoTime();
 
         long destroyStarted = System.nanoTime();
         first.closeAsync();
         long destroyMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - destroyStarted);
         assertTrue("close took " + destroyMillis + "ms", destroyMillis < 100L);
 
+        assertFalse(firstWorker.awaitTermination(4_900L, TimeUnit.MILLISECONDS));
+        long remainingNanos = TimeUnit.SECONDS.toNanos(5L)
+                - (System.nanoTime() - holdStarted);
+        if (remainingNanos > 0L) {
+            TimeUnit.NANOSECONDS.sleep(remainingNanos);
+        }
+        long heldMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - holdStarted);
         store.releaseFinish.countDown();
         assertTrue(firstWorker.awaitTermination(1, TimeUnit.SECONDS));
+        System.out.println(
+                "TIMING_EVIDENCE controllerStopMillis="
+                        + stopMillis
+                        + " controllerCloseMillis="
+                        + destroyMillis
+                        + " heldFinishMillis="
+                        + heldMillis);
+        assertTrue("finish held only " + heldMillis + "ms", heldMillis >= 5_000L);
         assertEquals(RecordingState.STOPPING, journal.state.getState());
 
         store.blockFinish = false;
@@ -81,13 +98,16 @@ public class RecordingControllerTest {
 
         replacementSnapshots.awaitState(RecordingState.EXPORT_PENDING);
         assertTrue(exporter.awaitCount(1, 1_000L));
-        exporter.succeed(0);
+        exporter.queue(0);
+        replacementSnapshots.awaitState(RecordingState.EXPORT_QUEUED);
+        assertTrue(exporter.awaitCount(2, 1_000L));
+        exporter.acknowledge(1);
         replacementSnapshots.awaitState(RecordingState.IDLE);
         replacement.closeAsync();
     }
 
     @Test
-    public void rapidStopRestartIsRejectedUntilExportCompletesAndDuplicateCallbacksAreIgnored()
+    public void consecutiveOfflineWorkoutsQueueIndependentlyWithoutReportingCompletion()
             throws Exception {
         InMemoryJournal journal = new InMemoryJournal();
         FakeStore store = new FakeStore();
@@ -107,25 +127,28 @@ public class RecordingControllerTest {
         controller.stop();
         snapshots.awaitState(RecordingState.EXPORT_PENDING);
         assertTrue(exporter.awaitCount(1, 1_000L));
+        exporter.queue(0);
+        snapshots.awaitState(RecordingState.EXPORT_QUEUED);
+        assertEquals(RecordingState.EXPORT_QUEUED, journal.state.getState());
 
         assertTrue(controller.start());
-        RecordingSnapshot rejected =
-                snapshots.awaitError(RecordingError.Code.COMMAND_REJECTED);
-        assertEquals(RecordingState.EXPORT_PENDING, rejected.getState());
-        assertEquals(1, store.createCount.get());
-
-        RecordingExporter.Callback staleCallback = exporter.callback(0);
-        staleCallback.onSuccess();
-        staleCallback.onSuccess();
-        staleCallback.onFailure(new IllegalStateException("late duplicate"));
-        snapshots.awaitState(RecordingState.IDLE);
-
-        controller.start();
         snapshots.awaitState(RecordingState.RECORDING);
         assertEquals(2, store.createCount.get());
-        staleCallback.onFailure(new IllegalStateException("stale"));
+        controller.stop();
+        snapshots.awaitState(RecordingState.EXPORT_PENDING);
+        assertTrue(exporter.awaitCount(2, 1_000L));
+        exporter.queue(1);
+        snapshots.awaitState(RecordingState.EXPORT_QUEUED);
+
+        RecordingExporter.Callback staleCallback = exporter.callback(0);
+        staleCallback.onAcknowledged();
+        staleCallback.onFailure(new IllegalStateException("late duplicate"));
         Thread.sleep(20L);
-        assertEquals(RecordingState.RECORDING, controller.getSnapshot().getState());
+        assertEquals(RecordingState.EXPORT_QUEUED, controller.getSnapshot().getState());
+
+        assertTrue(exporter.awaitCount(3, 1_000L));
+        exporter.acknowledge(2);
+        snapshots.awaitState(RecordingState.IDLE);
         controller.closeAsync();
     }
 
@@ -176,7 +199,10 @@ public class RecordingControllerTest {
                 replacementSnapshots.awaitState(RecordingState.EXPORT_PENDING);
         assertEquals(7_000L, exportPending.getDurationMillis());
         assertTrue(exporter.awaitCount(1, 1_000L));
-        exporter.succeed(0);
+        exporter.queue(0);
+        replacementSnapshots.awaitState(RecordingState.EXPORT_QUEUED);
+        assertTrue(exporter.awaitCount(2, 1_000L));
+        exporter.acknowledge(1);
         replacementSnapshots.awaitState(RecordingState.IDLE);
         replacement.closeAsync();
     }
@@ -205,7 +231,7 @@ public class RecordingControllerTest {
         assertEquals(RecordingState.STOPPING, failed.getState());
         assertTrue(exporter.awaitCount(1, 1_000L));
         assertTrue(store.finishAttempts.get() >= 2);
-        exporter.succeed(0);
+        exporter.acknowledge(0);
         snapshots.awaitState(RecordingState.IDLE);
         controller.closeAsync();
     }
@@ -235,7 +261,7 @@ public class RecordingControllerTest {
         assertEquals(RecordingState.EXPORT_PENDING, failed.getState());
         assertEquals(RecordingState.EXPORT_PENDING, journal.state.getState());
         assertTrue(exporter.awaitCount(2, 1_000L));
-        exporter.succeed(1);
+        exporter.acknowledge(1);
         snapshots.awaitState(RecordingState.IDLE);
         controller.closeAsync();
     }
@@ -368,6 +394,15 @@ public class RecordingControllerTest {
         public boolean isCurrent(long lease) {
             return currentLease.get() == lease;
         }
+
+        @Override
+        public synchronized boolean runIfCurrent(long lease, Runnable callback) {
+            if (!isCurrent(lease)) {
+                return false;
+            }
+            callback.run();
+            return true;
+        }
     }
 
     private static final class FakeStore implements RecordingStore {
@@ -403,7 +438,7 @@ public class RecordingControllerTest {
             finishAttempts.incrementAndGet();
             if (blockFinish) {
                 finishEntered.countDown();
-                releaseFinish.await(5, TimeUnit.SECONDS);
+                releaseFinish.await(30, TimeUnit.SECONDS);
             }
             if (finishFailures.getAndUpdate(value -> Math.max(0, value - 1)) > 0) {
                 throw new IllegalStateException("database busy");
@@ -456,8 +491,12 @@ public class RecordingControllerTest {
             return callbacks.get(index);
         }
 
-        private void succeed(int index) {
-            callback(index).onSuccess();
+        private void queue(int index) {
+            callback(index).onQueued();
+        }
+
+        private void acknowledge(int index) {
+            callback(index).onAcknowledged();
         }
 
         private void fail(int index, Throwable error) {

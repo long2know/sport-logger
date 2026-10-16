@@ -40,6 +40,9 @@ public final class MainActivity extends FragmentActivity implements
 
     private static final String TAG = "MainActivity";
     private static final int PERMISSIONS_REQUEST = 1;
+    private static final String SENSOR_FRAGMENT_TAG = "sensor";
+    private static final String START_FRAGMENT_TAG = "start";
+    private static final String END_FRAGMENT_TAG = "end";
 
     private final ServiceConnection loggingServiceConnection = new ServiceConnection() {
         @Override
@@ -72,10 +75,8 @@ public final class MainActivity extends FragmentActivity implements
         setContentView(R.layout.activity_main);
         AmbientModeSupport.attach(this);
 
-        sensorFragment = new SensorFragment();
-        startFragment = new StartActivityFragment();
-        endFragment = new EndActivityFragment();
         fragmentManager = getSupportFragmentManager();
+        bindRestoredFragments();
 
         WearableNavigationDrawerView wearableNavigationDrawer =
                 findViewById(R.id.top_navigation_drawer);
@@ -137,6 +138,12 @@ public final class MainActivity extends FragmentActivity implements
             case EXPORT_PENDING:
                 showFragment(endFragment);
                 wearableActionDrawer.getController().closeDrawer();
+                break;
+            case EXPORT_QUEUED:
+                showFragment(startFragment);
+                wearableActionDrawer.setIsLocked(true);
+                wearableActionDrawer.getController().closeDrawer();
+                sensorFragment.resetTimer();
                 break;
             case IDLE:
                 showFragment(startFragment);
@@ -257,13 +264,65 @@ public final class MainActivity extends FragmentActivity implements
     private void showFragment(Fragment fragment) {
         Fragment current = fragmentManager.findFragmentById(R.id.content_frame);
         if (current != null && current.getClass() == fragment.getClass()) {
+            bindFragment(current);
             return;
         }
         if (!fragmentManager.isStateSaved()) {
             fragmentManager.beginTransaction()
-                    .replace(R.id.content_frame, fragment)
+                    .replace(R.id.content_frame, fragment, fragmentTag(fragment))
                     .commit();
         }
+    }
+
+    private void bindRestoredFragments() {
+        Fragment current = fragmentManager.findFragmentById(R.id.content_frame);
+        bindFragment(current);
+
+        Fragment restoredSensor = fragmentManager.findFragmentByTag(SENSOR_FRAGMENT_TAG);
+        if (sensorFragment == null && restoredSensor instanceof SensorFragment) {
+            sensorFragment = (SensorFragment) restoredSensor;
+        }
+        Fragment restoredStart = fragmentManager.findFragmentByTag(START_FRAGMENT_TAG);
+        if (startFragment == null && restoredStart instanceof StartActivityFragment) {
+            startFragment = (StartActivityFragment) restoredStart;
+        }
+        Fragment restoredEnd = fragmentManager.findFragmentByTag(END_FRAGMENT_TAG);
+        if (endFragment == null && restoredEnd instanceof EndActivityFragment) {
+            endFragment = (EndActivityFragment) restoredEnd;
+        }
+
+        if (sensorFragment == null) {
+            sensorFragment = new SensorFragment();
+        }
+        if (startFragment == null) {
+            startFragment = new StartActivityFragment();
+        }
+        if (endFragment == null) {
+            endFragment = new EndActivityFragment();
+        }
+    }
+
+    private void bindFragment(Fragment fragment) {
+        if (fragment instanceof SensorFragment) {
+            sensorFragment = (SensorFragment) fragment;
+        } else if (fragment instanceof StartActivityFragment) {
+            startFragment = (StartActivityFragment) fragment;
+        } else if (fragment instanceof EndActivityFragment) {
+            endFragment = (EndActivityFragment) fragment;
+        }
+    }
+
+    private static String fragmentTag(Fragment fragment) {
+        if (fragment instanceof SensorFragment) {
+            return SENSOR_FRAGMENT_TAG;
+        }
+        if (fragment instanceof StartActivityFragment) {
+            return START_FRAGMENT_TAG;
+        }
+        if (fragment instanceof EndActivityFragment) {
+            return END_FRAGMENT_TAG;
+        }
+        throw new IllegalArgumentException("Unknown recording fragment " + fragment.getClass());
     }
 
     private void requestRecordingPermissions() {

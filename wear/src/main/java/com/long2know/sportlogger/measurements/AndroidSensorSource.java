@@ -15,8 +15,6 @@ import androidx.core.content.ContextCompat;
 
 import com.long2know.utilities.models.SharedData;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 public final class AndroidSensorSource implements ResourceOwner.Source {
     private final Context context;
     private final SensorManager sensorManager;
@@ -37,8 +35,24 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
         callbackThread.start();
         ownership.own("sensor-callback-thread", callbackThread::quitSafely);
         Handler callbackHandler = new Handler(callbackThread.getLooper());
-        AtomicInteger stepCount = new AtomicInteger(
-                SharedData.getInstance().getData().Steps);
+        StepSensorProcessor stepProcessor = new StepSensorProcessor(
+                new StepSensorProcessor.Session() {
+                    @Override
+                    public int activityId() {
+                        return SharedData.getInstance().getActivityId();
+                    }
+
+                    @Override
+                    public boolean isActive() {
+                        SharedData data = SharedData.getInstance();
+                        return data.isRecording() && !data.isPaused();
+                    }
+
+                    @Override
+                    public int currentSteps() {
+                        return SharedData.getInstance().getData().Steps;
+                    }
+                });
 
         SensorEventListener listener = new SensorEventListener() {
             @Override
@@ -46,11 +60,16 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
                 int type = event.sensor.getType();
                 if (type == Sensor.TYPE_HEART_RATE && event.values.length > 0) {
                     sink.onEvent(MeasurementEvent.heartRate(event.timestamp, event.values[0]));
-                } else if (type == Sensor.TYPE_STEP_DETECTOR && event.values.length > 0) {
-                    int increment = Math.max(1, Math.round(event.values[0]));
-                    sink.onEvent(MeasurementEvent.steps(
+                } else if ((type == Sensor.TYPE_STEP_COUNTER
+                        || type == Sensor.TYPE_STEP_DETECTOR)
+                        && event.values.length > 0) {
+                    MeasurementEvent measurement = stepProcessor.onSensorValue(
+                            type,
                             event.timestamp,
-                            stepCount.addAndGet(increment)));
+                            event.values[0]);
+                    if (measurement != null) {
+                        sink.onEvent(measurement);
+                    }
                 }
             }
 
@@ -72,7 +91,8 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
                     listener,
                     callbackHandler,
                     ownership,
-                    sink);
+                    sink,
+                    true);
         } else {
             permissionDenied = true;
             sink.onFailure(new ResourceFailure(
@@ -85,22 +105,27 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
                 || ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION)
                 == PackageManager.PERMISSION_GRANTED;
         if (hasActivityPermission) {
-            registered += register(
+            int stepRegistrations = register(
                     "step-counter",
                     Sensor.TYPE_STEP_COUNTER,
                     SensorManager.SENSOR_DELAY_GAME,
                     listener,
                     callbackHandler,
                     ownership,
-                    sink);
-            registered += register(
-                    "step-detector",
-                    Sensor.TYPE_STEP_DETECTOR,
-                    SensorManager.SENSOR_DELAY_GAME,
-                    listener,
-                    callbackHandler,
-                    ownership,
-                    sink);
+                    sink,
+                    false);
+            if (stepRegistrations == 0) {
+                stepRegistrations = register(
+                        "step-detector",
+                        Sensor.TYPE_STEP_DETECTOR,
+                        SensorManager.SENSOR_DELAY_GAME,
+                        listener,
+                        callbackHandler,
+                        ownership,
+                        sink,
+                        true);
+            }
+            registered += stepRegistrations;
         } else {
             permissionDenied = true;
             sink.onFailure(new ResourceFailure(
@@ -126,13 +151,16 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
             SensorEventListener listener,
             Handler callbackHandler,
             ResourceOwner.Ownership ownership,
-            ResourceOwner.EventSink sink) {
+            ResourceOwner.EventSink sink,
+            boolean reportMissing) {
         Sensor sensor = sensorManager.getDefaultSensor(type);
         if (sensor == null) {
-            sink.onFailure(new ResourceFailure(
-                    name,
-                    ResourceFailure.Code.UNAVAILABLE,
-                    "Sensor is not available"));
+            if (reportMissing) {
+                sink.onFailure(new ResourceFailure(
+                        name,
+                        ResourceFailure.Code.UNAVAILABLE,
+                        "Sensor is not available"));
+            }
             return 0;
         }
         try {

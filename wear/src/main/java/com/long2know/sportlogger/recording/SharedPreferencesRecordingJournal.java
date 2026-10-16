@@ -19,9 +19,13 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
     private final SharedPreferences preferences;
 
     public SharedPreferencesRecordingJournal(Context context) {
-        preferences = context.getApplicationContext().getSharedPreferences(
+        this(context.getApplicationContext().getSharedPreferences(
                 PREFERENCES_NAME,
-                Context.MODE_PRIVATE);
+                Context.MODE_PRIVATE));
+    }
+
+    SharedPreferencesRecordingJournal(SharedPreferences preferences) {
+        this.preferences = preferences;
     }
 
     @Override
@@ -37,68 +41,93 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
 
     @Override
     public PersistentRecording read() {
-        String storedState = preferences.getString(KEY_STATE, RecordingState.IDLE.name());
-        RecordingState state;
-        try {
-            state = RecordingState.valueOf(storedState);
-        } catch (RuntimeException error) {
-            throw new IllegalStateException("Unknown durable recording state: " + storedState, error);
-        }
-
-        int activityId = preferences.getInt(KEY_ACTIVITY_ID, 0);
-        if (state != RecordingState.IDLE && state != RecordingState.ERROR && activityId <= 0) {
-            throw new IllegalStateException("Active recording state has no activity identifier");
-        }
-
-        RecordingError recordingError = null;
-        String errorCode = preferences.getString(KEY_ERROR_CODE, null);
-        if (errorCode != null) {
+        synchronized (LEASE_LOCK) {
+            String storedState =
+                    preferences.getString(KEY_STATE, RecordingState.IDLE.name());
+            RecordingState state;
             try {
-                recordingError = new RecordingError(
-                        RecordingError.Code.valueOf(errorCode),
-                        preferences.getString(KEY_ERROR_MESSAGE, ""));
+                state = RecordingState.valueOf(storedState);
             } catch (RuntimeException error) {
-                throw new IllegalStateException("Unknown durable recording error: " + errorCode, error);
+                throw new IllegalStateException(
+                        "Unknown durable recording state: " + storedState,
+                        error);
             }
-        }
 
-        return new PersistentRecording(
-                state,
-                activityId,
-                preferences.getLong(KEY_STARTED_AT, 0L),
-                preferences.getLong(KEY_ACTIVE_SINCE, 0L),
-                preferences.getLong(KEY_ACCUMULATED, 0L),
-                preferences.getLong(KEY_ENDED_AT, 0L),
-                recordingError);
+            int activityId = preferences.getInt(KEY_ACTIVITY_ID, 0);
+            if (state != RecordingState.IDLE
+                    && state != RecordingState.ERROR
+                    && activityId <= 0) {
+                throw new IllegalStateException(
+                        "Active recording state has no activity identifier");
+            }
+
+            RecordingError recordingError = null;
+            String errorCode = preferences.getString(KEY_ERROR_CODE, null);
+            if (errorCode != null) {
+                try {
+                    recordingError = new RecordingError(
+                            RecordingError.Code.valueOf(errorCode),
+                            preferences.getString(KEY_ERROR_MESSAGE, ""));
+                } catch (RuntimeException error) {
+                    throw new IllegalStateException(
+                            "Unknown durable recording error: " + errorCode,
+                            error);
+                }
+            }
+
+            return new PersistentRecording(
+                    state,
+                    activityId,
+                    preferences.getLong(KEY_STARTED_AT, 0L),
+                    preferences.getLong(KEY_ACTIVE_SINCE, 0L),
+                    preferences.getLong(KEY_ACCUMULATED, 0L),
+                    preferences.getLong(KEY_ENDED_AT, 0L),
+                    recordingError);
+        }
     }
 
     @Override
     public void write(long lease, PersistentRecording recording) {
-        if (!isCurrent(lease)) {
-            throw new IllegalStateException("Recording lease is stale");
-        }
+        synchronized (LEASE_LOCK) {
+            if (preferences.getLong(KEY_LEASE, 0L) != lease) {
+                throw new IllegalStateException("Recording lease is stale");
+            }
 
-        SharedPreferences.Editor editor = preferences.edit()
-                .putString(KEY_STATE, recording.getState().name())
-                .putInt(KEY_ACTIVITY_ID, recording.getActivityId())
-                .putLong(KEY_STARTED_AT, recording.getStartedAtMillis())
-                .putLong(KEY_ACTIVE_SINCE, recording.getActiveSinceMillis())
-                .putLong(KEY_ACCUMULATED, recording.getAccumulatedMillis())
-                .putLong(KEY_ENDED_AT, recording.getEndedAtMillis());
-        RecordingError error = recording.getError();
-        if (error == null) {
-            editor.remove(KEY_ERROR_CODE).remove(KEY_ERROR_MESSAGE);
-        } else {
-            editor.putString(KEY_ERROR_CODE, error.getCode().name())
-                    .putString(KEY_ERROR_MESSAGE, error.getMessage());
-        }
-        if (!editor.commit()) {
-            throw new IllegalStateException("Recording state was not persisted");
+            SharedPreferences.Editor editor = preferences.edit()
+                    .putString(KEY_STATE, recording.getState().name())
+                    .putInt(KEY_ACTIVITY_ID, recording.getActivityId())
+                    .putLong(KEY_STARTED_AT, recording.getStartedAtMillis())
+                    .putLong(KEY_ACTIVE_SINCE, recording.getActiveSinceMillis())
+                    .putLong(KEY_ACCUMULATED, recording.getAccumulatedMillis())
+                    .putLong(KEY_ENDED_AT, recording.getEndedAtMillis());
+            RecordingError error = recording.getError();
+            if (error == null) {
+                editor.remove(KEY_ERROR_CODE).remove(KEY_ERROR_MESSAGE);
+            } else {
+                editor.putString(KEY_ERROR_CODE, error.getCode().name())
+                        .putString(KEY_ERROR_MESSAGE, error.getMessage());
+            }
+            if (!editor.commit()) {
+                throw new IllegalStateException("Recording state was not persisted");
+            }
         }
     }
 
     @Override
     public boolean isCurrent(long lease) {
-        return preferences.getLong(KEY_LEASE, 0L) == lease;
+        synchronized (LEASE_LOCK) {
+            return preferences.getLong(KEY_LEASE, 0L) == lease;
+        }
+    }
+
+    @Override
+    public boolean runIfCurrent(long lease, Runnable callback) {
+        synchronized (LEASE_LOCK) {
+            if (preferences.getLong(KEY_LEASE, 0L) != lease) {
+                return false;
+            }
+            callback.run();
+            return true;
+        }
     }
 }

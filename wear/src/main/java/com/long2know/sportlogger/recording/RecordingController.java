@@ -9,8 +9,15 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class RecordingController {
+    private enum ExportResult {
+        QUEUED,
+        ACKNOWLEDGED,
+        FAILED
+    }
+
     public interface Clock {
         long currentTimeMillis();
     }
@@ -32,6 +39,7 @@ public final class RecordingController {
     private final Listener listener;
     private final RetryPolicy retryPolicy;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicLong callbackGeneration = new AtomicLong();
 
     private volatile RecordingSnapshot snapshot =
             new RecordingSnapshot(RecordingState.IDLE, 0, 0L, null);
@@ -94,6 +102,7 @@ public final class RecordingController {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        callbackGeneration.incrementAndGet();
         cancel(sampleFuture);
         cancel(retryFuture);
         worker.shutdown();
@@ -162,6 +171,7 @@ public final class RecordingController {
                 break;
             case STOPPING:
             case EXPORT_PENDING:
+            case EXPORT_QUEUED:
                 attemptFinalization();
                 break;
             case DISCARDING:
@@ -184,11 +194,19 @@ public final class RecordingController {
     }
 
     private void startInternal() {
-        if (current.getState() != RecordingState.IDLE) {
+        RecordingState previousState = current.getState();
+        boolean replacingQueued = previousState == RecordingState.EXPORT_QUEUED;
+        if (previousState != RecordingState.IDLE && !replacingQueued) {
             reject("Cannot start while recording state is " + current.getState());
             return;
         }
 
+        if (replacingQueued) {
+            cancel(retryFuture);
+            retryFuture = null;
+            exportInFlight = false;
+            exportToken++;
+        }
         publish(new RecordingSnapshot(RecordingState.STARTING, 0, 0L, null));
         long now = clock.currentTimeMillis();
         int activityId;
@@ -196,10 +214,13 @@ public final class RecordingController {
             activityId = store.createActivity(now);
         } catch (Exception error) {
             publish(new RecordingSnapshot(
-                    RecordingState.IDLE,
-                    0,
-                    0L,
+                    current.getState(),
+                    current.getActivityId(),
+                    current.durationAt(now),
                     failure(RecordingError.Code.STORAGE, "Could not create activity", error)));
+            if (replacingQueued) {
+                scheduleFinalizationRetry();
+            }
             return;
         }
 
@@ -215,10 +236,17 @@ public final class RecordingController {
             try {
                 store.deleteActivity(activityId);
             } catch (Exception rollbackError) {
-                publish(started.withError(failure(
-                        RecordingError.Code.STORAGE,
-                        "Start rollback failed",
-                        rollbackError)));
+                publish(new RecordingSnapshot(
+                        current.getState(),
+                        current.getActivityId(),
+                        current.durationAt(clock.currentTimeMillis()),
+                        failure(
+                                RecordingError.Code.STORAGE,
+                                "Start rollback failed",
+                                rollbackError)));
+            }
+            if (replacingQueued) {
+                scheduleFinalizationRetry();
             }
             return;
         }
@@ -377,7 +405,8 @@ public final class RecordingController {
                 current = exportPending;
                 publish(current);
             }
-            if (current.getState() != RecordingState.EXPORT_PENDING) {
+            if (current.getState() != RecordingState.EXPORT_PENDING
+                    && current.getState() != RecordingState.EXPORT_QUEUED) {
                 return;
             }
             SportActivity activity = store.loadActivity(current.getActivityId());
@@ -389,13 +418,18 @@ public final class RecordingController {
             try {
                 exporter.export(activity, new RecordingExporter.Callback() {
                     @Override
-                    public void onSuccess() {
-                        handleExportCallback(token, null);
+                    public void onQueued() {
+                        handleExportCallback(token, ExportResult.QUEUED, null);
+                    }
+
+                    @Override
+                    public void onAcknowledged() {
+                        handleExportCallback(token, ExportResult.ACKNOWLEDGED, null);
                     }
 
                     @Override
                     public void onFailure(Throwable error) {
-                        handleExportCallback(token, error);
+                        handleExportCallback(token, ExportResult.FAILED, error);
                     }
                 });
             } catch (RuntimeException error) {
@@ -418,7 +452,10 @@ public final class RecordingController {
         }
     }
 
-    private void handleExportCallback(long token, Throwable error) {
+    private void handleExportCallback(
+            long token,
+            ExportResult result,
+            Throwable error) {
         if (closed.get()) {
             return;
         }
@@ -428,11 +465,12 @@ public final class RecordingController {
                         || token != exportToken
                         || !exportInFlight
                         || !journal.isCurrent(lease)
-                        || current.getState() != RecordingState.EXPORT_PENDING) {
+                        || (current.getState() != RecordingState.EXPORT_PENDING
+                        && current.getState() != RecordingState.EXPORT_QUEUED)) {
                     return;
                 }
                 exportInFlight = false;
-                if (error == null) {
+                if (result == ExportResult.ACKNOWLEDGED) {
                     PersistentRecording idle = PersistentRecording.idle();
                     if (persist(idle)) {
                         current = idle;
@@ -441,6 +479,18 @@ public final class RecordingController {
                     } else {
                         scheduleFinalizationRetry();
                     }
+                } else if (result == ExportResult.QUEUED) {
+                    PersistentRecording queued = current.withState(
+                            RecordingState.EXPORT_QUEUED,
+                            0L,
+                            current.getAccumulatedMillis(),
+                            current.getEndedAtMillis(),
+                            null);
+                    if (persist(queued)) {
+                        current = queued;
+                        publish(current);
+                    }
+                    scheduleFinalizationRetry();
                 } else {
                     current = current.withError(
                             failure(RecordingError.Code.EXPORT, "Activity export failed", error));
@@ -550,8 +600,35 @@ public final class RecordingController {
     }
 
     private void publish(RecordingSnapshot next) {
-        snapshot = next;
-        callbackExecutor.execute(() -> listener.onSnapshot(next));
+        if (closed.get()) {
+            return;
+        }
+        long generation = callbackGeneration.get();
+        Runnable stage = () -> {
+            if (closed.get() || callbackGeneration.get() != generation) {
+                return;
+            }
+            snapshot = next;
+            callbackExecutor.execute(() -> {
+                if (closed.get() || callbackGeneration.get() != generation) {
+                    return;
+                }
+                if (lease == 0L) {
+                    listener.onSnapshot(next);
+                } else {
+                    journal.runIfCurrent(lease, () -> {
+                        if (!closed.get() && callbackGeneration.get() == generation) {
+                            listener.onSnapshot(next);
+                        }
+                    });
+                }
+            });
+        };
+        if (lease == 0L) {
+            stage.run();
+        } else {
+            journal.runIfCurrent(lease, stage);
+        }
     }
 
     private static RecordingError failure(

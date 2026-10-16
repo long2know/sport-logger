@@ -8,5 +8,6 @@ public enum RecordingState {
     STOPPING,
     DISCARDING,
     EXPORT_PENDING,
+    EXPORT_QUEUED,
     ERROR
 }

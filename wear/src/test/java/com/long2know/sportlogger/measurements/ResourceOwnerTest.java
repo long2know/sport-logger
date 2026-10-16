@@ -33,7 +33,8 @@ public class ResourceOwnerTest {
     }
 
     @Test
-    public void stopReturnsWithin100msWhileMultiSecondCleanupIsBlockedThenTerminates() throws Exception {
+    public void runtimeStopReturnsWithin100msWhileCleanupIsHeldForFiveSecondsThenTerminates()
+            throws Exception {
         CountDownLatch opened = new CountDownLatch(1);
         CountDownLatch cleanupEntered = new CountDownLatch(1);
         CountDownLatch releaseCleanup = new CountDownLatch(1);
@@ -43,26 +44,40 @@ public class ResourceOwnerTest {
                 (ownership, sink) -> {
                     ownership.own("platform-listener", () -> {
                         cleanupEntered.countDown();
-                        releaseCleanup.await(5, TimeUnit.SECONDS);
+                        releaseCleanup.await(30, TimeUnit.SECONDS);
                     });
                     opened.countDown();
                 },
                 new RecordingListener(),
                 attempt -> 1L);
+        MeasurementRuntime runtime = new MeasurementRuntime(owner);
 
-        owner.startAsync();
+        runtime.startAsync();
         assertTrue(opened.await(1, TimeUnit.SECONDS));
 
         long started = System.nanoTime();
-        owner.stopAsync();
+        runtime.stopAsync();
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
         assertTrue("stopAsync took " + elapsedMillis + "ms", elapsedMillis < 100L);
         assertTrue(cleanupEntered.await(1, TimeUnit.SECONDS));
-        assertFalse(worker(owner).isTerminated());
+        long holdStarted = System.nanoTime();
+        assertFalse(worker(owner).awaitTermination(4_900L, TimeUnit.MILLISECONDS));
 
+        long remainingNanos = TimeUnit.SECONDS.toNanos(5L)
+                - (System.nanoTime() - holdStarted);
+        if (remainingNanos > 0L) {
+            TimeUnit.NANOSECONDS.sleep(remainingNanos);
+        }
+        long heldMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - holdStarted);
         releaseCleanup.countDown();
         assertTrue(worker(owner).awaitTermination(1, TimeUnit.SECONDS));
+        System.out.println(
+                "TIMING_EVIDENCE runtimeStopMillis="
+                        + elapsedMillis
+                        + " heldCleanupMillis="
+                        + heldMillis);
+        assertTrue("cleanup held only " + heldMillis + "ms", heldMillis >= 5_000L);
     }
 
     @Test

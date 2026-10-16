@@ -4,7 +4,9 @@ import com.long2know.utilities.models.SportActivity;
 
 public interface RecordingExporter {
     interface Callback {
-        void onSuccess();
+        void onQueued();
+
+        void onAcknowledged();
 
         void onFailure(Throwable error);
     }

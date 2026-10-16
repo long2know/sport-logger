@@ -8,4 +8,6 @@ public interface RecordingJournal {
     void write(long lease, PersistentRecording recording) throws Exception;
 
     boolean isCurrent(long lease);
+
+    boolean runIfCurrent(long lease, Runnable callback);
 }
