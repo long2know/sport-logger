@@ -1,0 +1,7 @@
+{
+  "expected_code": "MISSING_TIMESTAMP",
+  "expected_status": "QUARANTINED",
+  "id": "missing-timestamp",
+  "mutation": "missing_timestamp",
+  "schema_version": 1
+}

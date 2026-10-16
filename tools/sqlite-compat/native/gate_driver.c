@@ -152,6 +152,79 @@ static int readonly_reopen(const char *path) {
     return 0;
 }
 
+static int readonly_sql(const char *path, const char *sql) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *statement = NULL;
+    const char *tail = NULL;
+    int rc;
+    int result = EXIT_GATE_FAILURE;
+
+    if (open_database(path, SQLITE_OPEN_READONLY, &db, "readonly-sql-open") != SQLITE_OK) {
+        goto done;
+    }
+    rc = sqlite3_prepare_v2(db, sql, -1, &statement, &tail);
+    if (rc != SQLITE_OK || statement == NULL) {
+        print_db_error("readonly-sql-prepare", db, rc);
+        goto done;
+    }
+    while (tail != NULL && (*tail == ';' || *tail == ' ' || *tail == '\t' ||
+            *tail == '\r' || *tail == '\n')) {
+        tail++;
+    }
+    if (tail != NULL && *tail != '\0') {
+        fprintf(stderr, "error:readonly-sql-tail:multiple-statements\n");
+        goto done;
+    }
+
+    while ((rc = sqlite3_step(statement)) == SQLITE_ROW) {
+        int column_count = sqlite3_column_count(statement);
+        int column;
+        for (column = 0; column < column_count; column++) {
+            const unsigned char *text;
+            int byte_count;
+            int index;
+            if (column > 0) {
+                fputc('\t', stdout);
+            }
+            if (sqlite3_column_type(statement, column) == SQLITE_NULL) {
+                continue;
+            }
+            text = sqlite3_column_text(statement, column);
+            byte_count = sqlite3_column_bytes(statement, column);
+            if (text == NULL && byte_count != 0) {
+                fprintf(stderr, "error:readonly-sql-column:null-text\n");
+                goto done;
+            }
+            for (index = 0; index < byte_count; index++) {
+                if (text[index] == '\t' || text[index] == '\r' || text[index] == '\n') {
+                    fprintf(stderr, "error:readonly-sql-column:unsafe-separator\n");
+                    goto done;
+                }
+            }
+            if (byte_count > 0 &&
+                    fwrite(text, 1, (size_t) byte_count, stdout) != (size_t) byte_count) {
+                fprintf(stderr, "error:readonly-sql-column:write\n");
+                goto done;
+            }
+        }
+        fputc('\n', stdout);
+    }
+    if (rc != SQLITE_DONE) {
+        print_db_error("readonly-sql-step", db, rc);
+        goto done;
+    }
+    result = 0;
+
+done:
+    if (statement != NULL && sqlite3_finalize(statement) != SQLITE_OK) {
+        result = EXIT_GATE_FAILURE;
+    }
+    if (db != NULL && sqlite3_close(db) != SQLITE_OK) {
+        result = EXIT_GATE_FAILURE;
+    }
+    return result;
+}
+
 static int wal_snapshot(const char *path) {
     sqlite3 *writer = NULL;
     sqlite3 *reader = NULL;
@@ -359,12 +432,16 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "readonly") == 0) {
         return readonly_reopen(argv[2]);
     }
+    if (argc == 4 && strcmp(argv[1], "readonly-sql") == 0) {
+        return readonly_sql(argv[2], argv[3]);
+    }
     if (argc == 3 && strcmp(argv[1], "wal") == 0) {
         return wal_snapshot(argv[2]);
     }
     if (argc == 3 && strcmp(argv[1], "interrupt") == 0) {
         return interrupted_receipt(argv[2]);
     }
-    fprintf(stderr, "usage: gate_driver identity|readonly DB|wal DB|interrupt DB\n");
+    fprintf(stderr,
+            "usage: gate_driver identity|readonly DB|readonly-sql DB SQL|wal DB|interrupt DB\n");
     return EXIT_USAGE;
 }

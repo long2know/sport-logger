@@ -1,0 +1,90 @@
+{
+  "file_count": 14,
+  "files": [
+    {
+      "expected_code": null,
+      "id": "valid-all-android-decimal-blocks",
+      "name": "00-valid-all-android-decimal-blocks.json",
+      "sha256": "fa1f26dd8fbf844ebcae1e819a210acd67e232c0864f0a3188038740fa32a630"
+    },
+    {
+      "expected_code": "UNKNOWN_DIGIT_BLOCK",
+      "id": "unknown-digit-block",
+      "name": "01-unknown-digit-block.json",
+      "sha256": "ccb94a36d664537e048e168c5b9aecdbbc52f5f44f5ecf23f8dc4a1fea4eee5a"
+    },
+    {
+      "expected_code": "MIXED_DIGIT_BLOCKS",
+      "id": "mixed-digit-blocks",
+      "name": "02-mixed-digit-blocks.json",
+      "sha256": "867bf0fdc8b467a7c89f662e94fc8173758cb287ac44d7428457fc4259c710bd"
+    },
+    {
+      "expected_code": "INVALID_CONTROL",
+      "id": "invalid-control",
+      "name": "03-invalid-control.json",
+      "sha256": "ee122c6b71cd9fe3b73e5fa8499aae234c8d763c5c0c64231bdc61ff85d1e978"
+    },
+    {
+      "expected_code": "INVALID_CHARACTER",
+      "id": "invalid-character",
+      "name": "04-invalid-character.json",
+      "sha256": "356d419986a4302c4e475d1e8822b4076026d4a1b03869b31f617ebe4a08fc71"
+    },
+    {
+      "expected_code": "INVALID_LENGTH",
+      "id": "invalid-length",
+      "name": "05-invalid-length.json",
+      "sha256": "4e0912a7de734859fefae7344f05aaa37d082bae848885d499203de606d98258"
+    },
+    {
+      "expected_code": "INVALID_DATE",
+      "id": "invalid-date",
+      "name": "06-invalid-date.json",
+      "sha256": "d2e72b4880116a6a1e6513c5697279a5ba906fae5a9bc81e49c045eb1a436db0"
+    },
+    {
+      "expected_code": "MISSING_TIMESTAMP",
+      "id": "missing-timestamp",
+      "name": "07-missing-timestamp.json",
+      "sha256": "a639614f224ad7fb235fc152dcdf9302ca374f533288fdc3ad381857bf487a14"
+    },
+    {
+      "expected_code": "SCHEMA_DRIFT",
+      "id": "schema-drift",
+      "name": "08-schema-drift.json",
+      "sha256": "fd9cd877642f5167baade89189f89e9b1206b27c892a3c6663f1c13f7fd17598"
+    },
+    {
+      "expected_code": "SOURCE_CORRUPT",
+      "id": "corruption",
+      "name": "09-corruption.json",
+      "sha256": "9a9fa9bff1818917ade06d0ce33b06918fa4aa038865d8526708d7d6ab4f089d"
+    },
+    {
+      "expected_code": "RECEIPT_GAP",
+      "id": "receipt-gap",
+      "name": "10-receipt-gap.json",
+      "sha256": "1a0e1c398cbe559b4c6d32b00a03fb317494247762dcbea0a8daef8586377159"
+    },
+    {
+      "expected_code": "MANIFEST_COUNT_MISMATCH",
+      "id": "manifest-count",
+      "name": "11-manifest-count.json",
+      "sha256": "4c9f75d4ef29d3c4b9066b2ccb0ea7fcc06ff09dce3041581441e44785f2e628"
+    },
+    {
+      "expected_code": "MANIFEST_HASH_MISMATCH",
+      "id": "manifest-hash",
+      "name": "12-manifest-hash.json",
+      "sha256": "985b2b8957cbec05efeee28ec77e7bbc7bcd8fdb9f0db616aea4a533ab253063"
+    },
+    {
+      "expected_code": "SOURCE_MUTATED",
+      "id": "source-mutation",
+      "name": "13-source-mutation.json",
+      "sha256": "aa87600476097bd443c444b04f652935911c3e2787a868c2d0640823a5aa7b12"
+    }
+  ],
+  "schema": "sport-logger.legacy-migration-scenarios/v1"
+}
