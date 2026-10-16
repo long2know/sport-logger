@@ -1,0 +1,7 @@
+{
+  "expected_code": "INVALID_CHARACTER",
+  "expected_status": "QUARANTINED",
+  "id": "invalid-character",
+  "mutation": "invalid_character",
+  "schema_version": 1
+}

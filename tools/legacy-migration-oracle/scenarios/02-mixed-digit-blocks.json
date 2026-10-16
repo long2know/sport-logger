@@ -1,0 +1,7 @@
+{
+  "expected_code": "MIXED_DIGIT_BLOCKS",
+  "expected_status": "QUARANTINED",
+  "id": "mixed-digit-blocks",
+  "mutation": "mixed_digit_blocks",
+  "schema_version": 1
+}

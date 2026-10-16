@@ -3,42 +3,29 @@ package com.long2know.sportlogger;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.os.Bundle;
-import android.os.Handler;
-import android.support.v4.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
+import androidx.fragment.app.Fragment;
+
 import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
 import com.long2know.utilities.models.SharedData;
 
-import static android.support.constraint.Constraints.TAG;
-import static com.long2know.utilities.models.Config.handler;
-
-/**
- * Fragment that appears in the "content_frame", just shows the currently selected planet.
- */
 public class SensorFragment extends Fragment {
+    private static final String TAG = "SensorFragment";
+
     private TextView _heartRate;
     private TextView _latitude;
     private TextView _longitude;
     private TextView _totalDistance;
     private TextView _steps;
     private TextView _duration;
-    Handler _handler;
 
     public SensorFragment() {
-        // Empty constructor required for fragment subclasses
-        _handler = new Handler();
-    }
-
-    @Override
-    public void onDestroy () {
-        _handler.removeCallbacks(runnable);
-        super.onDestroy ();
     }
 
     @Override
@@ -53,7 +40,7 @@ public class SensorFragment extends Fragment {
         _steps = rootView.findViewById(R.id.steps);
         _duration = rootView.findViewById(R.id.tvTimer);
 
-        if (SharedData.getInstance().IsRecording) {
+        if (SharedData.getInstance().isRecording()) {
             refresh();
         }
 
@@ -61,11 +48,14 @@ public class SensorFragment extends Fragment {
     }
 
     public void refresh() {
-        _duration.setText(SharedData.getInstance().Duration);
-        updateHeartRate(SharedData.getInstance().getData().HeartRate);
-        updateLocation(SharedData.getInstance().getData());
-        updateSteps(SharedData.getInstance().getData().Steps);
-        startTImer();
+        SharedData sharedData = SharedData.getInstance();
+        LocationData data = sharedData.getData();
+        if (_duration != null) {
+            _duration.setText(sharedData.getDuration());
+        }
+        updateHeartRate(data.HeartRate);
+        updateLocation(data);
+        updateSteps(data.Steps);
     }
 
     public void updateHeartRate(float heartRate) {
@@ -88,18 +78,10 @@ public class SensorFragment extends Fragment {
         }
     }
 
-    public void startTImer() {
-        _handler.postDelayed(runnable, 200);
-    }
-
     public void resetTimer() {
         if (_duration != null) {
             _duration.setText("00:00:00");
         }
-    }
-
-    public void pauseTimer() {
-        _handler.removeCallbacks(runnable);
     }
 
     public void onEnterAmbientInFragment(Bundle ambientDetails) {
@@ -116,12 +98,4 @@ public class SensorFragment extends Fragment {
     public void onExitAmbientInFragment() {
         Log.d(TAG, "SensorFragment.onExitAmbient()");
     }
-
-    public Runnable runnable = new Runnable() {
-        public void run() {
-            _duration.setText(SharedData.getInstance().Duration);
-            handler.postDelayed(this, 0);
-        }
-
-    };
 }

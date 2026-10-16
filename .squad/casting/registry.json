@@ -1,0 +1,39 @@
+{
+  "agents": {
+    "mobile-architect-lead": {
+      "persistent_name": "Tank",
+      "universe": "The Matrix",
+      "created_at": "2026-07-25T20:51:18.431-07:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "wear-os-engineer": {
+      "persistent_name": "Trinity",
+      "universe": "The Matrix",
+      "created_at": "2026-07-25T20:51:18.431-07:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "android-wear-ux-engineer": {
+      "persistent_name": "Switch",
+      "universe": "The Matrix",
+      "created_at": "2026-07-25T20:51:18.431-07:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "sync-integrations-engineer": {
+      "persistent_name": "Neo",
+      "universe": "The Matrix",
+      "created_at": "2026-07-25T20:51:18.431-07:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "research-quality-engineer": {
+      "persistent_name": "Mouse",
+      "universe": "The Matrix",
+      "created_at": "2026-07-25T20:51:18.431-07:00",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}

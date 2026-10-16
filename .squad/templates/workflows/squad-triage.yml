@@ -1,0 +1,90 @@
+name: Squad Triage (Manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: squad-triage-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Ralph triage script
+        run: |
+          test -f ".squad/templates/ralph-triage.js" || {
+            echo "::error::ralph-triage.js not found — run 'squad upgrade' to install"
+            exit 1
+          }
+
+      - name: Ralph — Generate triage decisions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .squad/templates/ralph-triage.js \
+            --squad-dir .squad \
+            --output triage-results.json
+
+      - name: Ralph — Apply triage decisions
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { parseOwnerLabels } = require(
+              `${process.env.GITHUB_WORKSPACE}/.squad/templates/ralph-triage.js`
+            );
+            const results = JSON.parse(fs.readFileSync('triage-results.json', 'utf8'));
+            const ownerLabels = parseOwnerLabels(fs.readFileSync('.squad/team.md', 'utf8'));
+
+            for (const decision of results) {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: decision.issueNumber
+              });
+              const labels = (issue.labels || [])
+                .map(label => typeof label === 'string' ? label : label.name)
+                .filter(Boolean);
+              const existingOwner = labels.find(label => ownerLabels.has(label.toLowerCase()));
+
+              if (issue.state !== 'open' || !labels.some(label => label.toLowerCase() === 'squad')) {
+                core.info(`Skipping #${decision.issueNumber}: issue is closed or no longer labeled squad`);
+                continue;
+              }
+              if (existingOwner) {
+                core.info(`Skipping #${decision.issueNumber}: already owned by ${existingOwner}`);
+                continue;
+              }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: decision.issueNumber,
+                labels: [decision.label]
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: decision.issueNumber,
+                body: [
+                  '### 🔄 Ralph — Manual Triage',
+                  '',
+                  `**Assigned to:** ${decision.assignTo}`,
+                  `**Reason:** ${decision.reason}`,
+                  `**Source:** ${decision.source}`,
+                  '',
+                  '> Ralph triaged this issue using the committed routing table.',
+                  '> To reassign, swap the `squad:*` label.'
+                ].join('\n')
+              });
+            }
+
+            core.info(`Ralph evaluated ${results.length} issue(s)`);

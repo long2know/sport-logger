@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "defaultModel": "gpt-5.6-sol",
+  "defaultReasoningEffort": "max"
+}

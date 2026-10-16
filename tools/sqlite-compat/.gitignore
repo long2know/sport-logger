@@ -1,0 +1,6 @@
+.cache/
+.work/
+.test-work/
+__pycache__/
+*.pyc
+out/

@@ -1,0 +1,85 @@
+name: Legacy Migration Oracle
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/android-formatter-evidence.yml'
+      - '.github/workflows/legacy-migration-oracle.yml'
+      - '.github/workflows/sqlite-exact-compat.yml'
+      - 'tools/android-formatter-evidence/**'
+      - 'tools/legacy-migration-oracle/**'
+      - 'tools/sqlite-compat/**'
+      - 'utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java'
+      - 'utilities/src/main/java/com/long2know/utilities/models/Config.java'
+  push:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/android-formatter-evidence.yml'
+      - '.github/workflows/legacy-migration-oracle.yml'
+      - '.github/workflows/sqlite-exact-compat.yml'
+      - 'tools/android-formatter-evidence/**'
+      - 'tools/legacy-migration-oracle/**'
+      - 'tools/sqlite-compat/**'
+      - 'utilities/src/main/java/com/long2know/utilities/data_access/SqlLogger.java'
+      - 'utilities/src/main/java/com/long2know/utilities/models/Config.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify required local toolchain
+        run: |
+          command -v python3
+          command -v cc
+
+      - name: Validate committed Android evidence
+        run: |
+          python3 tools/android-formatter-evidence/validate_evidence.py
+          python3 -m unittest discover \
+            -s tools/android-formatter-evidence -p 'test_*.py' -v
+          python3 tools/android-formatter-evidence/run_probe.py --validate-only
+
+      - name: Run exact-harness and oracle unit tests
+        run: |
+          python3 -m unittest discover \
+            -s tools/sqlite-compat/tests -p 'test_*.py' -v
+          python3 -m unittest discover \
+            -s tools/legacy-migration-oracle/tests -p 'test_*.py' -v
+
+      - name: Run cold-cache exact SQLite matrix
+        run: |
+          rm -rf \
+            tools/sqlite-compat/.cache \
+            tools/sqlite-compat/.work \
+            tools/sqlite-compat/out \
+            tools/legacy-migration-oracle/.work \
+            tools/legacy-migration-oracle/out
+          python3 tools/sqlite-compat/sqlite_compat.py run
+
+      - name: Rebuild exact SQLite matrix from verified offline archives
+        run: python3 tools/sqlite-compat/sqlite_compat.py run --offline
+
+      - name: Validate real evidence consumers
+        run: python3 tools/legacy-migration-oracle/oracle.py validate
+
+      - name: Execute migration oracle with 100,000-point gate
+        run: python3 tools/legacy-migration-oracle/oracle.py run --offline
+
+      - name: Upload sanitized reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: legacy-migration-oracle-reports
+          path: |
+            tools/sqlite-compat/out/
+            tools/legacy-migration-oracle/out/
+          if-no-files-found: error
+          retention-days: 7

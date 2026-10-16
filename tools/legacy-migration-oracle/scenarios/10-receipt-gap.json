@@ -1,0 +1,7 @@
+{
+  "expected_code": "RECEIPT_GAP",
+  "expected_status": "QUARANTINED",
+  "id": "receipt-gap",
+  "mutation": "receipt_gap",
+  "schema_version": 1
+}

@@ -1,0 +1,83 @@
+name: Android build
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/android-build.yml'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'mobile/**'
+      - 'wear/**'
+      - 'utilities/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/android-build.yml'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'mobile/**'
+      - 'wear/**'
+      - 'utilities/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK 36
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Verify wrapper and toolchain
+        run: |
+          ./gradlew --version
+          ./gradlew verifyPublishedVersioning --no-daemon
+
+      - name: Build, test, and lint
+        run: >
+          ./gradlew clean
+          :mobile:assembleDebug :mobile:assembleRelease
+          :wear:assembleDebug :wear:assembleRelease
+          test lint
+          --no-daemon --stacktrace
+
+      - name: Upload application APKs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sport-logger-apks
+          path: |
+            mobile/build/outputs/apk/debug/mobile-debug.apk
+            mobile/build/outputs/apk/release/mobile-release-unsigned.apk
+            wear/build/outputs/apk/debug/wear-debug.apk
+            wear/build/outputs/apk/release/wear-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 7

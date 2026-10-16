@@ -1,0 +1,7 @@
+{
+  "expected_code": null,
+  "expected_status": "PASS",
+  "id": "valid-all-android-decimal-blocks",
+  "mutation": "all_android_decimal_blocks",
+  "schema_version": 1
+}
