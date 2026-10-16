@@ -1,27 +1,44 @@
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
-
 buildscript {
     repositories {
         google()
-        jcenter()
-        
+        mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.3.1'
-        
-        // NOTE: Do not place your application dependencies here; they belong
-        // in the individual module build.gradle files
+        classpath 'com.android.tools.build:gradle:8.10.1'
     }
 }
 
 allprojects {
     repositories {
         google()
-        jcenter()
-        
+        mavenCentral()
     }
 }
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+ext {
+    sportLoggerVersionCode = providers.gradleProperty('sportLoggerVersionCode')
+            .orElse('1')
+            .get()
+            .toInteger()
+    sportLoggerVersionName = providers.gradleProperty('sportLoggerVersionName')
+            .orElse('1.0')
+            .get()
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}
+
+tasks.register('verifyPublishedVersioning') {
+    group = 'verification'
+    description = 'Verifies deterministic application version inputs.'
+    doLast {
+        if (sportLoggerVersionCode < 1) {
+            throw new GradleException('sportLoggerVersionCode must be a positive integer')
+        }
+        if (!(sportLoggerVersionName ==~ /\d+\.\d+(\.\d+)?([.-][0-9A-Za-z.-]+)?/)) {
+            throw new GradleException('sportLoggerVersionName must be a stable dotted version')
+        }
+        logger.lifecycle("SportLogger version ${sportLoggerVersionName} (${sportLoggerVersionCode})")
+    }
 }
