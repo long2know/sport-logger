@@ -29,6 +29,23 @@ class EvidenceValidationTest(unittest.TestCase):
         cls.summary = cls.result["summary"]
         cls.writer_provenance = cls.result["writer_provenance"]
 
+    @staticmethod
+    def current_writer_inputs() -> tuple[
+        dict[str, object], str, str, str
+    ]:
+        repository_root = ROOT.parent.parent
+        compatibility = load_writer_contract(ROOT)["current_compatibility"]
+        config_source = (
+            repository_root / compatibility["config_relative_path"]
+        ).read_text(encoding="utf-8")
+        writer_source = (
+            repository_root / compatibility["writer_relative_path"]
+        ).read_text(encoding="utf-8")
+        schema_source = (
+            repository_root / compatibility["schema_relative_path"]
+        ).read_text(encoding="utf-8")
+        return compatibility, config_source, writer_source, schema_source
+
     def test_candidate_union_is_exact(self) -> None:
         candidate_sets = {
             api_level: {
@@ -203,15 +220,9 @@ class EvidenceValidationTest(unittest.TestCase):
     def test_current_writer_gate_ignores_surrounding_refactors_but_rejects_contract_changes(
         self,
     ) -> None:
-        repository_root = ROOT.parent.parent
-        contract = load_writer_contract(ROOT)
-        compatibility = contract["current_compatibility"]
-        config_path = repository_root / compatibility["config_relative_path"]
-        writer_path = repository_root / compatibility["writer_relative_path"]
-        schema_path = repository_root / compatibility["schema_relative_path"]
-        config_source = config_path.read_text(encoding="utf-8")
-        writer_source = writer_path.read_text(encoding="utf-8")
-        schema_source = schema_path.read_text(encoding="utf-8")
+        compatibility, config_source, writer_source, schema_source = (
+            self.current_writer_inputs()
+        )
         arguments = (
             schema_source,
             compatibility["expected_pattern"],
@@ -264,6 +275,90 @@ class EvidenceValidationTest(unittest.TestCase):
                 config_source.replace("Locale.US", "Locale.CANADA", 1),
                 writer_source,
                 *arguments,
+                require_column_writes=True,
+            )
+
+    def test_current_writer_gate_rejects_broken_real_writes_with_unused_decoys(
+        self,
+    ) -> None:
+        compatibility, config_source, writer_source, schema_source = (
+            self.current_writer_inputs()
+        )
+        broken_writer = writer_source.replace(
+            "values.put(T_TIMESTAMP_UTC, "
+            "Config.formatTimestamp(legacyUtcNow()));",
+            'values.put(T_TIMESTAMP_UTC, "BROKEN");',
+            1,
+        ).replace(
+            "putDate(values, T_TIMESTAMP_UTC, trackPoint.TimeStampUTC);",
+            'values.put(T_TIMESTAMP_UTC, "BROKEN");',
+            1,
+        )
+        decoy = """
+    private static final String UNUSED_TIMESTAMP_DECOY =
+            "values.put(T_TIMESTAMP_UTC, Config.formatTimestamp(date));";
+    // values.put(T_TIMESTAMP_UTC, Config.formatTimestamp(date));
+    private static final class UnusedTimestampDecoy {
+        private static void writeTimestamp(
+                ContentValues values,
+                Date date) {
+            values.put(T_TIMESTAMP_UTC, Config.formatTimestamp(date));
+        }
+    }
+
+"""
+        broken_writer = broken_writer.replace(
+            "    private static void putDate(",
+            decoy + "    private static void putDate(",
+            1,
+        )
+        self.assertEqual(2, broken_writer.count('"BROKEN"'))
+        with self.assertRaises(EvidenceError):
+            validate_current_writer_text(
+                config_source,
+                broken_writer,
+                schema_source,
+                compatibility["expected_pattern"],
+                compatibility["allowed_locale_policies"],
+                compatibility["required_timestamp_columns"],
+                require_column_writes=True,
+            )
+
+    def test_current_config_gate_rejects_broken_helper_with_nested_decoy(
+        self,
+    ) -> None:
+        compatibility, config_source, writer_source, schema_source = (
+            self.current_writer_inputs()
+        )
+        broken_config = config_source.replace(
+            "return TIMESTAMP_FORMAT.format(date);",
+            'return "BROKEN";',
+            1,
+        )
+        decoy = """
+    private static final String UNUSED_FORMATTER_DECOY =
+            "return TIMESTAMP_FORMAT.format(date);";
+    // return TIMESTAMP_FORMAT.format(date);
+    private static final class UnusedFormatterDecoy {
+        private static String formatTimestamp(Date date) {
+            return TIMESTAMP_FORMAT.format(date);
+        }
+    }
+
+"""
+        broken_config = broken_config.replace(
+            "    private Config() {",
+            decoy + "    private Config() {",
+            1,
+        )
+        with self.assertRaises(EvidenceError):
+            validate_current_writer_text(
+                broken_config,
+                writer_source,
+                schema_source,
+                compatibility["expected_pattern"],
+                compatibility["allowed_locale_policies"],
+                compatibility["required_timestamp_columns"],
                 require_column_writes=True,
             )
 

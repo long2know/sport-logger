@@ -29,10 +29,15 @@ Config.parseTimestamp(...)
 
 Host validation permits that reviewed locale/API refactor while requiring the same 14-digit
 pattern, the same timestamp columns, and the exact `ACTIVITY` / `GPS_POINTS` schema represented by
-`tools/sqlite-compat/legacy_schema.sql`. Comments, whitespace, imports, and unrelated surrounding
-source may change. Pattern, locale-policy, writer-call, timestamp-column, or schema changes fail.
-This preserves the truthful historical evidence boundary without pretending the original emulator
-runs used the refactored source.
+`tools/sqlite-compat/legacy_schema.sql`. The current-tree check is deliberately a narrow,
+fail-closed lexical validator for the known top-level `Config` helpers and `SqlLogger` producer
+methods. It follows the `ContentValues` returned or passed to the reviewed `insertOrThrow` /
+`update` call shapes and checks every current timestamp write on those values. Comments, strings,
+nested or unused methods, whitespace, imports, and unrelated surrounding source cannot substitute
+for those call paths. Pattern, locale-policy, formatter-helper, producer-flow, timestamp-column, or
+schema changes fail. This is not a general Java-equivalence analysis; new producer shapes require
+an explicit validator update and review. The boundary preserves truthful historical evidence
+without pretending the original emulator runs used the refactored source.
 
 ## Pinned local prerequisites
 

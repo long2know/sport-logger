@@ -303,6 +303,154 @@ def strip_java_comments(value: str) -> str:
     return "".join(output)
 
 
+def mask_java_non_code(value: str) -> str:
+    value = strip_java_comments(value)
+    output: list[str] = []
+    index = 0
+    state = "code"
+    while index < len(value):
+        character = value[index]
+        next_character = value[index + 1] if index + 1 < len(value) else ""
+        if state == "code":
+            if character == '"':
+                state = "string"
+                output.append(" ")
+            elif character == "'":
+                state = "character"
+                output.append(" ")
+            else:
+                output.append(character)
+        else:
+            output.append("\n" if character == "\n" else " ")
+            if character == "\\" and next_character:
+                output.append("\n" if next_character == "\n" else " ")
+                index += 1
+            elif (
+                state == "string"
+                and character == '"'
+                or state == "character"
+                and character == "'"
+            ):
+                state = "code"
+        index += 1
+    return "".join(output)
+
+
+def find_matching_java_delimiter(
+    source: str,
+    opening: int,
+    opening_character: str,
+    closing_character: str,
+) -> int:
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == opening_character:
+            depth += 1
+        elif source[index] == closing_character:
+            depth -= 1
+            if depth == 0:
+                return index
+    raise EvidenceError(
+        f"Java source has an unterminated {opening_character!r} delimiter"
+    )
+
+
+def extract_java_class_span(
+    source: str,
+    class_name: str,
+) -> tuple[int, int]:
+    masked = mask_java_non_code(source)
+    matches = list(
+        re.finditer(
+            rf"\bpublic\s+(?:final\s+)?class\s+"
+            rf"{re.escape(class_name)}\b",
+            masked,
+        )
+    )
+    if len(matches) != 1:
+        raise EvidenceError(
+            f"Java source must define exactly one public class {class_name}"
+        )
+    opening = masked.find("{", matches[0].end())
+    if opening < 0:
+        raise EvidenceError(f"Java class {class_name} has no body")
+    return opening, find_matching_java_delimiter(
+        masked, opening, "{", "}"
+    )
+
+
+def java_brace_depth(source: str, start: int, end: int) -> int:
+    return source.count("{", start, end) - source.count("}", start, end)
+
+
+def extract_java_top_level_method(
+    source: str,
+    class_name: str,
+    method_name: str,
+    parameter_pattern: str,
+) -> tuple[str, str]:
+    masked = mask_java_non_code(source)
+    class_opening, class_closing = extract_java_class_span(
+        source, class_name
+    )
+    pattern = re.compile(
+        rf"\b{re.escape(method_name)}\s*\("
+        rf"(?P<parameters>{parameter_pattern})\)\s*"
+        rf"(?:throws\s+[A-Za-z0-9_.$,\s<>]+)?\{{"
+    )
+    matches = [
+        match
+        for match in pattern.finditer(
+            masked, class_opening + 1, class_closing
+        )
+        if java_brace_depth(
+            masked, class_opening + 1, match.start()
+        )
+        == 0
+    ]
+    if len(matches) != 1:
+        raise EvidenceError(
+            f"{class_name}.{method_name} must match its reviewed signature "
+            "exactly once"
+        )
+    match = matches[0]
+    body_opening = masked.rfind("{", match.start(), match.end())
+    body_closing = find_matching_java_delimiter(
+        masked, body_opening, "{", "}"
+    )
+    return (
+        source[match.start("parameters"):match.end("parameters")],
+        source[body_opening + 1:body_closing],
+    )
+
+
+def top_level_java_class_matches(
+    source: str,
+    class_name: str,
+    pattern: re.Pattern[str],
+) -> tuple[re.Match[str], ...]:
+    stripped = strip_java_comments(source)
+    masked = mask_java_non_code(source)
+    class_opening, class_closing = extract_java_class_span(
+        source, class_name
+    )
+    return tuple(
+        match
+        for match in pattern.finditer(
+            stripped, class_opening + 1, class_closing
+        )
+        if masked[match.start()] == stripped[match.start()]
+        and java_brace_depth(
+            masked, class_opening + 1, match.start()
+        )
+        == 0
+    )
+
+
+def compact_java_code(value: str) -> str:
+    return re.sub(r"\s+", "", mask_java_non_code(value))
+
+
 JAVA_STRING_TOKEN = r'"(?:\\.|[^"\\])*"'
 
 
@@ -433,24 +581,30 @@ def extract_formatter_model(
     config_source: str,
     expected_pattern: str,
     allowed_locale_policies: Sequence[str],
+    *,
+    require_helpers: bool,
 ) -> dict[str, str]:
-    stripped = strip_java_comments(config_source)
     assignment_pattern = re.compile(
-        rf"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+SimpleDateFormat"
-        rf"\s*\(\s*({JAVA_STRING_TOKEN})\s*(,\s*[^)]*?)?\)\s*;"
+        rf"\b(?P<visibility>public|private|protected)\s+static\s+final\s+"
+        rf"DateFormat\s+(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+        rf"new\s+SimpleDateFormat\s*\(\s*"
+        rf"(?P<pattern>{JAVA_STRING_TOKEN})\s*"
+        rf"(?P<locale>,\s*[^)]*?)?\)\s*;"
     )
     matches = [
         match
-        for match in assignment_pattern.finditer(stripped)
-        if decode_java_string(match.group(2)) == expected_pattern
+        for match in top_level_java_class_matches(
+            config_source, "Config", assignment_pattern
+        )
+        if decode_java_string(match.group("pattern")) == expected_pattern
     ]
     if len(matches) != 1:
         raise EvidenceError(
             "current Config.java must define exactly one compatible timestamp formatter"
         )
     match = matches[0]
-    field = match.group(1)
-    trailing = re.sub(r"\s+", "", match.group(3) or "")
+    field = match.group("field")
+    trailing = re.sub(r"\s+", "", match.group("locale") or "")
     if not trailing:
         locale_policy = "default_locale"
         constructor = "java.text.SimpleDateFormat(String)"
@@ -466,32 +620,49 @@ def extract_formatter_model(
             f"current timestamp locale policy {locale_policy!r} is not allowed"
         )
 
-    format_methods = re.findall(
-        rf"\bString\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*"
-        rf"(?:throws\s+[A-Za-z0-9_.,\s]+)?\{{[^{{}}]*\breturn\s+"
-        rf"{re.escape(field)}\.format\s*\(",
-        stripped,
-    )
-    parse_methods = re.findall(
-        rf"\bDate\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*"
-        rf"(?:throws\s+[A-Za-z0-9_.,\s]+)?\{{[^{{}}]*\breturn\s+"
-        rf"{re.escape(field)}\.parse\s*\(",
-        stripped,
-    )
-    public_field = re.search(
-        rf"\bpublic\s+static\s+final\s+DateFormat\s+{re.escape(field)}\b",
-        stripped,
-    )
-    if len(format_methods) == 1 and len(parse_methods) == 1:
-        format_api = f"Config.{format_methods[0]}"
-        parse_api = f"Config.{parse_methods[0]}"
-    elif public_field and not format_methods and not parse_methods:
+    if not require_helpers:
+        if match.group("visibility") != "public":
+            raise EvidenceError(
+                "captured Config.java formatter field is not public"
+            )
         format_api = f"Config.{field}.format"
         parse_api = f"Config.{field}.parse"
     else:
-        raise EvidenceError(
-            "current Config.java does not expose one matching format/parse surface"
+        identifier = r"[A-Za-z_][A-Za-z0-9_]*"
+        format_parameters, format_body = extract_java_top_level_method(
+            config_source,
+            "Config",
+            "formatTimestamp",
+            rf"\s*Date\s+{identifier}\s*",
         )
+        parse_parameters, parse_body = extract_java_top_level_method(
+            config_source,
+            "Config",
+            "parseTimestamp",
+            rf"\s*String\s+{identifier}\s*",
+        )
+        format_parameter = re.search(
+            rf"({identifier})\s*$", format_parameters
+        ).group(1)
+        parse_parameter = re.search(
+            rf"({identifier})\s*$", parse_parameters
+        ).group(1)
+        if compact_java_code(format_body) != (
+            f"return{field}.format({format_parameter});"
+        ):
+            raise EvidenceError(
+                "Config.formatTimestamp no longer directly uses the "
+                "compatible formatter"
+            )
+        if compact_java_code(parse_body) != (
+            f"return{field}.parse({parse_parameter});"
+        ):
+            raise EvidenceError(
+                "Config.parseTimestamp no longer directly uses the "
+                "compatible formatter"
+            )
+        format_api = "Config.formatTimestamp"
+        parse_api = "Config.parseTimestamp"
     return {
         "constructor": constructor,
         "format_api": format_api,
@@ -501,43 +672,301 @@ def extract_formatter_model(
     }
 
 
-def extract_java_method_body(source: str, method_name: str) -> str:
-    match = re.search(
-        rf"\b{re.escape(method_name)}\s*\([^)]*\)\s*\{{",
-        source,
+def java_parameter_names(parameters: str) -> tuple[str, ...]:
+    return tuple(
+        re.search(
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*$", parameter
+        ).group(1)
+        for parameter in parameters.split(",")
+    )
+
+
+def java_qualified_name_pattern(qualified_name: str) -> str:
+    return r"\s*\.\s*".join(
+        re.escape(part) for part in qualified_name.split(".")
+    )
+
+
+def exact_java_call(expression: str, qualified_name: str) -> bool:
+    masked = mask_java_non_code(expression)
+    match = re.match(
+        rf"\s*{java_qualified_name_pattern(qualified_name)}\s*\(",
+        masked,
     )
     if match is None:
-        raise EvidenceError(f"Java method {method_name} is missing")
-    opening = source.find("{", match.start())
-    depth = 0
-    state = "code"
-    index = opening
-    while index < len(source):
-        character = source[index]
-        next_character = source[index + 1] if index + 1 < len(source) else ""
-        if state == "code":
-            if character == '"':
-                state = "string"
-            elif character == "'":
-                state = "character"
-            elif character == "{":
-                depth += 1
-            elif character == "}":
-                depth -= 1
-                if depth == 0:
-                    return source[opening + 1:index]
-        elif state == "string":
-            if character == "\\" and next_character:
-                index += 1
-            elif character == '"':
-                state = "code"
-        else:
-            if character == "\\" and next_character:
-                index += 1
-            elif character == "'":
-                state = "code"
-        index += 1
-    raise EvidenceError(f"Java method {method_name} has an unterminated body")
+        return False
+    opening = masked.rfind("(", match.start(), match.end())
+    closing = find_matching_java_delimiter(masked, opening, "(", ")")
+    return not masked[closing + 1:].strip()
+
+
+def require_sink_values(
+    body: str,
+    method_name: str,
+    pattern: str,
+) -> str:
+    matches = re.findall(
+        pattern, mask_java_non_code(body), flags=re.DOTALL
+    )
+    if len(matches) != 1:
+        raise EvidenceError(
+            f"SqlLogger.{method_name} legacy table sink changed"
+        )
+    return matches[0]
+
+
+def validate_timestamp_column_write(
+    body: str,
+    method_name: str,
+    values: str,
+    column: str,
+    format_api: str,
+) -> None:
+    masked = mask_java_non_code(body)
+    if len(
+        re.findall(
+            rf"\bContentValues\s+{re.escape(values)}\s*=\s*"
+            rf"new\s+ContentValues\s*\(\s*\)\s*;",
+            masked,
+        )
+    ) != 1:
+        raise EvidenceError(
+            f"SqlLogger.{method_name} no longer constructs the "
+            "ContentValues sent to the database"
+        )
+    direct = re.findall(
+        rf"\b{re.escape(values)}\s*\.\s*put\s*\(\s*{re.escape(column)}"
+        rf"\s*,\s*(.*?)\)\s*;",
+        masked,
+        flags=re.DOTALL,
+    )
+    helpers = re.findall(
+        rf"(?<![A-Za-z0-9_.])putDate\s*\(\s*{re.escape(values)}"
+        rf"\s*,\s*{re.escape(column)}\s*,.*?\)\s*;",
+        masked,
+        flags=re.DOTALL,
+    )
+    nulls = re.findall(
+        rf"\b{re.escape(values)}\s*\.\s*putNull\s*\(\s*"
+        rf"{re.escape(column)}\s*\)\s*;",
+        masked,
+    )
+    if len(direct) + len(helpers) + len(nulls) != 1:
+        raise EvidenceError(
+            f"SqlLogger.{method_name} must write timestamp column "
+            f"{column} exactly once on the database ContentValues"
+        )
+    if helpers:
+        return
+    if len(direct) != 1 or not exact_java_call(direct[0], format_api):
+        raise EvidenceError(
+            f"SqlLogger.{method_name} writes timestamp column {column} "
+            f"without {format_api}"
+        )
+
+
+def validate_current_sql_logger(
+    writer_source: str,
+    format_api: str,
+    parse_api: str,
+) -> None:
+    sink_pattern = re.compile(
+        r"\.\s*(insert|insertOrThrow|replace|replaceOrThrow|update)"
+        r"\s*\(\s*(ACTIVITY_TABLE_NAME|GPS_TABLE_NAME)\b"
+    )
+    observed_sinks = Counter(
+        sink_pattern.findall(mask_java_non_code(writer_source))
+    )
+    expected_sinks = Counter(
+        {
+            ("insertOrThrow", "ACTIVITY_TABLE_NAME"): 2,
+            ("insertOrThrow", "GPS_TABLE_NAME"): 2,
+            ("update", "ACTIVITY_TABLE_NAME"): 2,
+            ("update", "GPS_TABLE_NAME"): 1,
+        }
+    )
+    if observed_sinks != expected_sinks:
+        raise EvidenceError(
+            "SqlLogger.java legacy table producer set changed"
+        )
+
+    identifier = r"[A-Za-z_][A-Za-z0-9_]*"
+    specs = {
+        "write_data": ("writeData", rf"\s*int\s+{identifier}\s*"),
+        "create_date": (
+            "createActivity",
+            rf"\s*Context\s+{identifier}\s*,\s*Date\s+{identifier}\s*",
+        ),
+        "create_model": (
+            "createActivity",
+            rf"\s*SportActivity\s+{identifier}\s*",
+        ),
+        "update_activity": (
+            "updateSportActivity",
+            rf"\s*SportActivity\s+{identifier}\s*",
+        ),
+        "complete": (
+            "completeActivity",
+            rf"\s*int\s+{identifier}\s*,\s*Date\s+{identifier}\s*",
+        ),
+        "create_point": (
+            "createTrackPoint",
+            rf"\s*SportTrackPoint\s+{identifier}\s*,\s*"
+            rf"int\s+{identifier}\s*",
+        ),
+        "update_point": (
+            "updateTrackPoint",
+            rf"\s*SportTrackPoint\s+{identifier}\s*,\s*"
+            rf"int\s+{identifier}\s*",
+        ),
+        "activity_values": (
+            "activityValues",
+            rf"\s*SportActivity\s+{identifier}\s*",
+        ),
+        "point_values": (
+            "trackPointValues",
+            rf"\s*SportTrackPoint\s+{identifier}\s*,\s*"
+            rf"int\s+{identifier}\s*",
+        ),
+        "put_date": (
+            "putDate",
+            rf"\s*ContentValues\s+{identifier}\s*,\s*"
+            rf"String\s+{identifier}\s*,\s*Date\s+{identifier}\s*",
+        ),
+        "parse": (
+            "parseTimestamp",
+            rf"\s*String\s+{identifier}\s*",
+        ),
+    }
+    methods = {
+        key: extract_java_top_level_method(
+            writer_source, "SqlLogger", method_name, parameters
+        )
+        for key, (method_name, parameters) in specs.items()
+    }
+    for key, (_, body) in methods.items():
+        if re.search(
+            r"\b(?:class|interface|enum|record)\b",
+            mask_java_non_code(body),
+        ):
+            raise EvidenceError(
+                f"SqlLogger.{specs[key][0]} contains an unsupported nested type"
+            )
+
+    direct_paths = (
+        (
+            "write_data",
+            r"\.insertOrThrow\s*\(\s*GPS_TABLE_NAME\s*,\s*null\s*,"
+            rf"\s*({identifier})\s*\)",
+            "T_TIMESTAMP_UTC",
+        ),
+        (
+            "create_date",
+            r"\.insertOrThrow\s*\(\s*ACTIVITY_TABLE_NAME\s*,\s*null\s*,"
+            rf"\s*({identifier})\s*\)",
+            "A_START_TIME_UTC",
+        ),
+        (
+            "complete",
+            r"\.update\s*\(\s*ACTIVITY_TABLE_NAME\s*,"
+            rf"\s*({identifier})\s*,",
+            "A_END_TIME_UTC",
+        ),
+    )
+    for key, sink, column in direct_paths:
+        validate_timestamp_column_write(
+            methods[key][1],
+            specs[key][0],
+            require_sink_values(methods[key][1], specs[key][0], sink),
+            column,
+            format_api,
+        )
+
+    create_model = compact_java_code(methods["create_model"][1])
+    create_model_values = re.findall(
+        rf"ContentValues({identifier})=activityValues\([^;]+\);",
+        create_model,
+    )
+    if (
+        len(create_model_values) != 1
+        or f"insertOrThrow(ACTIVITY_TABLE_NAME,null,{create_model_values[0]})"
+        not in create_model
+    ):
+        raise EvidenceError(
+            "SqlLogger.createActivity no longer sends "
+            "activityValues(...) to the database"
+        )
+    for key, pattern, message in (
+        (
+            "update_activity",
+            r"\.update\s*\(\s*ACTIVITY_TABLE_NAME\s*,\s*"
+            r"activityValues\s*\(",
+            "activityValues",
+        ),
+        (
+            "create_point",
+            r"\.insertOrThrow\s*\(\s*GPS_TABLE_NAME\s*,\s*null\s*,\s*"
+            r"trackPointValues\s*\(",
+            "trackPointValues",
+        ),
+        (
+            "update_point",
+            r"\.update\s*\(\s*GPS_TABLE_NAME\s*,\s*"
+            r"trackPointValues\s*\(",
+            "trackPointValues",
+        ),
+    ):
+        if re.search(pattern, mask_java_non_code(methods[key][1])) is None:
+            raise EvidenceError(
+                f"SqlLogger.{specs[key][0]} no longer sends "
+                f"{message}(...) to the database"
+            )
+
+    for key, columns in (
+        ("activity_values", ("A_START_TIME_UTC", "A_END_TIME_UTC")),
+        ("point_values", ("T_TIMESTAMP_UTC",)),
+    ):
+        body = methods[key][1]
+        returned = re.findall(
+            rf"\breturn\s+({identifier})\s*;",
+            mask_java_non_code(body),
+        )
+        if len(returned) != 1:
+            raise EvidenceError(
+                f"SqlLogger.{specs[key][0]} must return one "
+                "ContentValues variable"
+            )
+        for column in columns:
+            validate_timestamp_column_write(
+                body, specs[key][0], returned[0], column, format_api
+            )
+
+    put_parameters, put_body = methods["put_date"]
+    values, key, date = java_parameter_names(put_parameters)
+    if compact_java_code(put_body) != (
+        f"if({date}==null){{{values}.putNull({key});}}"
+        f"else{{{values}.put({key},{format_api}({date}));}}"
+    ):
+        raise EvidenceError(
+            "SqlLogger.putDate must format the value written by its "
+            "non-null branch"
+        )
+
+    parse_parameters, parse_body = methods["parse"]
+    timestamp = java_parameter_names(parse_parameters)[0]
+    masked_parse = mask_java_non_code(parse_body)
+    if (
+        len(re.findall(r"\breturn\b", masked_parse)) != 1
+        or re.search(
+            rf"\breturn\s+{java_qualified_name_pattern(parse_api)}\s*"
+            rf"\(\s*{re.escape(timestamp)}\s*\)\s*;",
+            masked_parse,
+        )
+        is None
+    ):
+        raise EvidenceError(
+            "SqlLogger.parseTimestamp no longer returns the compatible parser"
+        )
 
 
 def validate_current_writer_text(
@@ -554,39 +983,30 @@ def validate_current_writer_text(
         config_source,
         expected_pattern,
         allowed_locale_policies,
+        require_helpers=require_column_writes,
     )
-    writer = strip_java_comments(writer_source)
     format_api = str(model["format_api"])
     parse_api = str(model["parse_api"])
-    if not re.search(rf"\b{re.escape(format_api)}\s*\(", writer):
-        raise EvidenceError("SqlLogger.java no longer uses the compatible formatter")
-    if not re.search(rf"\b{re.escape(parse_api)}\s*\(", writer):
-        raise EvidenceError("SqlLogger.java no longer uses the compatible parser")
-
     if require_column_writes:
-        for column in required_timestamp_columns:
-            direct = re.search(
-                rf"\bvalues\.put\s*\(\s*{re.escape(column)}\s*,\s*"
-                rf"{re.escape(format_api)}\s*\(",
-                writer,
-            )
-            helper = re.search(
-                rf"\bputDate\s*\(\s*values\s*,\s*{re.escape(column)}\s*,",
-                writer,
-            )
-            if not direct and not helper:
-                raise EvidenceError(
-                    f"SqlLogger.java no longer formats timestamp column {column}"
-                )
-        if "putDate" in writer and not re.search(
-            rf"\b{re.escape(format_api)}\s*\(",
-            extract_java_method_body(writer, "putDate"),
-        ):
+        if tuple(required_timestamp_columns) != REQUIRED_TIMESTAMP_COLUMN_SYMBOLS:
             raise EvidenceError(
-                "SqlLogger.java putDate helper bypasses the compatible formatter"
+                "current timestamp column contract changed"
+            )
+        validate_current_sql_logger(
+            writer_source, format_api, parse_api
+        )
+    else:
+        writer = mask_java_non_code(writer_source)
+        if not re.search(rf"\b{re.escape(format_api)}\s*\(", writer):
+            raise EvidenceError(
+                "SqlLogger.java no longer uses the compatible formatter"
+            )
+        if not re.search(rf"\b{re.escape(parse_api)}\s*\(", writer):
+            raise EvidenceError(
+                "SqlLogger.java no longer uses the compatible parser"
             )
 
-    observed_schema = extract_create_table_statements(writer)
+    observed_schema = extract_create_table_statements(writer_source)
     expected_schema = expected_create_table_statements(schema_source)
     if len(expected_schema) != 2 or observed_schema != expected_schema:
         raise EvidenceError(
