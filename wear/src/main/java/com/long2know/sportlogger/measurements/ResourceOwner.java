@@ -94,13 +94,38 @@ public final class ResourceOwner {
         return true;
     }
 
+    public boolean suspendAsync() {
+        if (!active.compareAndSet(true, false)) {
+            return false;
+        }
+        generation.incrementAndGet();
+        cancelRetry();
+        execute(() -> {
+            closeAll(owned);
+            owned = Collections.emptyList();
+        });
+        return true;
+    }
+
+    public boolean refreshAsync() {
+        if (!active.get()) {
+            return false;
+        }
+        long currentGeneration = generation.incrementAndGet();
+        cancelRetry();
+        retryAttempt = 0;
+        execute(() -> {
+            closeAll(owned);
+            owned = Collections.emptyList();
+            attemptOpen(currentGeneration);
+        });
+        return true;
+    }
+
     public void stopAsync() {
         active.set(false);
         generation.incrementAndGet();
-        ScheduledFuture<?> retry = retryFuture;
-        if (retry != null) {
-            retry.cancel(false);
-        }
+        cancelRetry();
         execute(() -> {
             closeAll(owned);
             owned = Collections.emptyList();
@@ -201,6 +226,14 @@ public final class ResourceOwner {
                 () -> attemptOpen(expectedGeneration),
                 delay,
                 TimeUnit.MILLISECONDS);
+    }
+
+    private void cancelRetry() {
+        ScheduledFuture<?> retry = retryFuture;
+        retryFuture = null;
+        if (retry != null) {
+            retry.cancel(false);
+        }
     }
 
     private void closeAll(List<OwnedRegistration> registrations) {

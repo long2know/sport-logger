@@ -47,7 +47,7 @@ jobs:
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '17.0.20+8'
 
       - name: Set up Android SDK 36
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -59,16 +59,142 @@ jobs:
 
       - name: Verify wrapper and toolchain
         run: |
+          echo '497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check -
+          grep -Fqx 'distributionUrl=https\://services.gradle.org/distributions/gradle-9.5.0-bin.zip' gradle/wrapper/gradle-wrapper.properties
+          grep -Fqx 'distributionSha256Sum=553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746' gradle/wrapper/gradle-wrapper.properties
           ./gradlew --version
-          ./gradlew verifyPublishedVersioning --no-daemon
+          ./gradlew verifyPublishedVersioning --no-daemon --max-workers=2 --warning-mode all
 
       - name: Build, test, and lint
         run: >
           ./gradlew clean
-          :mobile:assembleDebug :mobile:assembleRelease
-          :wear:assembleDebug :wear:assembleRelease
+          assembleDebug assembleRelease
+          :mobile:assembleSideload :wear:assembleSideload
           test lint
-          --no-daemon --stacktrace
+          :mobile:assembleDebugAndroidTest
+          :wear:assembleDebugAndroidTest
+          :utilities:assembleDebugAndroidTest
+          --no-daemon --max-workers=2 --warning-mode all --stacktrace
+
+      - name: Validate APK delivery properties
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aapt2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+          apksigner="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          phone_sideload="mobile/build/outputs/apk/sideload/mobile-sideload.apk"
+          watch_sideload="wear/build/outputs/apk/sideload/wear-sideload.apk"
+          phone_debug="mobile/build/outputs/apk/debug/mobile-debug.apk"
+          watch_debug="wear/build/outputs/apk/debug/wear-debug.apk"
+          phone_release="mobile/build/outputs/apk/release/mobile-release-unsigned.apk"
+          watch_release="wear/build/outputs/apk/release/wear-release-unsigned.apk"
+
+          for apk in \
+            "$phone_sideload" "$watch_sideload" \
+            "$phone_debug" "$watch_debug" \
+            "$phone_release" "$watch_release"; do
+            test -f "$apk"
+          done
+
+          phone_badging="$("$aapt2" dump badging "$phone_sideload")"
+          watch_badging="$("$aapt2" dump badging "$watch_sideload")"
+          phone_package="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$phone_badging")"
+          watch_package="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$watch_badging")"
+          phone_version_code="$(sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" <<<"$phone_badging")"
+          watch_version_code="$(sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" <<<"$watch_badging")"
+          phone_version_name="$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" <<<"$phone_badging")"
+          watch_version_name="$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" <<<"$watch_badging")"
+
+          test "$phone_package" = "com.long2know.sportlogger"
+          test "$watch_package" = "$phone_package"
+          test -n "$phone_version_code"
+          test "$watch_version_code" = "$phone_version_code"
+          test -n "$phone_version_name"
+          test "$watch_version_name" = "$phone_version_name"
+          grep -Fqx "minSdkVersion:'26'" <<<"$phone_badging"
+          grep -Fqx "targetSdkVersion:'36'" <<<"$phone_badging"
+          grep -Fqx "minSdkVersion:'30'" <<<"$watch_badging"
+          grep -Fqx "targetSdkVersion:'35'" <<<"$watch_badging"
+
+          if grep -q '^application-debuggable' <<<"$phone_badging"; then
+            echo "Sideload APK must not be debuggable: $phone_sideload" >&2
+            exit 1
+          fi
+          if grep -q '^application-debuggable' <<<"$watch_badging"; then
+            echo "Sideload APK must not be debuggable: $watch_sideload" >&2
+            exit 1
+          fi
+
+          phone_permissions="$("$aapt2" dump permissions "$phone_sideload")"
+          expected_phone_health="$(printf '%s\n' \
+            'android.permission.health.WRITE_DISTANCE' \
+            'android.permission.health.WRITE_ELEVATION_GAINED' \
+            'android.permission.health.WRITE_EXERCISE' \
+            'android.permission.health.WRITE_EXERCISE_ROUTE' \
+            'android.permission.health.WRITE_HEART_RATE' \
+            'android.permission.health.WRITE_SPEED' \
+            'android.permission.health.WRITE_STEPS' \
+            'android.permission.health.WRITE_TOTAL_CALORIES_BURNED' | sort)"
+          actual_phone_health="$(sed -n "s/^uses-permission: name='\(android\.permission\.health\.[^']*\)'.*/\1/p" <<<"$phone_permissions" | sort)"
+          test "$actual_phone_health" = "$expected_phone_health"
+
+          phone_manifest="$("$aapt2" dump xmltree --file AndroidManifest.xml "$phone_sideload")"
+          if grep -Eq 'healthconnect\.testing|HealthConnectConsentTestActivity' <<<"$phone_manifest"; then
+            echo "Sideload phone APK contains debug-only Health Connect test code" >&2
+            exit 1
+          fi
+
+          watch_permissions="$("$aapt2" dump permissions "$watch_sideload")"
+          for permission in \
+            android.permission.WAKE_LOCK \
+            android.permission.FOREGROUND_SERVICE \
+            android.permission.FOREGROUND_SERVICE_HEALTH \
+            android.permission.FOREGROUND_SERVICE_LOCATION \
+            android.permission.POST_NOTIFICATIONS \
+            android.permission.BODY_SENSORS \
+            android.permission.health.READ_HEART_RATE \
+            android.permission.ACTIVITY_RECOGNITION \
+            android.permission.ACCESS_COARSE_LOCATION \
+            android.permission.ACCESS_FINE_LOCATION \
+            android.permission.RECEIVE_BOOT_COMPLETED; do
+            grep -Fq "uses-permission: name='$permission'" <<<"$watch_permissions"
+          done
+
+          phone_debug_badging="$("$aapt2" dump badging "$phone_debug")"
+          watch_debug_badging="$("$aapt2" dump badging "$watch_debug")"
+          grep -Fqx 'application-debuggable' <<<"$phone_debug_badging"
+          grep -Fqx 'application-debuggable' <<<"$watch_debug_badging"
+          phone_debug_permissions="$("$aapt2" dump permissions "$phone_debug")"
+          for permission in \
+            android.permission.health.READ_DISTANCE \
+            android.permission.health.READ_ELEVATION_GAINED \
+            android.permission.health.READ_EXERCISE \
+            android.permission.health.READ_HEART_RATE \
+            android.permission.health.READ_SPEED \
+            android.permission.health.READ_STEPS \
+            android.permission.health.READ_TOTAL_CALORIES_BURNED; do
+            grep -Fq "uses-permission: name='$permission'" <<<"$phone_debug_permissions"
+          done
+          phone_debug_manifest="$("$aapt2" dump xmltree --file AndroidManifest.xml "$phone_debug")"
+          grep -Fq 'HealthConnectConsentTestActivity' <<<"$phone_debug_manifest"
+
+          for apk in "$phone_release" "$watch_release"; do
+            if "$apksigner" verify "$apk" >/dev/null 2>&1; then
+              echo "Release APK unexpectedly signed: $apk" >&2
+              exit 1
+            fi
+          done
+
+          phone_cert_output="$("$apksigner" verify --print-certs "$phone_sideload")"
+          watch_cert_output="$("$apksigner" verify --print-certs "$watch_sideload")"
+          phone_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$phone_cert_output")"
+          watch_cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$watch_cert_output")"
+          test -n "$phone_cert"
+          test "$watch_cert" = "$phone_cert"
+
+          echo "Validated sideload ${phone_package} ${phone_version_name} (${phone_version_code})"
+          echo "Matching public signing certificate SHA-256: $phone_cert"
 
       - name: Upload application APKs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -76,8 +202,10 @@ jobs:
           name: sport-logger-apks
           path: |
             mobile/build/outputs/apk/debug/mobile-debug.apk
+            mobile/build/outputs/apk/sideload/mobile-sideload.apk
             mobile/build/outputs/apk/release/mobile-release-unsigned.apk
             wear/build/outputs/apk/debug/wear-debug.apk
+            wear/build/outputs/apk/sideload/wear-sideload.apk
             wear/build/outputs/apk/release/wear-release-unsigned.apk
           if-no-files-found: error
           retention-days: 7

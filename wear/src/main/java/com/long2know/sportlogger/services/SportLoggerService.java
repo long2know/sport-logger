@@ -1,13 +1,11 @@
 package com.long2know.sportlogger.services;
 
-import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.location.LocationManager;
 import android.os.Binder;
@@ -24,27 +22,51 @@ import androidx.core.content.ContextCompat;
 
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
+import com.long2know.sportlogger.acquisition.ExerciseMetric;
+import com.long2know.sportlogger.acquisition.LegacyMeasurementBridge;
+import com.long2know.sportlogger.acquisition.LiveMeasurementSnapshot;
+import com.long2know.sportlogger.acquisition.MeasurementSample;
+import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
+import com.long2know.sportlogger.acquisition.RouteStatus;
+import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseManager;
+import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot;
 import com.long2know.sportlogger.measurements.AndroidLocationSource;
+import com.long2know.sportlogger.measurements.AndroidPressureSource;
 import com.long2know.sportlogger.measurements.AndroidSensorSource;
 import com.long2know.sportlogger.measurements.MeasurementEvent;
-import com.long2know.sportlogger.measurements.MeasurementRuntime;
 import com.long2know.sportlogger.measurements.ResourceFailure;
 import com.long2know.sportlogger.measurements.ResourceOwner;
+import com.long2know.sportlogger.persistence.watch.LegacyWatchMigrator;
+import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
+import com.long2know.sportlogger.recording.AndroidRecordingClock;
+import com.long2know.sportlogger.recording.CanonicalAuthorityRecordingStore;
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
+import com.long2know.sportlogger.recording.ManualLapResult;
 import com.long2know.sportlogger.recording.RecordingController;
+import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
 import com.long2know.sportlogger.recording.RecordingError;
+import com.long2know.sportlogger.recording.RecordingAuthority;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
+import com.long2know.sportlogger.recording.RecordingSessionTerminator;
+import com.long2know.sportlogger.recording.RecordingLapRecorder;
 import com.long2know.sportlogger.recording.SharedPreferencesRecordingJournal;
 import com.long2know.sportlogger.recording.SqlRecordingStore;
 import com.long2know.sportlogger.recording.WearDataLayerExporter;
+import com.long2know.sportlogger.recording.canonical.CanonicalRecordingSession;
 import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Locale;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class SportLoggerService extends Service {
     private static final String TAG = "SportLoggerService";
@@ -57,15 +79,27 @@ public final class SportLoggerService extends Service {
     private final ServiceClientRegistry<ISportLoggerServiceClient> clients =
             new ServiceClientRegistry<>();
     private final AtomicBoolean measurementDispatchScheduled = new AtomicBoolean();
+    private final AtomicReference<RouteStatus> routeStatus =
+            new AtomicReference<>(RouteStatus.UNKNOWN);
     private final Runnable idleStop = this::stopIfIdleNow;
 
     private Handler mainHandler;
     private NotificationManager notificationManager;
     private RecordingController recordingController;
-    private MeasurementRuntime measurementRuntime;
+    private ResourceOwner sensorOwner;
+    private ResourceOwner locationOwner;
+    private ResourceOwner pressureOwner;
+    private LegacyMeasurementBridge measurementBridge;
+    private HealthServicesExerciseManager healthServicesManager;
+    private CanonicalRecordingSession canonicalRecordingSession;
     private ForegroundServiceController foregroundController;
     private boolean foreground;
     private boolean locationStatusErrorReported;
+    private RecordingState lastAcquisitionState;
+    private int lastAcquisitionActivityId;
+    private int lapRecoveryActivityId;
+    private CompletedRecordingSnapshot latestCompletedSnapshot;
+    private String lastAcquisitionError = "";
 
     @Override
     public void onCreate() {
@@ -83,25 +117,6 @@ public final class SportLoggerService extends Service {
         recordingWorker.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
         Executor mainExecutor = command -> mainHandler.post(command);
 
-        try {
-            recordingController = new RecordingController(
-                    new SharedPreferencesRecordingJournal(this),
-                    new SqlRecordingStore(this),
-                    new WearDataLayerExporter(
-                            this,
-                            getString(R.string.wear_path),
-                            recordingWorker),
-                    recordingWorker,
-                    mainExecutor,
-                    System::currentTimeMillis,
-                    this::handleRecordingSnapshot,
-                    SportLoggerService::retryDelayMillis);
-        } catch (Exception error) {
-            Log.e(TAG, "Could not initialize recording controller", error);
-            stopSelf();
-            return;
-        }
-
         ResourceOwner.Listener measurementListener = new ResourceOwner.Listener() {
             @Override
             public void onEvent(MeasurementEvent event) {
@@ -113,20 +128,100 @@ public final class SportLoggerService extends Service {
                 reportResourceFailure(failure);
             }
         };
-        ResourceOwner sensorOwner = new ResourceOwner(
+        sensorOwner = new ResourceOwner(
                 "sensors",
                 new AndroidSensorSource(this),
                 newMeasurementWorker("sensors"),
                 measurementListener,
                 SportLoggerService::retryDelayMillis);
-        ResourceOwner locationOwner = new ResourceOwner(
+        locationOwner = new ResourceOwner(
                 "location",
                 new AndroidLocationSource(this),
                 newMeasurementWorker("location"),
                 measurementListener,
                 SportLoggerService::retryDelayMillis);
-        measurementRuntime = new MeasurementRuntime(sensorOwner, locationOwner);
-        measurementRuntime.startAsync();
+        pressureOwner = new ResourceOwner(
+                "pressure",
+                new AndroidPressureSource(this),
+                newMeasurementWorker("pressure"),
+                measurementListener,
+                SportLoggerService::retryDelayMillis);
+        try {
+            canonicalRecordingSession = new CanonicalRecordingSession(
+                    this,
+                    this::reportCanonicalFailure);
+            canonicalRecordingSession.observeLatestCompleted(
+                    mainExecutor,
+                    new CanonicalRecordingSession.CompletedListener() {
+                        @Override
+                        public void onChanged(
+                                @Nullable CompletedRecordingSnapshot snapshot) {
+                            latestCompletedSnapshot = snapshot;
+                            clients.dispatch(client ->
+                                    client.onLatestCompletedChanged(snapshot));
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            Log.e(TAG, "Canonical completion query failed", error);
+                        }
+                    });
+            measurementBridge = new LegacyMeasurementBridge(
+                    canonicalRecordingSession::onAcceptedSample);
+            healthServicesManager = new HealthServicesExerciseManager(
+                    this,
+                    newMeasurementWorker("health-services"),
+                    this::isPermissionGranted,
+                    this::isLocationEnabled,
+                    new HealthServicesExerciseManager.Listener() {
+                        @Override
+                        public void onSnapshot(
+                                HealthServicesExerciseSnapshot snapshot) {
+                            canonicalRecordingSession.updateCapabilities(
+                                    snapshot.getCapabilities());
+                            mainHandler.post(() ->
+                                    handleHealthServicesSnapshot(snapshot));
+                        }
+
+                        @Override
+                        public void onSample(MeasurementSample<?> sample) {
+                            applyHealthServicesSample(sample);
+                        }
+
+                        @Override
+                        public void onRouteStatus(RouteStatus status) {
+                            updateRouteStatus(status);
+                        }
+
+                        @Override
+                        public void onFailure(String message, Throwable error) {
+                            reportAcquisitionFailure(message, error);
+                        }
+                    });
+            recordingController = new RecordingController(
+                    new SharedPreferencesRecordingJournal(this),
+                    new SqlRecordingStore(this),
+                    new CanonicalAuthorityRecordingStore(this),
+                    new WearDataLayerExporter(
+                            this,
+                            getString(R.string.wear_path),
+                            recordingWorker),
+                    this::terminateRecordingSession,
+                    canonicalRecordingSession,
+                    RecordingAuthority.CANONICAL,
+                    recordingWorker,
+                    mainExecutor,
+                    new AndroidRecordingClock(this),
+                    this::handleRecordingSnapshot,
+                    SportLoggerService::retryDelayMillis);
+        } catch (Exception error) {
+            Log.e(TAG, "Could not initialize recording controller", error);
+            stopSelf();
+            return;
+        }
+
+        recordingWorker.execute(this::migrateLegacyWatchData);
+        healthServicesManager.initializeAsync();
         recordingController.recover();
     }
 
@@ -149,8 +244,20 @@ public final class SportLoggerService extends Service {
 
     @Override
     public void onDestroy() {
-        if (measurementRuntime != null) {
-            measurementRuntime.stopAsync();
+        if (sensorOwner != null) {
+            sensorOwner.stopAsync();
+        }
+        if (locationOwner != null) {
+            locationOwner.stopAsync();
+        }
+        if (pressureOwner != null) {
+            pressureOwner.stopAsync();
+        }
+        if (healthServicesManager != null) {
+            healthServicesManager.closeAsync();
+        }
+        if (canonicalRecordingSession != null) {
+            canonicalRecordingSession.close();
         }
         if (recordingController != null) {
             recordingController.closeAsync();
@@ -174,7 +281,12 @@ public final class SportLoggerService extends Service {
         if (recordingController != null) {
             client.onRecordingStateChanged(recordingController.getSnapshot());
         }
-        client.onLoggerUpdate(SharedData.getInstance());
+        if (healthServicesManager != null) {
+            client.onAcquisitionStateChanged(healthServicesManager.getSnapshot());
+        }
+        client.onLatestCompletedChanged(latestCompletedSnapshot);
+        client.onRouteStatusChanged(routeStatus.get());
+        client.onLoggerUpdate(currentLiveMeasurementSnapshot());
     }
 
     public void unregisterClient(ISportLoggerServiceClient client) {
@@ -183,11 +295,29 @@ public final class SportLoggerService extends Service {
     }
 
     public boolean startNewActivity() {
+        return startNewActivity(ActivityType.ACTIVITY_TYPE_RUNNING);
+    }
+
+    public boolean startNewActivity(ActivityType activityType) {
+        if (!RecordingActivityTypePolicy.isSupported(activityType)) {
+            reportError(
+                    RecordingError.Code.COMMAND_REJECTED.name(),
+                    "Unsupported activity type " + activityType);
+            return false;
+        }
+        if (healthServicesManager != null
+                && healthServicesManager.getSnapshot().getOwnership()
+                == HealthServicesExerciseSnapshot.Ownership.OWNED_BY_OTHER_APP) {
+            reportError(
+                    RecordingError.Code.ACQUISITION.name(),
+                    "Another app owns the active Health Services exercise");
+            return false;
+        }
         if (recordingController == null || !ensureForeground()) {
             return false;
         }
         mainHandler.removeCallbacks(idleStop);
-        boolean accepted = recordingController.start();
+        boolean accepted = recordingController.start(activityType);
         if (!accepted) {
             reportError(
                     RecordingError.Code.COMMAND_REJECTED.name(),
@@ -196,11 +326,49 @@ public final class SportLoggerService extends Service {
         return accepted;
     }
 
+    public Set<ActivityType> getSupportedActivityTypes() {
+        return RecordingActivityTypePolicy.supportedTypes();
+    }
+
+    public CompletableFuture<ManualLapResult> recordLap() {
+        RecordingController controller = recordingController;
+        if (controller == null) {
+            return CompletableFuture.completedFuture(
+                    ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            new RecordingSnapshot(
+                                    RecordingState.IDLE,
+                                    0,
+                                    0L,
+                                    null),
+                            "Recording service is not initialized"));
+        }
+        return controller.recordManualLap();
+    }
+
+    public CompletableFuture<List<CompletedRecordingSnapshot>> recentCompleted(
+            int limit) {
+        CanonicalRecordingSession session = canonicalRecordingSession;
+        if (session == null) {
+            return CompletableFuture.completedFuture(
+                    java.util.Collections.emptyList());
+        }
+        return session.recentCompleted(limit);
+    }
+
     public boolean pauseActivity() {
         return submit(recordingController == null ? false : recordingController.pause());
     }
 
     public boolean resumeActivity() {
+        if (healthServicesManager != null
+                && healthServicesManager.getSnapshot().getOwnership()
+                == HealthServicesExerciseSnapshot.Ownership.OWNED_BY_OTHER_APP) {
+            reportError(
+                    RecordingError.Code.ACQUISITION.name(),
+                    "Another app owns the active Health Services exercise");
+            return false;
+        }
         if (!ensureForeground()) {
             return false;
         }
@@ -213,6 +381,32 @@ public final class SportLoggerService extends Service {
 
     public boolean discardActivity() {
         return submit(recordingController != null && recordingController.discard());
+    }
+
+    public void refreshAcquisitionState() {
+        RecordingPermissionPolicy.RoutePermission permission =
+                RecordingPermissionPolicy.routePermission(this::isPermissionGranted);
+        if (permission == RecordingPermissionPolicy.RoutePermission.DENIED) {
+            updateRouteStatus(RouteStatus.PERMISSION_DENIED);
+        } else if (permission == RecordingPermissionPolicy.RoutePermission.APPROXIMATE_ONLY) {
+            updateRouteStatus(RouteStatus.APPROXIMATE_ONLY);
+        } else if (!isLocationEnabled()) {
+            updateRouteStatus(RouteStatus.LOCATION_DISABLED);
+        }
+
+        if (recordingController != null
+                && recordingController.getSnapshot().getState() == RecordingState.RECORDING) {
+            if (sensorOwner != null) {
+                sensorOwner.refreshAsync();
+            }
+            if (locationOwner != null) {
+                locationOwner.refreshAsync();
+            }
+        }
+        if (recordingController != null
+                && recordingController.getSnapshot().isActive()) {
+            ensureForeground();
+        }
     }
 
     private boolean submit(boolean accepted) {
@@ -229,16 +423,29 @@ public final class SportLoggerService extends Service {
         SharedData sharedData = SharedData.getInstance();
         if (state == RecordingState.RECORDING
                 && snapshot.getActivityId() > 0
-                && sharedData.getActivityId() != snapshot.getActivityId()) {
+                && measurementBridge.getLiveSnapshot().getActivityId()
+                != snapshot.getActivityId()) {
             sharedData.resetMeasurements();
+            measurementBridge.beginSession(snapshot.getActivityId());
+            dispatchLiveMeasurementSnapshot();
         }
+        if (canonicalRecordingSession != null
+                && snapshot.getAuthority() == RecordingAuthority.CANONICAL) {
+            canonicalRecordingSession.onRecordingSnapshot(snapshot);
+            recoverLapStateIfNeeded(snapshot);
+        } else if (snapshot.getState() == RecordingState.IDLE) {
+            lapRecoveryActivityId = 0;
+        }
+        synchronizeAcquisition(snapshot);
         boolean recording = state == RecordingState.STARTING
                 || state == RecordingState.RECORDING
                 || state == RecordingState.PAUSED
+                || state == RecordingState.INTERRUPTED
                 || state == RecordingState.STOPPING
                 || state == RecordingState.DISCARDING
                 || state == RecordingState.EXPORT_PENDING;
         boolean paused = state == RecordingState.PAUSED
+                || state == RecordingState.INTERRUPTED
                 || state == RecordingState.STOPPING
                 || state == RecordingState.DISCARDING
                 || state == RecordingState.EXPORT_PENDING;
@@ -252,7 +459,8 @@ public final class SportLoggerService extends Service {
             mainHandler.removeCallbacks(idleStop);
             ensureForeground();
         } else if (state == RecordingState.IDLE
-                || state == RecordingState.EXPORT_QUEUED) {
+                || state == RecordingState.EXPORT_QUEUED
+                || state == RecordingState.INTERRUPTED) {
             if (foreground) {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 foreground = false;
@@ -273,21 +481,19 @@ public final class SportLoggerService extends Service {
     }
 
     private void applyMeasurement(MeasurementEvent event) {
-        SharedData sharedData = SharedData.getInstance();
-        switch (event.getKind()) {
-            case LOCATION:
-                sharedData.setLocation(event.getLocation());
-                break;
-            case HEART_RATE:
-                sharedData.setHeartRate(event.getHeartRate());
-                break;
-            case STEPS:
-                sharedData.setSteps(event.getSteps());
-                break;
-            default:
-                throw new IllegalStateException("Unhandled measurement kind " + event.getKind());
+        if (event.getKind() == MeasurementEvent.Kind.ROUTE_STATUS) {
+            updateRouteStatus(event.getRouteStatus());
+            return;
         }
-        scheduleMeasurementDispatch();
+        if (measurementBridge.applyRaw(event)) {
+            scheduleMeasurementDispatch();
+        }
+    }
+
+    private void applyHealthServicesSample(MeasurementSample<?> sample) {
+        if (measurementBridge.applyHealthServices(sample)) {
+            scheduleMeasurementDispatch();
+        }
     }
 
     private void scheduleMeasurementDispatch() {
@@ -296,12 +502,40 @@ public final class SportLoggerService extends Service {
         }
         mainHandler.postDelayed(() -> {
             measurementDispatchScheduled.set(false);
-            clients.dispatch(client -> client.onLoggerUpdate(SharedData.getInstance()));
+            dispatchLiveMeasurementSnapshot();
         }, MEASUREMENT_UI_DELAY_MILLIS);
+    }
+
+    private LiveMeasurementSnapshot currentLiveMeasurementSnapshot() {
+        LegacyMeasurementBridge bridge = measurementBridge;
+        return bridge == null
+                ? LiveMeasurementSnapshot.empty(0)
+                : bridge.getLiveSnapshot();
+    }
+
+    private void dispatchLiveMeasurementSnapshot() {
+        LiveMeasurementSnapshot snapshot = currentLiveMeasurementSnapshot();
+        clients.dispatch(client -> client.onLoggerUpdate(snapshot));
     }
 
     private void reportResourceFailure(ResourceFailure failure) {
         Log.w(TAG, failure.getResource() + ": " + failure.getMessage());
+        if (failure.getResource().contains("location")) {
+            RouteStatus currentStatus = routeStatus.get();
+            if (failure.getCode() == ResourceFailure.Code.PERMISSION_DENIED
+                    && currentStatus != RouteStatus.APPROXIMATE_ONLY) {
+                updateRouteStatus(RouteStatus.PERMISSION_DENIED);
+            } else if (currentStatus == RouteStatus.UNKNOWN
+                    || currentStatus == RouteStatus.AVAILABLE
+                    || currentStatus == RouteStatus.ACQUIRING) {
+                updateRouteStatus(RouteStatus.UNAVAILABLE);
+            }
+            return;
+        }
+        if (failure.getCode() == ResourceFailure.Code.UNAVAILABLE
+                || failure.getCode() == ResourceFailure.Code.PERMISSION_DENIED) {
+            return;
+        }
         mainHandler.post(() -> reportError(
                 failure.getCode().name(),
                 failure.getResource() + ": " + failure.getMessage()));
@@ -387,24 +621,24 @@ public final class SportLoggerService extends Service {
             return;
         }
         locationStatusErrorReported = true;
-        reportError(RecordingError.Code.FOREGROUND.name(), message);
+        Log.w(TAG, message);
+        updateRouteStatus(RouteStatus.UNAVAILABLE);
     }
 
     private boolean hasLocationPermission() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED
-                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED;
+        return RecordingPermissionPolicy.routePermission(this::isPermissionGranted)
+                == RecordingPermissionPolicy.RoutePermission.PRECISE;
     }
 
     private boolean hasHealthPermission() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS)
-                == PackageManager.PERMISSION_GRANTED
-                || (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-                || ContextCompat.checkSelfPermission(
-                        this,
-                        Manifest.permission.ACTIVITY_RECOGNITION)
-                == PackageManager.PERMISSION_GRANTED);
+        return RecordingPermissionPolicy.hasHealthForegroundPrerequisite(
+                Build.VERSION.SDK_INT,
+                this::isPermissionGranted);
+    }
+
+    private boolean isPermissionGranted(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
     private Notification buildNotification() {
@@ -444,10 +678,262 @@ public final class SportLoggerService extends Service {
             return;
         }
         RecordingState state = recordingController.getSnapshot().getState();
-        if ((state == RecordingState.IDLE || state == RecordingState.EXPORT_QUEUED)
+        if ((state == RecordingState.IDLE
+                || state == RecordingState.EXPORT_QUEUED
+                || state == RecordingState.INTERRUPTED)
                 && clients.isEmpty()) {
             stopSelf();
         }
+    }
+
+    private void synchronizeAcquisition(RecordingSnapshot snapshot) {
+        if (sensorOwner == null
+                || locationOwner == null
+                || healthServicesManager == null) {
+            return;
+        }
+        RecordingState state = snapshot.getState();
+        int activityId = snapshot.getActivityId();
+        RecordingState previousState = lastAcquisitionState;
+        int previousActivityId = lastAcquisitionActivityId;
+
+        if (state == RecordingState.RECORDING) {
+            if (previousState == RecordingState.PAUSED
+                    || previousState == RecordingState.INTERRUPTED) {
+                healthServicesManager.resumeAsync();
+            } else if (previousState != RecordingState.RECORDING
+                    || previousActivityId != activityId) {
+                healthServicesManager.startOrRecoverAsync(
+                        activityId,
+                        snapshot.getActivityType(),
+                        previousState == null,
+                        false);
+            }
+        } else if (state == RecordingState.PAUSED) {
+            if (previousState == null) {
+                healthServicesManager.startOrRecoverAsync(
+                        activityId,
+                        snapshot.getActivityType(),
+                        true,
+                        true);
+            } else if (previousState == RecordingState.RECORDING) {
+                healthServicesManager.pauseAsync();
+            }
+        }
+        lastAcquisitionState = state;
+        lastAcquisitionActivityId = activityId;
+        updateRawFallbackOwners(state);
+    }
+
+    private void handleHealthServicesSnapshot(
+            HealthServicesExerciseSnapshot snapshot) {
+        measurementBridge.configure(snapshot.getActiveHealthServicesMetrics());
+        clients.dispatch(client -> client.onAcquisitionStateChanged(snapshot));
+        if ((snapshot.getState() == HealthServicesExerciseSnapshot.State.STARTING
+                || snapshot.getState() == HealthServicesExerciseSnapshot.State.ACTIVE)
+                && snapshot.getActiveHealthServicesMetrics()
+                .contains(ExerciseMetric.LOCATION)
+                && routeStatus.get() != RouteStatus.AVAILABLE) {
+            updateRouteStatus(RouteStatus.ACQUIRING);
+        }
+        if (snapshot.getState() == HealthServicesExerciseSnapshot.State.ACTIVE
+                || snapshot.getState() == HealthServicesExerciseSnapshot.State.READY) {
+            lastAcquisitionError = "";
+        }
+        RecordingState state = recordingController == null
+                ? RecordingState.IDLE
+                : recordingController.getSnapshot().getState();
+        updateRawFallbackOwners(state);
+    }
+
+    private void updateRawFallbackOwners(RecordingState state) {
+        if (sensorOwner == null || locationOwner == null || pressureOwner == null) {
+            return;
+        }
+        if (state != RecordingState.RECORDING) {
+            sensorOwner.suspendAsync();
+            locationOwner.suspendAsync();
+            pressureOwner.suspendAsync();
+            return;
+        }
+        if (measurementBridge.needsRawSensorSource()) {
+            sensorOwner.startAsync();
+        } else {
+            sensorOwner.suspendAsync();
+        }
+        if (measurementBridge.needsRawLocationSource()) {
+            locationOwner.startAsync();
+        } else {
+            locationOwner.suspendAsync();
+        }
+        pressureOwner.startAsync();
+    }
+
+    private void reportAcquisitionFailure(String message, Throwable error) {
+        String detail = describe(message, error);
+        Log.w(TAG, detail);
+        mainHandler.post(() -> {
+            if (detail.equals(lastAcquisitionError)) {
+                return;
+            }
+            lastAcquisitionError = detail;
+            if (recordingController != null
+                    && recordingController.getSnapshot().isActive()) {
+                reportError(RecordingError.Code.ACQUISITION.name(), detail);
+            }
+        });
+    }
+
+    private void reportCanonicalFailure(String message, Throwable error) {
+        String detail = describe(message, error);
+        Log.e(TAG, detail);
+        RecordingController controller = recordingController;
+        if (controller != null) {
+            controller.interrupt(new RecordingError(
+                    RecordingError.Code.STORAGE,
+                    detail));
+        }
+    }
+
+    private void recoverLapStateIfNeeded(RecordingSnapshot snapshot) {
+        RecordingState state = snapshot.getState();
+        if (snapshot.getActivityId() <= 0
+                || (state != RecordingState.RECORDING
+                && state != RecordingState.PAUSED
+                && state != RecordingState.INTERRUPTED)
+                || lapRecoveryActivityId == snapshot.getActivityId()) {
+            return;
+        }
+        lapRecoveryActivityId = snapshot.getActivityId();
+        canonicalRecordingSession.recover(
+                snapshot.getActivityId(),
+                new RecordingLapRecorder.Callback() {
+                    @Override
+                    public void onPersisted(RecordingLapRecorder.LapState lapState) {
+                        mainHandler.post(() -> {
+                            RecordingController controller = recordingController;
+                            if (controller == null
+                                    || !controller.restoreLapState(
+                                    snapshot.getActivityId(),
+                                    lapState)) {
+                                lapRecoveryActivityId = 0;
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(Throwable error) {
+                        mainHandler.post(() -> {
+                            lapRecoveryActivityId = 0;
+                            reportCanonicalFailure(
+                                    "Canonical lap recovery failed",
+                                    error);
+                        });
+                    }
+                });
+    }
+
+    private void migrateLegacyWatchData() {
+        if (!LegacyWatchMigrator.defaultLegacyDatabase(this).isFile()) {
+            return;
+        }
+        try (WatchActivityRepository repository = WatchActivityRepository.open(this)) {
+            new LegacyWatchMigrator(repository).migrateDefault(
+                    this,
+                    System.currentTimeMillis());
+        } catch (Exception error) {
+            Log.e(TAG, "Legacy watch migration failed", error);
+            mainHandler.post(() -> reportError(
+                    RecordingError.Code.RECOVERY.name(),
+                    describe("Legacy watch migration failed", error)));
+        }
+    }
+
+    private void terminateRecordingSession(
+            int activityId,
+            boolean preserveFinalData,
+            RecordingSnapshot finalSnapshot,
+            RecordingSessionTerminator.Callback callback) {
+        if (canonicalRecordingSession == null || healthServicesManager == null) {
+            callback.onFailure(new IllegalStateException(
+                    "Recording acquisition is not initialized"));
+            return;
+        }
+        if (finalSnapshot.getAuthority()
+                == RecordingAuthority.LEGACY_COMPATIBILITY) {
+            healthServicesManager.endSession(
+                    activityId,
+                    preserveFinalData,
+                    finalSnapshot,
+                    callback);
+            return;
+        }
+        if (!preserveFinalData) {
+            healthServicesManager.endSession(
+                    activityId,
+                    false,
+                    finalSnapshot,
+                    new RecordingSessionTerminator.Callback() {
+                        @Override
+                        public void onComplete() {
+                            canonicalRecordingSession.discard(
+                                    finalSnapshot,
+                                    callback);
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            callback.onFailure(error);
+                        }
+                    });
+            return;
+        }
+        canonicalRecordingSession.reserveCompletion(
+                finalSnapshot,
+                new RecordingSessionTerminator.Callback() {
+                    @Override
+                    public void onComplete() {
+                        healthServicesManager.endSession(
+                                activityId,
+                                true,
+                                finalSnapshot,
+                                new RecordingSessionTerminator.Callback() {
+                                    @Override
+                                    public void onComplete() {
+                                        canonicalRecordingSession.finishCompletion(
+                                                finalSnapshot,
+                                                callback);
+                                    }
+
+                                    @Override
+                                    public void onFailure(Throwable error) {
+                                        callback.onFailure(error);
+                                    }
+                                });
+                    }
+
+                    @Override
+                    public void onFailure(Throwable error) {
+                        callback.onFailure(error);
+                    }
+                });
+    }
+
+    private void updateRouteStatus(RouteStatus next) {
+        if (next == null) {
+            return;
+        }
+        RouteStatus previous = routeStatus.getAndSet(next);
+        if (previous == next) {
+            return;
+        }
+        mainHandler.post(() -> {
+            clients.dispatch(client -> client.onRouteStatusChanged(next));
+            if (recordingController != null
+                    && recordingController.getSnapshot().isActive()) {
+                ensureForeground();
+            }
+        });
     }
 
     private static ScheduledThreadPoolExecutor newMeasurementWorker(String name) {

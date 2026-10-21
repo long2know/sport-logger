@@ -17,6 +17,18 @@ public final class MeasurementRuntime {
         }
     }
 
+    public void suspendAsync() {
+        for (ResourceOwner owner : owners) {
+            owner.suspendAsync();
+        }
+    }
+
+    public void refreshAsync() {
+        for (ResourceOwner owner : owners) {
+            owner.refreshAsync();
+        }
+    }
+
     public void stopAsync() {
         for (ResourceOwner owner : owners) {
             owner.stopAsync();
