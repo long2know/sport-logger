@@ -48,6 +48,8 @@
     <string name="location">Location</string>
     <string name="grant_permissions">Grant permissions</string>
     <string name="open_app_settings">Open app settings</string>
+    <string name="health_permission_required">Health access is required to start</string>
+    <string name="health_permission_required_detail">Allow heart rate or physical activity. Route and notification access are optional.</string>
     <plurals name="permissions_missing_count">
         <item quantity="one">%1$d permission needs a decision</item>
         <item quantity="other">%1$d permissions need a decision</item>

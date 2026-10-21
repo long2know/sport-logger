@@ -155,6 +155,19 @@ enum class ConfirmationAction {
     DISCARD,
 }
 
+data class PermissionUiState(
+    val healthPrerequisiteGranted: Boolean = false,
+    val missingRequiredCount: Int = 0,
+    val missingOptionalCount: Int = 0,
+    val permanentlyDeniedCount: Int = 0,
+) {
+    val missingCount: Int
+        get() = missingRequiredCount + missingOptionalCount
+
+    val hasPermanentDenial: Boolean
+        get() = permanentlyDeniedCount > 0
+}
+
 enum class WatchDestination {
     SETUP,
     LIVE,
@@ -176,7 +189,7 @@ data class WatchUiState(
     val supportedActivities: Set<ActivityChoice> = emptySet(),
     val lapAvailable: Boolean = false,
     val lapInFlight: Boolean = false,
-    val missingPermissionCount: Int = 0,
+    val permissions: PermissionUiState = PermissionUiState(),
     val summary: WorkoutSummaryUi? = null,
     val summaryDismissed: Boolean = false,
     val confirmation: ConfirmationAction? = null,

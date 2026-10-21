@@ -1,15 +1,25 @@
 package com.long2know.sportlogger.ui
 
 import com.long2know.sportlogger.acquisition.ExerciseMetric
+import com.long2know.sportlogger.acquisition.LiveMeasurementSnapshot
+import com.long2know.sportlogger.acquisition.LocationSample
 import com.long2know.sportlogger.acquisition.MeasurementCapability
 import com.long2know.sportlogger.acquisition.MeasurementProvenance
+import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
 import com.long2know.sportlogger.recording.RecordingSnapshot
 import com.long2know.utilities.contract.proto.ActivityType
-import com.long2know.utilities.models.SharedData
 
 object WatchUiMapper {
+    fun permissions(state: RecordingPermissionPolicy.RuntimeState): PermissionUiState =
+        PermissionUiState(
+            healthPrerequisiteGranted = state.hasHealthForegroundPrerequisite(),
+            missingRequiredCount = state.missingRequiredPermissions.size,
+            missingOptionalCount = state.missingOptionalPermissions.size,
+            permanentlyDeniedCount = state.permanentlyDeniedPermissions.size,
+        )
+
     fun recording(snapshot: RecordingSnapshot): RecordingUi =
         RecordingUi(
             state = snapshot.state,
@@ -52,11 +62,10 @@ object WatchUiMapper {
     }
 
     fun liveMetrics(
-        sharedData: SharedData,
+        liveSnapshot: LiveMeasurementSnapshot,
         snapshot: HealthServicesExerciseSnapshot,
         routeStatus: RouteStatus,
     ): LiveMetricsUi {
-        val data = sharedData.data
         val capabilities = snapshot.capabilities
         val heartRate = capabilities[ExerciseMetric.HEART_RATE_BPM]
         val steps = preferredCapability(
@@ -75,23 +84,31 @@ object WatchUiMapper {
             heartRate = metric(
                 MetricId.HEART_RATE,
                 heartRate,
-                MetricValueUi.Decimal(data.HeartRate.toDouble()),
+                liveSnapshot.heartRateBpm?.let {
+                    MetricValueUi.Decimal(it.value)
+                },
+                liveSnapshot.heartRateBpm?.provenance,
             ),
             steps = metric(
                 MetricId.STEPS,
                 steps,
-                MetricValueUi.Count(data.Steps.toLong()),
+                liveSnapshot.steps?.let {
+                    MetricValueUi.Count(it.value)
+                },
+                liveSnapshot.steps?.provenance,
             ),
             distance = metric(
                 MetricId.DISTANCE,
                 distance,
-                MetricValueUi.Decimal(data.TotalDistance),
+                liveSnapshot.distanceMeters?.let {
+                    MetricValueUi.Decimal(it.value)
+                },
+                liveSnapshot.distanceMeters?.provenance,
             ),
             location = locationMetric(
                 location,
                 routeStatus,
-                data.Latitude,
-                data.Longitude,
+                liveSnapshot.location,
             ),
         )
     }
@@ -111,28 +128,36 @@ object WatchUiMapper {
     private fun metric(
         id: MetricId,
         capability: MeasurementCapability?,
-        availableValue: MetricValueUi,
+        liveValue: MetricValueUi?,
+        provenance: MeasurementProvenance?,
     ): MetricUi {
-        val availability = availability(capability)
+        val capabilityAvailability = availability(capability)
+        val availability = withoutSample(capabilityAvailability, liveValue != null)
         return MetricUi(
             id = id,
-            value = if (availability == MetricAvailabilityUi.AVAILABLE) {
-                availableValue
+            value = if (capabilityAvailability == MetricAvailabilityUi.AVAILABLE) {
+                liveValue
             } else {
                 null
             },
             availability = availability,
-            sources = sources(capability),
+            sources = if (capabilityAvailability == MetricAvailabilityUi.AVAILABLE &&
+                liveValue != null &&
+                provenance != null
+            ) {
+                listOf(sourceName(provenance))
+            } else {
+                emptyList()
+            },
         )
     }
 
     private fun locationMetric(
         capability: MeasurementCapability?,
         routeStatus: RouteStatus,
-        latitude: Double,
-        longitude: Double,
+        liveValue: LiveMeasurementSnapshot.Value<LocationSample>?,
     ): MetricUi {
-        val availability = when (routeStatus) {
+        val routeAvailability = when (routeStatus) {
             RouteStatus.AVAILABLE -> MetricAvailabilityUi.AVAILABLE
             RouteStatus.ACQUIRING -> MetricAvailabilityUi.ACQUIRING
             RouteStatus.PERMISSION_DENIED,
@@ -147,17 +172,39 @@ object WatchUiMapper {
             RouteStatus.UNAVAILABLE -> MetricAvailabilityUi.UNAVAILABLE
             RouteStatus.UNKNOWN -> availability(capability)
         }
+        val availability = withoutSample(routeAvailability, liveValue != null)
         return MetricUi(
             id = MetricId.LOCATION,
-            value = if (availability == MetricAvailabilityUi.AVAILABLE) {
-                MetricValueUi.Coordinates(latitude, longitude)
+            value = if (routeAvailability == MetricAvailabilityUi.AVAILABLE &&
+                liveValue != null
+            ) {
+                MetricValueUi.Coordinates(
+                    liveValue.value.latitude,
+                    liveValue.value.longitude,
+                )
             } else {
                 null
             },
             availability = availability,
-            sources = sources(capability),
+            sources = if (routeAvailability == MetricAvailabilityUi.AVAILABLE &&
+                liveValue != null
+            ) {
+                listOf(sourceName(liveValue.provenance))
+            } else {
+                emptyList()
+            },
         )
     }
+
+    private fun withoutSample(
+        availability: MetricAvailabilityUi,
+        hasValue: Boolean,
+    ): MetricAvailabilityUi =
+        if (!hasValue && availability == MetricAvailabilityUi.AVAILABLE) {
+            MetricAvailabilityUi.ACQUIRING
+        } else {
+            availability
+        }
 
     fun availability(capability: MeasurementCapability?): MetricAvailabilityUi {
         if (capability == null) {
@@ -198,13 +245,6 @@ object WatchUiMapper {
                 }
         }
     }
-
-    private fun sources(capability: MeasurementCapability?): List<String> =
-        capability
-            ?.activeProvenance
-            ?.sortedBy { it.ordinal }
-            ?.map(::sourceName)
-            .orEmpty()
 
     private fun sourceName(source: MeasurementProvenance): String =
         when (source) {

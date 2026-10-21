@@ -16,8 +16,13 @@ public final class LegacyMeasurementBridge {
     private final MetricSourceGate sourceGate = new MetricSourceGate();
     private final EnumSet<ExerciseMetric> activeHealthServicesMetrics =
             EnumSet.noneOf(ExerciseMetric.class);
+    private int activityId;
     private long stepTotal;
     private double distanceTotal;
+    private LiveMeasurementSnapshot.Value<Double> liveHeartRate;
+    private LiveMeasurementSnapshot.Value<Long> liveSteps;
+    private LiveMeasurementSnapshot.Value<Double> liveDistance;
+    private LiveMeasurementSnapshot.Value<LocationSample> liveLocation;
     private final SampleListener sampleListener;
 
     public LegacyMeasurementBridge() {
@@ -31,9 +36,26 @@ public final class LegacyMeasurementBridge {
     }
 
     public synchronized void beginSession() {
-        LocationData current = SharedData.getInstance().getData();
-        stepTotal = Math.max(0L, current.Steps);
-        distanceTotal = Math.max(0D, current.TotalDistance);
+        beginSession(0);
+    }
+
+    public synchronized void beginSession(int activityId) {
+        this.activityId = Math.max(0, activityId);
+        stepTotal = 0L;
+        distanceTotal = 0D;
+        liveHeartRate = null;
+        liveSteps = null;
+        liveDistance = null;
+        liveLocation = null;
+    }
+
+    public synchronized LiveMeasurementSnapshot getLiveSnapshot() {
+        return new LiveMeasurementSnapshot(
+                activityId,
+                liveHeartRate,
+                liveSteps,
+                liveDistance,
+                liveLocation);
     }
 
     public synchronized void configure(Set<ExerciseMetric> healthServicesMetrics) {
@@ -106,6 +128,7 @@ public final class LegacyMeasurementBridge {
                     return false;
                 }
                 sharedData.setHeartRate(event.getHeartRate());
+                liveHeartRate = liveValue((double) event.getHeartRate(), heartRate);
                 sampleListener.onAcceptedSample(heartRate);
                 return true;
             case STEPS:
@@ -120,6 +143,7 @@ public final class LegacyMeasurementBridge {
                 }
                 stepTotal = Math.max(stepTotal, steps.getValue());
                 sharedData.setSteps(MeasurementUnits.countToLegacyInt(stepTotal));
+                liveSteps = liveValue(stepTotal, steps);
                 sampleListener.onAcceptedSample(steps);
                 return true;
             case LOCATION:
@@ -152,25 +176,40 @@ public final class LegacyMeasurementBridge {
                 double heartRate = (Double) sample.getValue();
                 if (Double.isFinite(heartRate) && heartRate >= 0D) {
                     sharedData.setHeartRate((float) heartRate);
+                    liveHeartRate = liveValue(heartRate, sample);
                     return true;
                 }
                 return false;
             case STEPS_TOTAL:
                 stepTotal = Math.max(0L, (Long) sample.getValue());
                 sharedData.setSteps(MeasurementUnits.countToLegacyInt(stepTotal));
+                liveSteps = liveValue(stepTotal, sample);
                 return true;
             case STEPS:
                 stepTotal = saturatedAdd(stepTotal, Math.max(0L, (Long) sample.getValue()));
                 sharedData.setSteps(MeasurementUnits.countToLegacyInt(stepTotal));
+                liveSteps = liveValue(stepTotal, sample);
                 return true;
             case DISTANCE_TOTAL:
-                distanceTotal = nonNegativeFinite((Double) sample.getValue(), distanceTotal);
+                double totalCandidate = (Double) sample.getValue();
+                boolean totalIsValid =
+                        Double.isFinite(totalCandidate) && totalCandidate >= 0D;
+                distanceTotal = nonNegativeFinite(totalCandidate, distanceTotal);
                 updateDistance(sharedData, 0D, distanceTotal);
+                if (totalIsValid) {
+                    liveDistance = liveValue(distanceTotal, sample);
+                }
                 return true;
             case DISTANCE:
-                double distance = nonNegativeFinite((Double) sample.getValue(), 0D);
+                double distanceCandidate = (Double) sample.getValue();
+                boolean distanceIsValid =
+                        Double.isFinite(distanceCandidate) && distanceCandidate >= 0D;
+                double distance = nonNegativeFinite(distanceCandidate, 0D);
                 distanceTotal += distance;
                 updateDistance(sharedData, distance, distanceTotal);
+                if (distanceIsValid) {
+                    liveDistance = liveValue(distanceTotal, sample);
+                }
                 return true;
             case SPEED:
                 updateSpeed(sharedData, (Double) sample.getValue());
@@ -179,7 +218,9 @@ public final class LegacyMeasurementBridge {
                 updateElevation(sharedData, (Double) sample.getValue());
                 return true;
             case LOCATION:
-                updateLocation(sharedData, (LocationSample) sample.getValue());
+                LocationSample location = (LocationSample) sample.getValue();
+                updateLocation(sharedData, location);
+                liveLocation = liveValue(location, sample);
                 return true;
             default:
                 return true;
@@ -206,6 +247,7 @@ public final class LegacyMeasurementBridge {
             return false;
         }
         sampleListener.onAcceptedSample(sample);
+        liveLocation = liveValue(location, sample);
 
         LocationData merged = new LocationData(raw);
         if (sourceGate.selectedSource(ExerciseMetric.DISTANCE_TOTAL)
@@ -223,6 +265,9 @@ public final class LegacyMeasurementBridge {
                     MeasurementSample.Quality.LOW);
             if (sourceGate.accept(distance)) {
                 sampleListener.onAcceptedSample(distance);
+                if (Double.isFinite(distanceTotal) && distanceTotal >= 0D) {
+                    liveDistance = liveValue(distanceTotal, distance);
+                }
             }
         }
         if (sourceGate.selectedSource(ExerciseMetric.SPEED)
@@ -350,6 +395,16 @@ public final class LegacyMeasurementBridge {
 
     private static double nonNegativeFinite(double candidate, double fallback) {
         return Double.isFinite(candidate) && candidate >= 0D ? candidate : fallback;
+    }
+
+    private static <T> LiveMeasurementSnapshot.Value<T> liveValue(
+            T value,
+            MeasurementSample<?> sample) {
+        return new LiveMeasurementSnapshot.Value<>(
+                value,
+                sample.getProvenance(),
+                sample.getSequenceNanos(),
+                sample.getQuality());
     }
 
     private static long saturatedAdd(long current, long increment) {

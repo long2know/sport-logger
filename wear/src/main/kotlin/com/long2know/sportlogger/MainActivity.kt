@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.wear.ambient.AmbientLifecycleObserver
+import com.long2know.sportlogger.acquisition.LiveMeasurementSnapshot
 import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
@@ -32,15 +33,17 @@ import com.long2know.sportlogger.services.ISportLoggerServiceClient
 import com.long2know.sportlogger.services.SportLoggerService
 import com.long2know.sportlogger.sync.WatchSyncFinishHook
 import com.long2know.sportlogger.ui.ActivityChoice
+import com.long2know.sportlogger.ui.AmbientRecordingUpdatePolicy
 import com.long2know.sportlogger.ui.CanonicalSummaryMapper
 import com.long2know.sportlogger.ui.ConfirmationAction
+import com.long2know.sportlogger.ui.PermissionStartCoordinator
 import com.long2know.sportlogger.ui.ServiceClientRegistration
 import com.long2know.sportlogger.ui.ServiceConnectionState
+import com.long2know.sportlogger.ui.StartPermissionResolution
 import com.long2know.sportlogger.ui.WatchAppActions
 import com.long2know.sportlogger.ui.WatchUiMapper
 import com.long2know.sportlogger.ui.WatchUiState
 import com.long2know.sportlogger.ui.WearSportLoggerApp
-import com.long2know.utilities.models.SharedData
 
 class MainActivity :
     ComponentActivity(),
@@ -51,18 +54,19 @@ class MainActivity :
     }
     private var uiState by mutableStateOf(WatchUiState())
     private var latestRecordingSnapshot: RecordingSnapshot? = null
-    private var latestSharedData: SharedData = SharedData.getInstance()
+    private var latestLiveMeasurements = LiveMeasurementSnapshot.empty(0)
     private var service: SportLoggerService? = null
     private var bindRequested = false
     private var lapRequestInFlight = false
-    private var pendingStart: ActivityChoice? = null
+    private val permissionStartCoordinator = PermissionStartCoordinator()
     private lateinit var ambientObserver: AmbientLifecycleObserver
     private val clientRegistration = ServiceClientRegistration<SportLoggerService>(
         register = { connected -> connected.registerClient(this) },
         unregister = { connected -> connected.unregisterClient(this) },
     )
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            recordPermissionResults(result)
             updatePermissionState()
             service?.refreshAcquisitionState()
             tryStartPendingActivity()
@@ -217,8 +221,8 @@ class MainActivity :
         super.onStop()
     }
 
-    override fun onLoggerUpdate(data: SharedData) {
-        latestSharedData = data
+    override fun onLoggerUpdate(snapshot: LiveMeasurementSnapshot) {
+        latestLiveMeasurements = snapshot
         if (!uiState.ambient) {
             updateMetrics()
         }
@@ -229,18 +233,7 @@ class MainActivity :
         latestRecordingSnapshot = snapshot
         if (uiState.ambient &&
             previous != null &&
-            previous.state == snapshot.state &&
-            previous.activityId == snapshot.activityId &&
-            previous.activityType == snapshot.activityType &&
-            previous.authority == snapshot.authority &&
-            previous.currentLapIndex == snapshot.currentLapIndex &&
-            previous.lastLapElapsedDurationMillis ==
-            snapshot.lastLapElapsedDurationMillis &&
-            previous.lastLapActiveDurationMillis ==
-            snapshot.lastLapActiveDurationMillis &&
-            previous.error == snapshot.error &&
-            previous.elapsedDurationMillis / 60_000L ==
-            snapshot.elapsedDurationMillis / 60_000L
+            !AmbientRecordingUpdatePolicy.shouldApply(previous, snapshot)
         ) {
             return
         }
@@ -369,22 +362,28 @@ class MainActivity :
     }
 
     private fun startActivity(choice: ActivityChoice) {
-        val missing = missingPermissions()
-        if (missing.isNotEmpty()) {
-            pendingStart = choice
-            permissionLauncher.launch(missing.toTypedArray())
-            return
+        val permissions = currentPermissionState()
+        uiState = uiState.copy(permissions = WatchUiMapper.permissions(permissions))
+        when (val resolution =
+            permissionStartCoordinator.requestStart(choice, permissions)
+        ) {
+            is StartPermissionResolution.Start ->
+                startSelectedActivity(resolution.choice)
+
+            is StartPermissionResolution.Request ->
+                launchPermissionRequest(resolution.permissions)
+
+            StartPermissionResolution.Blocked -> Unit
         }
-        pendingStart = null
-        startSelectedActivity(choice)
     }
 
     private fun tryStartPendingActivity() {
-        val choice = pendingStart ?: return
-        if (service == null || missingPermissions().isNotEmpty()) {
-            return
-        }
-        pendingStart = null
+        val permissions = currentPermissionState()
+        uiState = uiState.copy(permissions = WatchUiMapper.permissions(permissions))
+        val choice = permissionStartCoordinator.consumePendingIfReady(
+            permissions,
+            serviceReady = service != null,
+        ) ?: return
         startSelectedActivity(choice)
     }
 
@@ -457,9 +456,10 @@ class MainActivity :
     }
 
     private fun requestMissingPermissions() {
-        val missing = missingPermissions()
-        if (missing.isNotEmpty()) {
-            permissionLauncher.launch(missing.toTypedArray())
+        val permissions = currentPermissionState()
+        uiState = uiState.copy(permissions = WatchUiMapper.permissions(permissions))
+        if (permissions.requestablePermissions.isNotEmpty()) {
+            launchPermissionRequest(permissions.requestablePermissions)
         } else {
             refreshReadiness()
         }
@@ -471,23 +471,72 @@ class MainActivity :
     }
 
     private fun updatePermissionState() {
-        uiState = uiState.copy(missingPermissionCount = missingPermissions().size)
+        uiState = uiState.copy(
+            permissions = WatchUiMapper.permissions(currentPermissionState()),
+        )
     }
 
-    private fun missingPermissions(): List<String> =
-        RecordingPermissionPolicy.runtimePermissions(
+    private fun currentPermissionState(): RecordingPermissionPolicy.RuntimeState {
+        val requested = preferences
+            .getStringSet(PREFERENCE_REQUESTED_PERMISSIONS, emptySet())
+            .orEmpty()
+            .toSet()
+        val denied = preferences
+            .getStringSet(PREFERENCE_DENIED_PERMISSIONS, emptySet())
+            .orEmpty()
+            .toSet()
+        return RecordingPermissionPolicy.runtimeState(
             Build.VERSION.SDK_INT,
             true,
             true,
-        ).filter { permission ->
-            ContextCompat.checkSelfPermission(this, permission) !=
-                PackageManager.PERMISSION_GRANTED
+            ::isPermissionGranted,
+            requested::contains,
+            denied::contains,
+            ::shouldShowRequestPermissionRationale,
+        )
+    }
+
+    private fun isPermissionGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun launchPermissionRequest(permissions: Collection<String>) {
+        val requestedNow = permissions.distinct()
+        if (requestedNow.isEmpty()) {
+            return
         }
+        val requested = preferences
+            .getStringSet(PREFERENCE_REQUESTED_PERMISSIONS, emptySet())
+            .orEmpty()
+            .toMutableSet()
+        requested.addAll(requestedNow)
+        preferences.edit {
+            putStringSet(PREFERENCE_REQUESTED_PERMISSIONS, requested)
+        }
+        permissionLauncher.launch(requestedNow.toTypedArray())
+    }
+
+    private fun recordPermissionResults(result: Map<String, Boolean>) {
+        val denied = preferences
+            .getStringSet(PREFERENCE_DENIED_PERMISSIONS, emptySet())
+            .orEmpty()
+            .toMutableSet()
+        result.forEach { (permission, granted) ->
+            if (granted) {
+                denied.remove(permission)
+            } else {
+                denied.add(permission)
+            }
+        }
+        preferences.edit {
+            putStringSet(PREFERENCE_DENIED_PERMISSIONS, denied)
+        }
+    }
 
     private fun updateMetrics() {
         uiState = uiState.copy(
             metrics = WatchUiMapper.liveMetrics(
-                latestSharedData,
+                latestLiveMeasurements,
                 uiState.acquisition,
                 uiState.routeStatus,
             ),
@@ -538,5 +587,7 @@ class MainActivity :
         private const val UI_PREFERENCES = "watch_compose_ui"
         private const val PREFERENCE_ACTIVITY = "selected_activity"
         private const val PREFERENCE_DISMISSED_SUMMARY = "dismissed_summary"
+        private const val PREFERENCE_REQUESTED_PERMISSIONS = "requested_permissions"
+        private const val PREFERENCE_DENIED_PERMISSIONS = "denied_permissions"
     }
 }

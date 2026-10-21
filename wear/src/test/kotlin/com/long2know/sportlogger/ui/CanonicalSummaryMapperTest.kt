@@ -26,6 +26,34 @@ import java.util.UUID
 
 class CanonicalSummaryMapperTest {
     @Test
+    fun missingCanonicalActiveDurationRemainsAbsent() {
+        val mapped = CanonicalSummaryMapper.map(
+            presentation(
+                ActivitySummary.getDefaultInstance(),
+                WatchActivityRepository.OUTBOX_READY,
+                activeDurationMillis = null,
+            ),
+        )
+
+        assertNull(mapped.activeDurationMillis)
+        assertEquals(60_000L, mapped.elapsedDurationMillis)
+    }
+
+    @Test
+    fun canonicalZeroActiveDurationRemainsPresent() {
+        val mapped = CanonicalSummaryMapper.map(
+            presentation(
+                ActivitySummary.getDefaultInstance(),
+                WatchActivityRepository.OUTBOX_READY,
+                activeDurationMillis = 0L,
+            ),
+        )
+
+        assertEquals(0L, mapped.activeDurationMillis)
+        assertEquals(60_000L, mapped.elapsedDurationMillis)
+    }
+
+    @Test
     fun canonicalZeroSummaryValuesRemainPresent() {
         val summary = ActivitySummary.newBuilder()
             .setDistanceM(
@@ -116,9 +144,10 @@ class CanonicalSummaryMapperTest {
     private fun presentation(
         summary: ActivitySummary,
         state: String,
+        activeDurationMillis: Long? = 58_000L,
     ): CanonicalOutboxPresentation {
         val transferId = UUID.randomUUID().toString()
-        val activity = activity(summary)
+        val activity = activity(summary, activeDurationMillis)
         val transfer = CanonicalTransfers.activityTransfer(
             transferId,
             CanonicalPayload.create(activity),
@@ -131,9 +160,22 @@ class CanonicalSummaryMapperTest {
         )
     }
 
-    private fun activity(summary: ActivitySummary): ActivityRecord {
+    private fun activity(
+        summary: ActivitySummary,
+        activeDurationMillis: Long? = 58_000L,
+    ): ActivityRecord {
         val sessionId = UUID.randomUUID().toString()
         val lapId = UUID.randomUUID().toString()
+        val lap = Lap.newBuilder()
+            .setLapId(lapId)
+            .setIndex(1)
+            .setStartTimeUtcMs(1_000L)
+            .setEndTimeUtcMs(61_000L)
+            .setElapsedDurationMs(60_000L)
+            .setTrigger(LapTrigger.LAP_TRIGGER_MANUAL)
+        if (activeDurationMillis != null) {
+            lap.activeDurationMs = activeDurationMillis
+        }
         val activity = ActivityRecord.newBuilder()
             .setSessionId(sessionId)
             .setWatchRevision(1L)
@@ -141,26 +183,18 @@ class CanonicalSummaryMapperTest {
             .setStartTimeUtcMs(1_000L)
             .setEndTimeUtcMs(61_000L)
             .setElapsedDurationMs(60_000L)
-            .setActiveDurationMs(58_000L)
             .setSummary(summary)
-            .addLaps(
-                Lap.newBuilder()
-                    .setLapId(lapId)
-                    .setIndex(1)
-                    .setStartTimeUtcMs(1_000L)
-                    .setEndTimeUtcMs(61_000L)
-                    .setElapsedDurationMs(60_000L)
-                    .setActiveDurationMs(58_000L)
-                    .setTrigger(LapTrigger.LAP_TRIGGER_MANUAL),
-            )
+            .addLaps(lap)
             .setSource(
                 SourceMetadata.newBuilder()
                     .setKind(SourceKind.SOURCE_KIND_HEALTH_SERVICES)
                     .setProvider("sportlogger")
                     .setAppContractVersion(1),
             )
-            .build()
-        return activity
+        if (activeDurationMillis != null) {
+            activity.activeDurationMs = activeDurationMillis
+        }
+        return activity.build()
     }
 
     private fun status(

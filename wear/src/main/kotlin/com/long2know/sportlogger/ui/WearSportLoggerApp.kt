@@ -51,7 +51,6 @@ import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import com.long2know.sportlogger.R
-import com.long2know.sportlogger.acquisition.MeasurementCapability
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
 import com.long2know.sportlogger.recording.RecordingState
@@ -189,24 +188,28 @@ private fun SetupScreen(
         item {
             ReadinessPanel(state)
         }
-        if (state.missingPermissionCount > 0) {
+        if (!state.permissions.healthPrerequisiteGranted) {
             item {
-                val permanentlyDenied = state.acquisition.capabilities.values.any {
-                    it.permissionState ==
-                        MeasurementCapability.PermissionState.DENIED_PERMANENTLY
-                }
+                StatusPanel(
+                    title = stringResource(R.string.health_permission_required),
+                    detail = stringResource(R.string.health_permission_required_detail),
+                )
+            }
+        }
+        if (state.permissions.missingCount > 0) {
+            item {
                 Chip(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
-                    onClick = if (permanentlyDenied) {
+                    onClick = if (state.permissions.hasPermanentDenial) {
                         actions.onOpenSettings
                     } else {
                         actions.onRequestPermissions
                     },
                     label = {
                         Text(
-                            if (permanentlyDenied) {
+                            if (state.permissions.hasPermanentDenial) {
                                 stringResource(R.string.open_app_settings)
                             } else {
                                 stringResource(R.string.grant_permissions)
@@ -217,8 +220,8 @@ private fun SetupScreen(
                         Text(
                             pluralStringResource(
                                 R.plurals.permissions_missing_count,
-                                state.missingPermissionCount,
-                                state.missingPermissionCount,
+                                state.permissions.missingCount,
+                                state.permissions.missingCount,
                             ),
                         )
                     },
@@ -526,13 +529,15 @@ private fun SummaryScreen(
                 detail = syncLabel(summary.syncState),
             )
         }
-        item {
-            SummaryMetric(
-                stringResource(R.string.active_time),
-                formatDuration(summary.activeDurationMillis ?: summary.elapsedDurationMillis),
-            )
+        summary.activeDurationMillis?.let { activeDurationMillis ->
+            item {
+                SummaryMetric(
+                    stringResource(R.string.active_time),
+                    formatDuration(activeDurationMillis),
+                )
+            }
         }
-        if (summary.activeDurationMillis != null &&
+        if (summary.activeDurationMillis == null ||
             summary.activeDurationMillis != summary.elapsedDurationMillis
         ) {
             item {

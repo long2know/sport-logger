@@ -3,6 +3,7 @@ package com.long2know.sportlogger.ui
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performRotaryScrollInput
 import androidx.compose.ui.test.performTouchInput
@@ -22,6 +24,7 @@ import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import com.long2know.sportlogger.acquisition.ExerciseMetric
 import com.long2know.sportlogger.acquisition.MeasurementCapability
+import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
 import com.long2know.sportlogger.recording.RecordingState
@@ -85,23 +88,24 @@ class WearSportLoggerAppTest {
 
     @Test
     fun permanentPermissionDenialOffersSettingsRecovery() {
-        val capability = MeasurementCapability(
-            ExerciseMetric.HEART_RATE_BPM,
-            MeasurementCapability.Support.SUPPORTED,
-            MeasurementCapability.PermissionState.DENIED_PERMANENTLY,
-            MeasurementCapability.RawHardwareState.PRESENT,
-            MeasurementCapability.VendorState.UNKNOWN,
-            MeasurementCapability.LiveAvailability.UNAVAILABLE,
-            emptySet(),
+        val requestedAndDenied = setOf(
+            RecordingPermissionPolicy.READ_HEART_RATE,
+        )
+        val derivedPermissions = RecordingPermissionPolicy.runtimeState(
+            36,
+            true,
+            true,
+            emptySet<String>()::contains,
+            requestedAndDenied::contains,
+            requestedAndDenied::contains,
+            emptySet<String>()::contains,
         )
         val state = mutableStateOf(
             WatchUiState(
                 serviceConnection = ServiceConnectionState.CONNECTED,
                 supportedActivities = ActivityChoice.entries.toSet(),
-                acquisition = readyAcquisition(
-                    mapOf(ExerciseMetric.HEART_RATE_BPM to capability),
-                ),
-                missingPermissionCount = 1,
+                acquisition = readyAcquisition(),
+                permissions = WatchUiMapper.permissions(derivedPermissions),
             ),
         )
         val recorder = ActionRecorder(state)
@@ -114,6 +118,48 @@ class WearSportLoggerAppTest {
         composeRule.onNodeWithText("Open app settings").performClick()
 
         assertEquals(1, recorder.settingsOpens)
+    }
+
+    @Test
+    fun summaryWithoutActiveDurationShowsOnlyElapsedLabel() {
+        val state = mutableStateOf(
+            WatchUiState(
+                serviceConnection = ServiceConnectionState.CONNECTED,
+                summary = summary(
+                    syncState = SyncUiState.SYNCED,
+                    activeDurationMillis = null,
+                ),
+            ),
+        )
+        val recorder = ActionRecorder(state)
+        setContent(state, recorder)
+
+        composeRule.onAllNodesWithText("Active time").assertCountEquals(0)
+        scrollUntilVisible(WatchTestTags.SUMMARY, hasText("Elapsed time"))
+        composeRule.onNodeWithText("Elapsed time").assertIsDisplayed()
+        composeRule.onNodeWithText("01:05").assertIsDisplayed()
+    }
+
+    @Test
+    fun summaryWithRealZeroActiveDurationShowsZeroAndElapsedSeparately() {
+        val state = mutableStateOf(
+            WatchUiState(
+                serviceConnection = ServiceConnectionState.CONNECTED,
+                summary = summary(
+                    syncState = SyncUiState.SYNCED,
+                    activeDurationMillis = 0L,
+                ),
+            ),
+        )
+        val recorder = ActionRecorder(state)
+        setContent(state, recorder)
+
+        scrollUntilVisible(WatchTestTags.SUMMARY, hasText("Active time"))
+        composeRule.onNodeWithText("Active time").assertIsDisplayed()
+        composeRule.onNodeWithText("00:00").assertIsDisplayed()
+        scrollUntilVisible(WatchTestTags.SUMMARY, hasText("Elapsed time"))
+        composeRule.onNodeWithText("Elapsed time").assertIsDisplayed()
+        composeRule.onNodeWithText("01:05").assertIsDisplayed()
     }
 
     @Test
@@ -291,13 +337,16 @@ class WearSportLoggerAppTest {
             routeStatus = routeStatus,
         )
 
-    private fun summary(syncState: SyncUiState): WorkoutSummaryUi =
+    private fun summary(
+        syncState: SyncUiState,
+        activeDurationMillis: Long? = 60_000L,
+    ): WorkoutSummaryUi =
         WorkoutSummaryUi(
             transferId = "transfer",
             sessionId = "session",
             activity = ActivityChoice.RUNNING,
             startTimeUtcMillis = 1L,
-            activeDurationMillis = 60_000L,
+            activeDurationMillis = activeDurationMillis,
             elapsedDurationMillis = 65_000L,
             distanceMeters = 0.0,
             steps = 0L,
