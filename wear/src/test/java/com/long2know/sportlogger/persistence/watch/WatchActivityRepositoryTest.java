@@ -144,6 +144,35 @@ public class WatchActivityRepositoryTest {
     }
 
     @Test
+    public void identicalStartReplayReturnsExistingSessionAndConflictIsRejected() {
+        WatchActivityRepository.StartRequest request =
+                WatchActivityRepository.StartRequest
+                        .builder(SESSION_ID, LEASE, 1_000L)
+                        .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                        .timeZone("America/Los_Angeles", -420)
+                        .monotonicAnchor("boot-a", 50_000L)
+                        .build();
+
+        WatchActivityRepository.SessionSnapshot first =
+                repository.startSession(request).join();
+        WatchActivityRepository.SessionSnapshot replay =
+                repository.startSession(request).join();
+
+        assertEquals(first.getSessionId(), replay.getSessionId());
+        assertEquals(first.getLeaseToken(), replay.getLeaseToken());
+        assertFutureCode(
+                "START_REPLAY_CONFLICT",
+                () -> repository.startSession(
+                                WatchActivityRepository.StartRequest
+                                        .builder(SESSION_ID, LEASE, 1_000L)
+                                        .activityType(ActivityType.ACTIVITY_TYPE_CYCLING)
+                                        .timeZone("America/Los_Angeles", -420)
+                                        .monotonicAnchor("boot-a", 50_000L)
+                                        .build())
+                        .join());
+    }
+
+    @Test
     public void conflictingFinalSampleRollsBackCompletionAndOutbox() {
         repository.startSession(
                         WatchActivityRepository.StartRequest
@@ -331,6 +360,93 @@ public class WatchActivityRepositoryTest {
                 .join()
                 .isCommittedNow());
         assertTrue(repository.pendingTombstoneOutbox(10).join().isEmpty());
+    }
+
+    @Test
+    public void reservedCompletionAndPersistedSamplesSurviveRepositoryRecreation() {
+        MeasurementSample finalSample =
+                sample(1L, 1_500L, 47D, -122D, 145D);
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .build())
+                .join();
+        repository.writeSample(SESSION_ID, LEASE, finalSample).join();
+        WatchActivityRepository.SessionSnapshot reserved =
+                repository.reserveCompletion(
+                                SESSION_ID,
+                                LEASE,
+                                1L,
+                                TRANSFER_ID,
+                                1_900L)
+                        .join();
+        assertEquals(TRANSFER_ID, reserved.getCompletionTransferId());
+        assertEquals(Long.valueOf(1L), reserved.getCompletionRevision());
+
+        WatchActivityRepository replacement =
+                new WatchActivityRepository(database, Runnable::run);
+        assertEquals(1, replacement.samples(SESSION_ID).join().size());
+        WatchActivityRepository.CompletionResult completed =
+                replacement.finishSessionFromPersistedSamples(
+                                SESSION_ID,
+                                LEASE,
+                                activity(1L, finalSample)
+                                        .toBuilder()
+                                        .clearSamples()
+                                        .build(),
+                                2_100L)
+                        .join();
+
+        assertEquals(TRANSFER_ID, completed.getOutbox().getTransferId());
+        assertEquals(1L, completed.getSession().getSampleCount());
+        assertEquals(
+                TRANSFER_ID,
+                replacement.outboxForSessionRevision(SESSION_ID, 1L)
+                        .join()
+                        .getTransferId());
+    }
+
+    @Test
+    public void incomingPhoneTombstoneSuppressesCoveredActivityAndRepeatsExactAck() {
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .build())
+                .join();
+        repository.finishSession(
+                        SESSION_ID,
+                        LEASE,
+                        activity(1L, sample(1L, 1_500L, 47D, -122D, 145D)),
+                        TRANSFER_ID,
+                        2_100L)
+                .join();
+        String phoneTombstoneTransfer = "e276dff6-10b5-48a7-a9ed-9e0b5497becd";
+        byte[] tombstone = CanonicalTransfers.tombstone(
+                        phoneTombstoneTransfer,
+                        SESSION_ID,
+                        1L,
+                        1L,
+                        TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE,
+                        2_200L)
+                .toByteArray();
+
+        WatchActivityRepository.TombstoneReceiveResult first =
+                repository.acceptTombstoneTransfer(tombstone, 2_300L).join();
+        WatchActivityRepository.TombstoneReceiveResult duplicate =
+                repository.acceptTombstoneTransfer(tombstone, 2_400L).join();
+
+        assertTrue(first.isCreated());
+        assertFalse(duplicate.isCreated());
+        assertArrayEquals(
+                first.getExactAcknowledgementBytes(),
+                duplicate.getExactAcknowledgementBytes());
+        assertEquals(
+                WatchActivityRepository.LifecycleState.DISCARDED,
+                repository.session(SESSION_ID).join().getState());
+        assertEquals(
+                "TOMBSTONED",
+                repository.outbox(TRANSFER_ID).join().getState());
+        assertTrue(repository.pendingOutbox(10).join().isEmpty());
     }
 
     private static ActivityRecord activity(long revision, MeasurementSample sample) {

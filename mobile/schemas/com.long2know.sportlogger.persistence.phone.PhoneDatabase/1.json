@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "3393f92923c8091ab6dc2efd1d6d1d50",
+    "identityHash": "d55255b8dcd42468ee7411836fc3858b",
     "entities": [
       {
         "tableName": "phone_session_heads",
@@ -531,7 +531,7 @@
       },
       {
         "tableName": "phone_tombstone_outbox",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, `commit_ack_payload` BLOB, `committed_at_utc_ms` INTEGER, PRIMARY KEY(`transfer_id`))",
         "fields": [
           {
             "fieldPath": "transferId",
@@ -613,6 +613,16 @@
             "fieldPath": "lastFailureMessage",
             "columnName": "last_failure_message",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "commitAckPayload",
+            "columnName": "commit_ack_payload",
+            "affinity": "BLOB"
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -640,6 +650,77 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_outbox_state_created_at_utc_ms` ON `${TABLE_NAME}` (`state`, `created_at_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_tombstone_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload_sha256` TEXT NOT NULL, `committed_at_utc_ms` INTEGER NOT NULL, `ack_payload` BLOB NOT NULL, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ackPayload",
+            "columnName": "ack_payload",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_tombstone_receipts_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_receipts_session_id` ON `${TABLE_NAME}` (`session_id`)"
           }
         ]
       },
@@ -1350,7 +1431,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3393f92923c8091ab6dc2efd1d6d1d50')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd55255b8dcd42468ee7411836fc3858b')"
     ]
   }
 }

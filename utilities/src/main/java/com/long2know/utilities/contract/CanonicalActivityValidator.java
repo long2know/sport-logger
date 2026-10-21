@@ -222,6 +222,11 @@ public final class CanonicalActivityValidator {
                 sample.hasSwimmingLapCount() ? sample.getSwimmingLapCount() : null,
                 "sample");
         validateNonNegative(
+                sample.hasSwimmingLapCountTotal()
+                        ? sample.getSwimmingLapCountTotal()
+                        : null,
+                "sample");
+        validateNonNegative(
                 sample.hasRepetitionCount() ? sample.getRepetitionCount() : null,
                 "sample");
         validateNonNegative(
