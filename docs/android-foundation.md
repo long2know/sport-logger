@@ -6,18 +6,29 @@ The supported baseline is the existing three-module Groovy build:
 
 | Component | Selected value |
 | --- | --- |
-| JDK | Eclipse Temurin 17 (`17.0.20.1+1` used for the clean validation) |
-| Gradle | 8.11.1, binary distribution SHA-256 pinned in the wrapper |
-| Android Gradle Plugin | 8.10.1 |
+| JDK | Eclipse Temurin 17 (`17.0.20+8` used for the clean validation) |
+| Gradle | 9.5.0, binary distribution SHA-256 pinned in the wrapper |
+| Android Gradle Plugin | 9.3.3 |
 | Android SDK / build tools | compile SDK 36 / build tools 36.0.0 |
-| Kotlin | Not applied; modules remain Java with Groovy Gradle scripts |
+| Kotlin | Built-in Kotlin is disabled per module; modules remain Java with Groovy Gradle scripts |
 | Mobile | min SDK 26 / target SDK 36 |
 | Wear | min SDK 26 / target SDK 35 |
 | Utilities | min SDK 23 |
 | Java source and bytecode | 17 |
 
 Dependencies resolve from Google Maven and Maven Central. AndroidX is enabled, Jetifier is
-disabled, and no `jcenter()` or `com.android.support.*` dependency remains.
+disabled, and no `jcenter()` or `com.android.support.*` dependency remains. AGP 9's public DSL is
+used without `android.newDsl=false` or another compatibility opt-out.
+
+AGP 9.3.1 was not retained because the official 9.3 release notes record a JDK 17 lint crash that
+was fixed in 9.3.2. Version 9.3.3 is the newest patch in the same supported line and keeps the
+documented Gradle 9.5.0 / JDK 17 / build tools 36.0.0 compatibility tuple. Wrapper integrity is
+pinned and checked in CI:
+
+- Gradle 9.5.0 binary distribution SHA-256:
+  `553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746`
+- Gradle 9.5.0 wrapper JAR SHA-256:
+  `497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7`
 
 ## Build and install
 
@@ -90,10 +101,24 @@ The clean host validation command is:
 
 ```bash
 ./gradlew clean \
-  :mobile:assembleDebug :mobile:assembleRelease \
-  :wear:assembleDebug :wear:assembleRelease \
-  test lint --no-daemon --stacktrace
+  assembleDebug assembleRelease test lint \
+  :mobile:assembleDebugAndroidTest \
+  :wear:assembleDebugAndroidTest \
+  :utilities:assembleDebugAndroidTest \
+  --no-daemon --max-workers=2 --warning-mode all --stacktrace
 ```
+
+AGP 9 creates unit-test components only for the tested build type by default. The same 32 unique
+unit-test methods therefore execute once under `testDebugUnitTest`, rather than being duplicated
+across debug and release reports for 64 executions. No test method is skipped. Android-test APKs
+compile for all three modules; device execution remains a separate gate.
+
+The upgrade validation has zero lint errors and adds no lint baseline or suppression. The current
+reports contain 73 warnings (mobile 7, Wear 64, utilities 2), including out-of-scope API 37/newer
+Gradle availability notices and existing application/resource quality findings. `--warning-mode
+all` reports no Gradle deprecation after removing the obsolete `android.nonFinalResIds=false`
+project option. Javac still emits four advisory notes for deprecated APIs in unchanged application
+sources; application code is intentionally outside this toolchain-only change.
 
 Deterministic unit tests inject blocked cleanup, registration and cleanup failures, stale and
 duplicate callbacks, missing providers, permission denial and revocation, two consecutive
