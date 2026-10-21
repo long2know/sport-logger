@@ -53,12 +53,14 @@ public class PhoneActivityRepositoryTest {
     private static final String SESSION_ID = "9acfd923-cf13-58a8-a8a5-6eaa1128f7e7";
     private static final String TRANSFER_ID = "3cd7c9ed-c702-486d-b87a-681b218641c8";
 
+    private Context context;
     private PhoneDatabase database;
     private PhoneActivityRepository repository;
+    private String fileDatabaseName;
 
     @Before
     public void setUp() {
-        Context context = ApplicationProvider.getApplicationContext();
+        context = ApplicationProvider.getApplicationContext();
         database = Room.inMemoryDatabaseBuilder(context, PhoneDatabase.class)
                 .allowMainThreadQueries()
                 .build();
@@ -67,7 +69,12 @@ public class PhoneActivityRepositoryTest {
 
     @After
     public void tearDown() {
-        database.close();
+        if (database.isOpen()) {
+            database.close();
+        }
+        if (fileDatabaseName != null) {
+            context.deleteDatabase(fileDatabaseName);
+        }
     }
 
     @Test
@@ -155,10 +162,186 @@ public class PhoneActivityRepositoryTest {
     }
 
     @Test
+    public void atomicDeleteAllocatesNextObservedRevisionAndReplaysExactOperation() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(3L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+
+        PhoneActivityRepository.LocalDeleteResult first =
+                repository.deleteLocal(SESSION_ID, 3L, 2_000L);
+        PhoneActivityRepository.LocalDeleteResult replay =
+                repository.deleteLocal(SESSION_ID, 3L, 3_000L);
+
+        assertTrue(first.isCreated());
+        assertFalse(replay.isCreated());
+        assertEquals(4L, first.getTombstone().getDeleteRevision());
+        assertEquals(3L, first.getTombstone().getCoveredSessionRevision());
+        assertEquals(
+                first.getTombstone().getTransferId(),
+                replay.getTombstone().getTransferId());
+        assertArrayEquals(first.getOutbox().getPayload(), replay.getOutbox().getPayload());
+        assertEquals(1, repository.pendingTombstoneOutbox(10).size());
+    }
+
+    @Test
+    public void atomicDeleteUsesWinningTombstoneAndCurrentHeadForNextRevision() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(5L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        byte[] priorWatchDelete = CanonicalTransfers.tombstone(
+                        "7d0df660-9a30-49bb-86a3-770f3cde787c",
+                        SESSION_ID,
+                        7L,
+                        4L,
+                        TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH,
+                        1_500L)
+                .toByteArray();
+        repository.acceptTombstoneTransfer(priorWatchDelete, 1_600L);
+
+        PhoneActivityRepository.LocalDeleteResult result =
+                repository.deleteLocal(SESSION_ID, 5L, 2_000L);
+
+        assertEquals(8L, result.getTombstone().getDeleteRevision());
+        assertEquals(5L, result.getTombstone().getCoveredSessionRevision());
+        assertEquals(
+                TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE,
+                result.getTombstone().getOrigin());
+        assertTrue(repository.summaries(0, 10).isEmpty());
+    }
+
+    @Test
+    public void staleDeleteExpectedRevisionCannotHideNewerAcceptedHead() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        PhoneActivityRepository competingRepository =
+                new PhoneActivityRepository(database);
+        competingRepository.acceptActivityTransfer(
+                transfer(
+                        "2f9a51ae-a28d-4ed3-b470-a32136cac1cc",
+                        activity(2L, sample(1L, 47.1D, -122.1D, 146D))),
+                1_500L);
+
+        assertCode(
+                "DELETE_HEAD_CHANGED",
+                () -> repository.deleteLocal(SESSION_ID, 1L, 2_000L));
+
+        assertEquals(2L, repository.summaries(0, 10).get(0).getRevision());
+        assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+    }
+
+    @Test
+    public void deleteReplayAfterDatabaseReopenReturnsExactStoredOperation() {
+        database.close();
+        fileDatabaseName = "phone-delete-replay-" + System.nanoTime() + ".db";
+        database = Room.databaseBuilder(context, PhoneDatabase.class, fileDatabaseName)
+                .allowMainThreadQueries()
+                .build();
+        repository = new PhoneActivityRepository(database);
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(3L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        PhoneActivityRepository.LocalDeleteResult first =
+                repository.deleteLocal(SESSION_ID, 3L, 2_000L);
+        byte[] exactOutbox = first.getOutbox().getPayload();
+        String transferId = first.getTombstone().getTransferId();
+
+        database.close();
+        database = Room.databaseBuilder(context, PhoneDatabase.class, fileDatabaseName)
+                .allowMainThreadQueries()
+                .build();
+        repository = new PhoneActivityRepository(database);
+        PhoneActivityRepository.LocalDeleteResult replay =
+                repository.deleteLocal(SESSION_ID, 3L, 3_000L);
+
+        assertFalse(replay.isCreated());
+        assertEquals(transferId, replay.getTombstone().getTransferId());
+        assertArrayEquals(exactOutbox, replay.getOutbox().getPayload());
+        assertEquals(1, repository.pendingTombstoneOutbox(10).size());
+    }
+
+    @Test
+    public void deleteUnsignedOverflowIsTypedAndLeavesHeadVisible() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(-1L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+
+        assertCode(
+                "DELETE_REVISION_EXHAUSTED",
+                () -> repository.deleteLocal(SESSION_ID, -1L, 2_000L));
+
+        assertEquals(-1L, repository.summaries(0, 10).get(0).getRevision());
+        assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+    }
+
+    @Test
+    public void deleteTransactionFailureRollsBackTombstoneOutboxAndHead() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        PhoneActivityRepository failingRepository =
+                new PhoneActivityRepository(
+                        database,
+                        tombstone -> {
+                            throw new SimulatedDeleteFailure();
+                        });
+
+        try {
+            failingRepository.deleteLocal(SESSION_ID, 1L, 2_000L);
+            fail("Expected simulated delete failure");
+        } catch (SimulatedDeleteFailure expected) {
+            assertEquals(1L, repository.summaries(0, 10).get(0).getRevision());
+            assertNull(database.phoneDao().tombstone(SESSION_ID));
+            assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+        }
+    }
+
+    @Test
+    public void remoteDeleteIsTypedAlreadyDeletedNotLocalReplay() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        repository.acceptTombstoneTransfer(
+                CanonicalTransfers.tombstone(
+                                "5416cacf-c8fd-4755-8781-91c7f5a9cd63",
+                                SESSION_ID,
+                                2L,
+                                1L,
+                                TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH,
+                                1_500L)
+                        .toByteArray(),
+                1_600L);
+
+        assertCode(
+                "DELETE_ALREADY_DELETED",
+                () -> repository.deleteLocal(SESSION_ID, 1L, 2_000L));
+        assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+    }
+
+    @Test
+    public void explicitLowLevelDeleteRejectsInvalidOrdering() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(3L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+
+        assertCode(
+                "DELETE_REVISION_INVALID",
+                () -> repository.deleteLocal(
+                        SESSION_ID,
+                        3L,
+                        3L,
+                        "073fe958-93f7-4715-bdf1-c45846390b57",
+                        2_000L));
+
+        assertEquals(3L, repository.summaries(0, 10).get(0).getRevision());
+        assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+    }
+
+    @Test
     public void coveredRevisionIsAcknowledgedAsTombstonedWithoutResurrection() {
         repository.deleteLocal(
                 SESSION_ID,
-                2L,
+                4L,
                 3L,
                 "bfe6b015-2188-48be-8a17-bb1e2e676604",
                 2_000L);
@@ -227,7 +410,7 @@ public class PhoneActivityRepositoryTest {
         String phoneDeleteTransfer = "528b5fc9-86dd-4b57-84a4-461fa29e59ec";
         repository.deleteLocal(
                 SESSION_ID,
-                1L,
+                2L,
                 1L,
                 phoneDeleteTransfer,
                 2_000L);
@@ -279,7 +462,7 @@ public class PhoneActivityRepositoryTest {
         assertArrayEquals(
                 first.getExactAcknowledgementBytes(),
                 duplicate.getExactAcknowledgementBytes());
-        assertEquals(AckResult.ACK_RESULT_ACCEPTED,
+        assertEquals(AckResult.ACK_RESULT_STALE,
                 first.getAcknowledgement().getResult());
         assertTrue(repository.summaries(0, 10).isEmpty());
     }
@@ -373,5 +556,8 @@ public class PhoneActivityRepositoryTest {
             result.append(value);
         }
         return result.toString();
+    }
+
+    private static final class SimulatedDeleteFailure extends RuntimeException {
     }
 }
