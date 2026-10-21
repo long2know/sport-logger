@@ -39,7 +39,7 @@ class WatchUiMapperTest {
     }
 
     @Test
-    fun rawProducerZeroValuesIncludingZeroCoordinatesRemainPresent() {
+    fun rawFallbackZeroValuesRenderFromProductionSnapshot() {
         bridge.configure(emptySet())
         bridge.applyRaw(MeasurementEvent.heartRate(1L, 0f))
         bridge.applyRaw(MeasurementEvent.steps(2L, 0))
@@ -53,19 +53,65 @@ class WatchUiMapperTest {
                 },
             ),
         )
-        val snapshot = snapshot(
-            capability(ExerciseMetric.HEART_RATE_BPM),
-            capability(ExerciseMetric.STEPS_TOTAL),
-            capability(ExerciseMetric.DISTANCE_TOTAL),
-            capability(ExerciseMetric.LOCATION),
+        val liveSnapshot = bridge.liveSnapshot
+        val acquisition = rawFallbackSnapshot(
+            rawFallbackCapability(
+                ExerciseMetric.HEART_RATE_BPM,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.STEPS_TOTAL,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.DISTANCE_TOTAL,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.LOCATION,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
         )
 
         val metrics = WatchUiMapper.liveMetrics(
-            bridge.liveSnapshot,
-            snapshot,
-            RouteStatus.AVAILABLE,
+            liveSnapshot,
+            acquisition,
+            RouteStatus.UNKNOWN,
         )
 
+        assertEquals(71, liveSnapshot.activityId)
+        assertEquals(
+            MeasurementProvenance.RAW_PLATFORM,
+            liveSnapshot.heartRateBpm?.provenance,
+        )
+        assertEquals(
+            MeasurementSample.Quality.UNKNOWN,
+            liveSnapshot.heartRateBpm?.quality,
+        )
+        assertEquals(
+            MeasurementProvenance.RAW_PLATFORM,
+            liveSnapshot.steps?.provenance,
+        )
+        assertEquals(
+            MeasurementSample.Quality.UNKNOWN,
+            liveSnapshot.steps?.quality,
+        )
+        assertEquals(
+            MeasurementProvenance.DERIVED,
+            liveSnapshot.distanceMeters?.provenance,
+        )
+        assertEquals(
+            MeasurementSample.Quality.LOW,
+            liveSnapshot.distanceMeters?.quality,
+        )
+        assertEquals(
+            MeasurementProvenance.RAW_PLATFORM,
+            liveSnapshot.location?.provenance,
+        )
+        assertEquals(
+            MeasurementSample.Quality.UNKNOWN,
+            liveSnapshot.location?.quality,
+        )
         assertEquals(
             MetricValueUi.Decimal(0.0),
             metrics.heartRate.value,
@@ -82,10 +128,240 @@ class WatchUiMapperTest {
             MetricValueUi.Coordinates(0.0, 0.0),
             metrics.location.value,
         )
+        assertEquals(MetricAvailabilityUi.AVAILABLE, metrics.heartRate.availability)
+        assertEquals(MetricAvailabilityUi.AVAILABLE, metrics.steps.availability)
+        assertEquals(MetricAvailabilityUi.AVAILABLE, metrics.distance.availability)
+        assertEquals(MetricAvailabilityUi.AVAILABLE, metrics.location.availability)
         assertEquals(listOf("Watch sensor"), metrics.heartRate.sources)
         assertEquals(listOf("Watch sensor"), metrics.steps.sources)
         assertEquals(listOf("Derived"), metrics.distance.sources)
         assertEquals(listOf("Watch sensor"), metrics.location.sources)
+    }
+
+    @Test
+    fun rawFallbackNonZeroValuesDoNotDependOnZeroHeuristics() {
+        bridge.configure(emptySet())
+        bridge.applyRaw(MeasurementEvent.heartRate(10L, 137f))
+        bridge.applyRaw(MeasurementEvent.steps(11L, 42))
+        bridge.applyRaw(
+            MeasurementEvent.location(
+                12L,
+                LocationData().apply {
+                    Latitude = 47.6205
+                    Longitude = -122.3493
+                    TotalDistance = 125.5
+                },
+            ),
+        )
+        val acquisition = rawFallbackSnapshot(
+            rawFallbackCapability(
+                ExerciseMetric.HEART_RATE_BPM,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.STEPS_TOTAL,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.DISTANCE_TOTAL,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.LOCATION,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
+        )
+
+        val metrics = WatchUiMapper.liveMetrics(
+            bridge.liveSnapshot,
+            acquisition,
+            RouteStatus.UNKNOWN,
+        )
+
+        assertEquals(MetricValueUi.Decimal(137.0), metrics.heartRate.value)
+        assertEquals(MetricValueUi.Count(42L), metrics.steps.value)
+        assertEquals(MetricValueUi.Decimal(125.5), metrics.distance.value)
+        assertEquals(
+            MetricValueUi.Coordinates(47.6205, -122.3493),
+            metrics.location.value,
+        )
+        assertEquals(listOf("Watch sensor"), metrics.heartRate.sources)
+        assertEquals(listOf("Watch sensor"), metrics.steps.sources)
+        assertEquals(listOf("Derived"), metrics.distance.sources)
+        assertEquals(listOf("Watch sensor"), metrics.location.sources)
+    }
+
+    @Test
+    fun rawFallbackWithoutSamplesDoesNotFabricateZeroes() {
+        val acquisition = rawFallbackSnapshot(
+            rawFallbackCapability(
+                ExerciseMetric.HEART_RATE_BPM,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.STEPS_TOTAL,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.DISTANCE_TOTAL,
+                support = MeasurementCapability.Support.UNSUPPORTED,
+            ),
+            rawFallbackCapability(
+                ExerciseMetric.LOCATION,
+                support = MeasurementCapability.Support.UNKNOWN,
+            ),
+        )
+
+        val metrics = WatchUiMapper.liveMetrics(
+            bridge.liveSnapshot,
+            acquisition,
+            RouteStatus.UNKNOWN,
+        )
+
+        assertNull(metrics.heartRate.value)
+        assertNull(metrics.steps.value)
+        assertNull(metrics.distance.value)
+        assertNull(metrics.location.value)
+        assertEquals(MetricAvailabilityUi.UNSUPPORTED, metrics.heartRate.availability)
+        assertEquals(MetricAvailabilityUi.CHECKING, metrics.steps.availability)
+        assertEquals(MetricAvailabilityUi.UNSUPPORTED, metrics.distance.availability)
+        assertEquals(MetricAvailabilityUi.CHECKING, metrics.location.availability)
+        assertEquals(emptyList<String>(), metrics.heartRate.sources)
+        assertEquals(emptyList<String>(), metrics.steps.sources)
+        assertEquals(emptyList<String>(), metrics.distance.sources)
+        assertEquals(emptyList<String>(), metrics.location.sources)
+    }
+
+    @Test
+    fun explicitReadinessBlockersStillHideRawFallbackValue() {
+        bridge.configure(emptySet())
+        bridge.applyRaw(MeasurementEvent.heartRate(20L, 129f))
+        val liveSnapshot = bridge.liveSnapshot
+
+        val permissionDenied = WatchUiMapper.liveMetrics(
+            liveSnapshot,
+            rawFallbackSnapshot(
+                rawFallbackCapability(
+                    ExerciseMetric.HEART_RATE_BPM,
+                    permission = MeasurementCapability.PermissionState.DENIED,
+                ),
+            ),
+            RouteStatus.UNKNOWN,
+        )
+        val offBody = WatchUiMapper.liveMetrics(
+            liveSnapshot,
+            rawFallbackSnapshot(
+                rawFallbackCapability(
+                    ExerciseMetric.HEART_RATE_BPM,
+                    live = MeasurementCapability.LiveAvailability
+                        .UNAVAILABLE_DEVICE_OFF_BODY,
+                ),
+            ),
+            RouteStatus.UNKNOWN,
+        )
+        val unavailable = WatchUiMapper.liveMetrics(
+            liveSnapshot,
+            rawFallbackSnapshot(
+                rawFallbackCapability(
+                    ExerciseMetric.HEART_RATE_BPM,
+                    live = MeasurementCapability.LiveAvailability.UNAVAILABLE,
+                ),
+            ),
+            RouteStatus.UNKNOWN,
+        )
+
+        assertNull(permissionDenied.heartRate.value)
+        assertEquals(
+            MetricAvailabilityUi.PERMISSION_DENIED,
+            permissionDenied.heartRate.availability,
+        )
+        assertEquals(emptyList<String>(), permissionDenied.heartRate.sources)
+        assertNull(offBody.heartRate.value)
+        assertEquals(MetricAvailabilityUi.OFF_BODY, offBody.heartRate.availability)
+        assertEquals(emptyList<String>(), offBody.heartRate.sources)
+        assertNull(unavailable.heartRate.value)
+        assertEquals(MetricAvailabilityUi.UNAVAILABLE, unavailable.heartRate.availability)
+        assertEquals(emptyList<String>(), unavailable.heartRate.sources)
+    }
+
+    @Test
+    fun explicitRouteUnavailabilityStillHidesRawLocationValue() {
+        bridge.configure(emptySet())
+        bridge.applyRaw(
+            MeasurementEvent.location(
+                21L,
+                LocationData().apply {
+                    Latitude = 0.0
+                    Longitude = 0.0
+                    TotalDistance = 0.0
+                },
+            ),
+        )
+
+        val metrics = WatchUiMapper.liveMetrics(
+            bridge.liveSnapshot,
+            rawFallbackSnapshot(
+                rawFallbackCapability(
+                    ExerciseMetric.LOCATION,
+                    support = MeasurementCapability.Support.UNKNOWN,
+                ),
+            ),
+            RouteStatus.UNAVAILABLE,
+        )
+
+        assertNull(metrics.location.value)
+        assertEquals(MetricAvailabilityUi.UNAVAILABLE, metrics.location.availability)
+        assertEquals(emptyList<String>(), metrics.location.sources)
+    }
+
+    @Test
+    fun unreliableLiveValueDoesNotOverrideReadiness() {
+        bridge.configure(setOf(ExerciseMetric.HEART_RATE_BPM))
+        bridge.applyHealthServices(
+            MeasurementSample(
+                ExerciseMetric.HEART_RATE_BPM,
+                131.0,
+                22L,
+                MeasurementProvenance.HEALTH_SERVICES,
+                MeasurementSample.Quality.UNRELIABLE,
+            ),
+        )
+
+        val metrics = WatchUiMapper.liveMetrics(
+            bridge.liveSnapshot,
+            snapshot(capability(ExerciseMetric.HEART_RATE_BPM)),
+            RouteStatus.UNKNOWN,
+        )
+
+        assertEquals(
+            MeasurementSample.Quality.UNRELIABLE,
+            bridge.liveSnapshot.heartRateBpm?.quality,
+        )
+        assertNull(metrics.heartRate.value)
+        assertEquals(MetricAvailabilityUi.ACQUIRING, metrics.heartRate.availability)
+        assertEquals(emptyList<String>(), metrics.heartRate.sources)
+    }
+
+    @Test
+    fun newSessionIdentityDoesNotReusePreviousLiveValue() {
+        bridge.configure(emptySet())
+        bridge.applyRaw(MeasurementEvent.heartRate(23L, 126f))
+        bridge.beginSession(72)
+
+        val current = bridge.liveSnapshot
+        val metrics = WatchUiMapper.liveMetrics(
+            current,
+            rawFallbackSnapshot(
+                rawFallbackCapability(ExerciseMetric.HEART_RATE_BPM),
+            ),
+            RouteStatus.UNKNOWN,
+        )
+
+        assertEquals(72, current.activityId)
+        assertNull(current.heartRateBpm)
+        assertNull(metrics.heartRate.value)
+        assertEquals(MetricAvailabilityUi.UNSUPPORTED, metrics.heartRate.availability)
+        assertEquals(emptyList<String>(), metrics.heartRate.sources)
     }
 
     @Test
@@ -297,6 +573,17 @@ class WatchUiMapperTest {
             "",
         )
 
+    private fun rawFallbackSnapshot(
+        vararg capabilities: MeasurementCapability,
+    ): HealthServicesExerciseSnapshot =
+        HealthServicesExerciseSnapshot(
+            HealthServicesExerciseSnapshot.State.RAW_FALLBACK,
+            HealthServicesExerciseSnapshot.Ownership.NONE,
+            capabilities.associateBy { it.metric },
+            emptySet(),
+            "",
+        )
+
     private fun capability(
         metric: ExerciseMetric,
         support: MeasurementCapability.Support = MeasurementCapability.Support.SUPPORTED,
@@ -315,5 +602,25 @@ class WatchUiMapperTest {
             MeasurementCapability.VendorState.UNKNOWN,
             live,
             setOf(MeasurementProvenance.HEALTH_SERVICES),
+        )
+
+    private fun rawFallbackCapability(
+        metric: ExerciseMetric,
+        support: MeasurementCapability.Support = MeasurementCapability.Support.UNSUPPORTED,
+        permission: MeasurementCapability.PermissionState =
+            MeasurementCapability.PermissionState.GRANTED,
+        raw: MeasurementCapability.RawHardwareState =
+            MeasurementCapability.RawHardwareState.PRESENT,
+        live: MeasurementCapability.LiveAvailability =
+            MeasurementCapability.LiveAvailability.UNKNOWN,
+    ): MeasurementCapability =
+        MeasurementCapability(
+            metric,
+            support,
+            permission,
+            raw,
+            MeasurementCapability.VendorState.UNAVAILABLE,
+            live,
+            emptySet(),
         )
 }
