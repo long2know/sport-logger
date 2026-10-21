@@ -11,6 +11,7 @@ import android.widget.TextView;
 
 import androidx.fragment.app.Fragment;
 
+import com.long2know.sportlogger.acquisition.RouteStatus;
 import com.long2know.utilities.models.Config;
 import com.long2know.utilities.models.LocationData;
 import com.long2know.utilities.models.SharedData;
@@ -24,6 +25,8 @@ public class SensorFragment extends Fragment {
     private TextView _totalDistance;
     private TextView _steps;
     private TextView _duration;
+    private TextView _routeStatus;
+    private RouteStatus routeStatus = RouteStatus.UNKNOWN;
 
     public SensorFragment() {
     }
@@ -39,6 +42,8 @@ public class SensorFragment extends Fragment {
         _totalDistance = rootView.findViewById(R.id.totalDistance);
         _steps = rootView.findViewById(R.id.steps);
         _duration = rootView.findViewById(R.id.tvTimer);
+        _routeStatus = rootView.findViewById(R.id.routeStatus);
+        renderRouteStatus();
 
         if (SharedData.getInstance().isRecording()) {
             refresh();
@@ -81,6 +86,46 @@ public class SensorFragment extends Fragment {
     public void resetTimer() {
         if (_duration != null) {
             _duration.setText("00:00:00");
+        }
+    }
+
+    public void setRouteStatus(RouteStatus status) {
+        routeStatus = status == null ? RouteStatus.UNKNOWN : status;
+        renderRouteStatus();
+    }
+
+    private void renderRouteStatus() {
+        if (_routeStatus == null) {
+            return;
+        }
+        if (!routeStatus.shouldShowBanner()) {
+            _routeStatus.setVisibility(View.GONE);
+            return;
+        }
+        _routeStatus.setVisibility(View.VISIBLE);
+        switch (routeStatus) {
+            case ACQUIRING:
+                _routeStatus.setText(R.string.route_status_acquiring);
+                break;
+            case LOCATION_DISABLED:
+                _routeStatus.setText(R.string.route_status_location_disabled);
+                break;
+            case PERMISSION_DENIED:
+                _routeStatus.setText(R.string.route_status_permission_denied);
+                break;
+            case APPROXIMATE_ONLY:
+                _routeStatus.setText(R.string.route_status_approximate_only);
+                break;
+            case NO_GNSS:
+                _routeStatus.setText(R.string.route_status_no_gnss);
+                break;
+            case NO_COMPATIBLE_PROVIDER:
+                _routeStatus.setText(R.string.route_status_no_provider);
+                break;
+            case UNAVAILABLE:
+            default:
+                _routeStatus.setText(R.string.route_status_unavailable);
+                break;
         }
     }
 

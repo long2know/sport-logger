@@ -8,8 +8,10 @@ public final class RecordingError {
         DURABILITY,
         STORAGE,
         EXPORT,
+        ACQUISITION,
         FOREGROUND,
-        RECOVERY
+        RECOVERY,
+        BOOT_INTERRUPTION
     }
 
     private final Code code;

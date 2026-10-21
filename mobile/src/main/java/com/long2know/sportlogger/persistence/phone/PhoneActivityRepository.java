@@ -50,19 +50,35 @@ public final class PhoneActivityRepository implements AutoCloseable {
     private final PhoneDatabase database;
     private final PhoneDao dao;
     private final boolean ownsDatabase;
+    private final DeleteFaultInjector deleteFaultInjector;
 
     public PhoneActivityRepository(PhoneDatabase database) {
-        this(database, false);
+        this(database, false, tombstone -> {
+        });
     }
 
-    private PhoneActivityRepository(PhoneDatabase database, boolean ownsDatabase) {
+    PhoneActivityRepository(
+            PhoneDatabase database,
+            DeleteFaultInjector deleteFaultInjector) {
+        this(database, false, deleteFaultInjector);
+    }
+
+    private PhoneActivityRepository(
+            PhoneDatabase database,
+            boolean ownsDatabase,
+            DeleteFaultInjector deleteFaultInjector) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.phoneDao();
         this.ownsDatabase = ownsDatabase;
+        this.deleteFaultInjector = Objects.requireNonNull(deleteFaultInjector);
     }
 
     public static PhoneActivityRepository open(Context context) {
-        return new PhoneActivityRepository(PhoneDatabase.open(context), true);
+        return new PhoneActivityRepository(
+                PhoneDatabase.open(context),
+                true,
+                tombstone -> {
+                });
     }
 
     public AcceptResult acceptActivityTransfer(byte[] transferBytes, long committedAtUtcMs) {
@@ -213,47 +229,123 @@ public final class PhoneActivityRepository implements AutoCloseable {
         return () -> database.getInvalidationTracker().removeObserver(observer);
     }
 
+    public LocalDeleteResult deleteLocal(
+            String sessionId,
+            long expectedAcceptedRevision,
+            long deletedAtUtcMs) {
+        CanonicalIds.requireUuid(sessionId, "Session identifier");
+        return database.runInTransaction(() -> {
+            PhoneSessionHeadEntity head = dao.head(sessionId);
+            if (head == null) {
+                throw new CanonicalContractException(
+                        "DELETE_SESSION_NOT_FOUND",
+                        "Cannot delete a session that has not been accepted");
+            }
+            PhoneTombstoneEntity current = dao.tombstone(sessionId);
+            if (head.acceptedRevision != expectedAcceptedRevision) {
+                throw new CanonicalContractException(
+                        "DELETE_HEAD_CHANGED",
+                        "Accepted session revision changed before delete commit");
+            }
+            if (head.deleted) {
+                if (current == null
+                        || Long.compareUnsigned(
+                        current.coveredSessionRevision,
+                        expectedAcceptedRevision) < 0) {
+                    throw new CanonicalContractException(
+                            "DELETE_STATE_INCONSISTENT",
+                            "Deleted session has no covering tombstone");
+                }
+                if (current.origin != TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE_VALUE
+                        || current.coveredSessionRevision != expectedAcceptedRevision) {
+                    throw new CanonicalContractException(
+                            "DELETE_ALREADY_DELETED",
+                            "Session was deleted by a different canonical tombstone");
+                }
+                TombstoneRecord tombstone =
+                        CanonicalTransfers.parseTombstone(current.payload).getTombstone();
+                PhoneTombstoneOutboxEntity outbox =
+                        dao.tombstoneOutbox(current.transferId);
+                if (outbox == null) {
+                    throw new CanonicalContractException(
+                            "DELETE_STATE_INCONSISTENT",
+                            "Local tombstone replay has no durable outbox");
+                }
+                return new LocalDeleteResult(
+                        tombstone,
+                        tombstoneOutbox(outbox),
+                        false);
+            }
+            long deleteRevision = nextDeleteRevision(
+                    expectedAcceptedRevision,
+                    current);
+            String transferId = CanonicalIds.newTransferId();
+            TombstoneRecord tombstone = CanonicalTransfers.tombstone(
+                    transferId,
+                    sessionId,
+                    deleteRevision,
+                    head.acceptedRevision,
+                    TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE,
+                    deletedAtUtcMs);
+            PhoneTombstoneOutboxEntity outbox = persistLocalDelete(
+                    tombstone,
+                    head,
+                    deletedAtUtcMs);
+            return new LocalDeleteResult(
+                    tombstone,
+                    tombstoneOutbox(outbox),
+                    true);
+        });
+    }
+
+    @Deprecated
     public TombstoneRecord deleteLocal(
             String sessionId,
             long deleteRevision,
             long coveredRevision,
             String transferId,
             long deletedAtUtcMs) {
-        TombstoneRecord tombstone = CanonicalTransfers.tombstone(
-                transferId,
-                sessionId,
-                deleteRevision,
-                coveredRevision,
-                TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE,
-                deletedAtUtcMs);
-        database.runInTransaction(() -> {
-            byte[] bytes = tombstone.toByteArray();
-            String hash = sha256Hex(bytes);
-            PhoneTombstoneEntity stored = new PhoneTombstoneEntity();
-            stored.sessionId = sessionId;
-            stored.deleteRevision = deleteRevision;
-            stored.coveredSessionRevision = coveredRevision;
-            stored.origin = tombstone.getOriginValue();
-            stored.transferId = transferId;
-            stored.deletedAtUtcMs = deletedAtUtcMs;
-            stored.payload = bytes;
-            stored.payloadSha256 = hash;
-            dao.putTombstone(stored);
-
-            PhoneTombstoneOutboxEntity outbox = new PhoneTombstoneOutboxEntity();
-            outbox.transferId = transferId;
-            outbox.sessionId = sessionId;
-            outbox.deleteRevision = deleteRevision;
-            outbox.coveredSessionRevision = coveredRevision;
-            outbox.origin = tombstone.getOriginValue();
-            outbox.payload = bytes;
-            outbox.payloadSha256 = hash;
-            outbox.payloadLength = bytes.length;
-            outbox.state = TOMBSTONE_READY;
-            outbox.createdAtUtcMs = deletedAtUtcMs;
-            dao.insertTombstoneOutbox(outbox);
-
+        return database.runInTransaction(() -> {
             PhoneSessionHeadEntity head = dao.head(sessionId);
+            PhoneTombstoneOutboxEntity existing = dao.tombstoneOutbox(transferId);
+            if (existing != null) {
+                TombstoneRecord existingTombstone =
+                        CanonicalTransfers.parseTombstone(existing.payload).getTombstone();
+                if (!existingTombstone.getSessionId().equals(sessionId)
+                        || existingTombstone.getDeleteRevision() != deleteRevision
+                        || existingTombstone.getCoveredSessionRevision() != coveredRevision) {
+                    throw new CanonicalContractException(
+                            "TRANSFER_ID_REUSED",
+                            "Delete transfer identifier already stores different values");
+                }
+                return existingTombstone;
+            }
+            if (head != null && head.acceptedRevision != coveredRevision) {
+                throw new CanonicalContractException(
+                        "DELETE_HEAD_CHANGED",
+                        "Explicit tombstone no longer covers the accepted session revision");
+            }
+            if (head != null && head.deleted) {
+                throw new CanonicalContractException(
+                        "DELETE_ALREADY_DELETED",
+                        "Explicit delete cannot replace an already deleted head");
+            }
+            PhoneTombstoneEntity current = dao.tombstone(sessionId);
+            long expectedDeleteRevision = nextDeleteRevision(
+                    coveredRevision,
+                    current);
+            if (deleteRevision != expectedDeleteRevision) {
+                throw new CanonicalContractException(
+                        "DELETE_REVISION_INVALID",
+                        "Explicit delete revision must advance the greatest observed revision");
+            }
+            TombstoneRecord tombstone = CanonicalTransfers.tombstone(
+                    transferId,
+                    sessionId,
+                    deleteRevision,
+                    coveredRevision,
+                    TombstoneOrigin.TOMBSTONE_ORIGIN_PHONE,
+                    deletedAtUtcMs);
             if (head == null) {
                 head = new PhoneSessionHeadEntity();
                 head.sessionId = sessionId;
@@ -261,12 +353,76 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 head.transferState = "TOMBSTONED";
                 head.importHealth = IMPORT_COMPLETE;
             }
-            head.deleted = true;
-            head.transferState = "TOMBSTONED";
-            head.updatedAtUtcMs = deletedAtUtcMs;
-            dao.putHead(head);
+            persistLocalDelete(tombstone, head, deletedAtUtcMs);
+            return tombstone;
         });
-        return tombstone;
+    }
+
+    private PhoneTombstoneOutboxEntity persistLocalDelete(
+            TombstoneRecord tombstone,
+            PhoneSessionHeadEntity head,
+            long deletedAtUtcMs) {
+        PhoneTombstoneEntity current = dao.tombstone(tombstone.getSessionId());
+        if (current != null) {
+            TombstoneRecord currentRecord =
+                    CanonicalTransfers.parseTombstone(current.payload).getTombstone();
+            int order = CanonicalTransfers.compareTombstoneOrder(tombstone, currentRecord);
+            if (order <= 0) {
+                throw new CanonicalContractException(
+                        "DELETE_ORDER_STALE",
+                        "Local tombstone does not advance the winning delete order");
+            }
+        }
+        byte[] bytes = tombstone.toByteArray();
+        String hash = sha256Hex(bytes);
+        PhoneTombstoneEntity stored = new PhoneTombstoneEntity();
+        stored.sessionId = tombstone.getSessionId();
+        stored.deleteRevision = tombstone.getDeleteRevision();
+        stored.coveredSessionRevision = tombstone.getCoveredSessionRevision();
+        stored.origin = tombstone.getOriginValue();
+        stored.transferId = tombstone.getTransferId();
+        stored.deletedAtUtcMs = tombstone.getDeletedAtUtcMs();
+        stored.payload = bytes;
+        stored.payloadSha256 = hash;
+        dao.putTombstone(stored);
+        deleteFaultInjector.afterTombstoneStored(tombstone);
+
+        PhoneTombstoneOutboxEntity outbox = new PhoneTombstoneOutboxEntity();
+        outbox.transferId = tombstone.getTransferId();
+        outbox.sessionId = tombstone.getSessionId();
+        outbox.deleteRevision = tombstone.getDeleteRevision();
+        outbox.coveredSessionRevision = tombstone.getCoveredSessionRevision();
+        outbox.origin = tombstone.getOriginValue();
+        outbox.payload = bytes;
+        outbox.payloadSha256 = hash;
+        outbox.payloadLength = bytes.length;
+        outbox.state = TOMBSTONE_READY;
+        outbox.createdAtUtcMs = deletedAtUtcMs;
+        dao.insertTombstoneOutbox(outbox);
+
+        head.deleted = true;
+        head.transferState = "TOMBSTONED";
+        head.updatedAtUtcMs = deletedAtUtcMs;
+        dao.putHead(head);
+        return outbox;
+    }
+
+    private static long nextDeleteRevision(
+            long acceptedRevision,
+            PhoneTombstoneEntity current) {
+        long greatestObserved = acceptedRevision;
+        if (current != null
+                && Long.compareUnsigned(
+                current.deleteRevision,
+                greatestObserved) > 0) {
+            greatestObserved = current.deleteRevision;
+        }
+        if (greatestObserved == -1L) {
+            throw new CanonicalContractException(
+                    "DELETE_REVISION_EXHAUSTED",
+                    "Delete revision cannot advance beyond unsigned 64-bit maximum");
+        }
+        return greatestObserved + 1L;
     }
 
     public TombstoneOutboxItem tombstoneOutbox(String transferId) {
@@ -1144,6 +1300,37 @@ public final class PhoneActivityRepository implements AutoCloseable {
         UNKNOWN_DELIVERY,
         DUPLICATE_REVIEW,
         FAILED
+    }
+
+    interface DeleteFaultInjector {
+        void afterTombstoneStored(TombstoneRecord tombstone);
+    }
+
+    public static final class LocalDeleteResult {
+        private final TombstoneRecord tombstone;
+        private final TombstoneOutboxItem outbox;
+        private final boolean created;
+
+        private LocalDeleteResult(
+                TombstoneRecord tombstone,
+                TombstoneOutboxItem outbox,
+                boolean created) {
+            this.tombstone = tombstone;
+            this.outbox = outbox;
+            this.created = created;
+        }
+
+        public TombstoneRecord getTombstone() {
+            return tombstone;
+        }
+
+        public TombstoneOutboxItem getOutbox() {
+            return outbox;
+        }
+
+        public boolean isCreated() {
+            return created;
+        }
     }
 
     public static final class TombstoneOutboxItem {

@@ -58,7 +58,7 @@ public class PhoneTombstoneSyncHookTest {
     public void deletionHookBroadcastsQueuedStateAndSchedulesRecovery() {
         repository.deleteLocal(
                 SESSION_ID,
-                1L,
+                2L,
                 1L,
                 TRANSFER_ID,
                 2_000L);

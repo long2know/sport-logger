@@ -1,6 +1,5 @@
 package com.long2know.sportlogger;
 
-import android.Manifest;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -23,6 +22,9 @@ import androidx.wear.ambient.AmbientModeSupport;
 import androidx.wear.widget.drawer.WearableActionDrawerView;
 import androidx.wear.widget.drawer.WearableNavigationDrawerView;
 
+import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
+import com.long2know.sportlogger.acquisition.RouteStatus;
+import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.services.ISportLoggerServiceClient;
@@ -57,6 +59,7 @@ public final class MainActivity extends FragmentActivity implements
             }
             loggingService = ((SportLoggerService.LocalBinder) service).getService();
             loggingService.registerClient(MainActivity.this);
+            loggingService.refreshAcquisitionState();
         }
     };
 
@@ -68,6 +71,7 @@ public final class MainActivity extends FragmentActivity implements
     private SportLoggerService loggingService;
     private boolean bindRequested;
     private RecordingState displayedState;
+    private RouteStatus routeStatus = RouteStatus.UNKNOWN;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,6 +122,17 @@ public final class MainActivity extends FragmentActivity implements
     }
 
     @Override
+    public void onRouteStatusChanged(RouteStatus status) {
+        routeStatus = status;
+        sensorFragment.setRouteStatus(status);
+    }
+
+    @Override
+    public void onAcquisitionStateChanged(
+            HealthServicesExerciseSnapshot snapshot) {
+    }
+
+    @Override
     public void onRecordingStateChanged(RecordingSnapshot snapshot) {
         if (snapshot.getState() == displayedState) {
             if (sensorFragment.isAdded()) {
@@ -129,10 +144,12 @@ public final class MainActivity extends FragmentActivity implements
         switch (snapshot.getState()) {
             case RECORDING:
                 showFragment(sensorFragment);
+                sensorFragment.setRouteStatus(routeStatus);
                 wearableActionDrawer.setIsLocked(false);
                 wearableActionDrawer.getController().peekDrawer();
                 break;
             case PAUSED:
+            case INTERRUPTED:
             case STOPPING:
             case DISCARDING:
             case EXPORT_PENDING:
@@ -208,8 +225,11 @@ public final class MainActivity extends FragmentActivity implements
                         this,
                         R.string.recording_permissions_limited,
                         Toast.LENGTH_LONG).show();
-                return;
+                break;
             }
+        }
+        if (loggingService != null) {
+            loggingService.refreshAcquisitionState();
         }
     }
 
@@ -327,14 +347,11 @@ public final class MainActivity extends FragmentActivity implements
 
     private void requestRecordingPermissions() {
         List<String> missing = new ArrayList<>();
-        addIfMissing(missing, Manifest.permission.BODY_SENSORS);
-        addIfMissing(missing, Manifest.permission.ACCESS_COARSE_LOCATION);
-        addIfMissing(missing, Manifest.permission.ACCESS_FINE_LOCATION);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            addIfMissing(missing, Manifest.permission.ACTIVITY_RECOGNITION);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            addIfMissing(missing, Manifest.permission.POST_NOTIFICATIONS);
+        for (String permission : RecordingPermissionPolicy.runtimePermissions(
+                Build.VERSION.SDK_INT,
+                true,
+                true)) {
+            addIfMissing(missing, permission);
         }
         if (!missing.isEmpty()) {
             ActivityCompat.requestPermissions(
