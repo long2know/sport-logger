@@ -217,6 +217,7 @@ public class SharedPreferencesRecordingJournalTest {
                 RecordingState.RECORDING,
                 7,
                 ActivityType.ACTIVITY_TYPE_HIKING,
+                RecordingAuthority.CANONICAL,
                 10_000L,
                 11_000L,
                 5_000L,
@@ -232,12 +233,28 @@ public class SharedPreferencesRecordingJournalTest {
 
         assertEquals(RecordingState.RECORDING, restored.getState());
         assertEquals(ActivityType.ACTIVITY_TYPE_HIKING, restored.getActivityType());
+        assertEquals(RecordingAuthority.CANONICAL, restored.getAuthority());
         assertEquals(11_000L, restored.getActiveSinceMillis());
         assertEquals(5_000L, restored.getActiveSinceElapsedRealtimeMillis());
         assertEquals(5_000L, restored.getElapsedSinceElapsedRealtimeMillis());
         assertEquals(2_000L, restored.getAccumulatedMillis());
         assertEquals(2_000L, restored.getAccumulatedElapsedMillis());
         assertEquals(9, restored.getBootCount());
+    }
+
+    @Test
+    public void missingAuthorityFromPreCutoverJournalDefaultsToLegacy()
+            throws Exception {
+        BlockingPreferences preferences = new BlockingPreferences();
+        SharedPreferencesRecordingJournal journal =
+                new SharedPreferencesRecordingJournal(preferences.instance());
+        long lease = journal.acquireLease();
+        journal.write(lease, recording(RecordingState.PAUSED));
+        preferences.values.remove("authority");
+
+        assertEquals(
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                journal.read().getAuthority());
     }
 
     private static PersistentRecording recording(RecordingState state) {

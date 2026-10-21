@@ -40,9 +40,11 @@ public final class RecordingController {
     }
 
     private final RecordingJournal journal;
-    private final RecordingStore store;
+    private final RecordingStore legacyStore;
+    private final RecordingStore canonicalStore;
     private final RecordingExporter exporter;
     private final RecordingSessionTerminator sessionTerminator;
+    private final RecordingAuthority newRecordingAuthority;
     private final ScheduledExecutorService worker;
     private final Executor callbackExecutor;
     private final Clock clock;
@@ -77,8 +79,10 @@ public final class RecordingController {
         this(
                 journal,
                 store,
+                store,
                 exporter,
                 RecordingSessionTerminator.NO_OP,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 worker,
                 callbackExecutor,
                 clock,
@@ -96,10 +100,38 @@ public final class RecordingController {
             Clock clock,
             Listener listener,
             RetryPolicy retryPolicy) {
+        this(
+                journal,
+                store,
+                store,
+                exporter,
+                sessionTerminator,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                worker,
+                callbackExecutor,
+                clock,
+                listener,
+                retryPolicy);
+    }
+
+    public RecordingController(
+            RecordingJournal journal,
+            RecordingStore legacyStore,
+            RecordingStore canonicalStore,
+            RecordingExporter exporter,
+            RecordingSessionTerminator sessionTerminator,
+            RecordingAuthority newRecordingAuthority,
+            ScheduledExecutorService worker,
+            Executor callbackExecutor,
+            Clock clock,
+            Listener listener,
+            RetryPolicy retryPolicy) {
         this.journal = Objects.requireNonNull(journal);
-        this.store = Objects.requireNonNull(store);
+        this.legacyStore = Objects.requireNonNull(legacyStore);
+        this.canonicalStore = Objects.requireNonNull(canonicalStore);
         this.exporter = Objects.requireNonNull(exporter);
         this.sessionTerminator = Objects.requireNonNull(sessionTerminator);
+        this.newRecordingAuthority = Objects.requireNonNull(newRecordingAuthority);
         this.worker = Objects.requireNonNull(worker);
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor);
         this.clock = Objects.requireNonNull(clock);
@@ -319,9 +351,11 @@ public final class RecordingController {
                 -1,
                 null));
         long now = clock.currentTimeMillis();
+        RecordingAuthority authority = newRecordingAuthority;
+        RecordingStore startStore = storeFor(authority);
         int activityId;
         try {
-            activityId = store.createActivity(now);
+            activityId = startStore.createActivity(now);
         } catch (Exception error) {
             publish(new RecordingSnapshot(
                     current.getState(),
@@ -339,6 +373,7 @@ public final class RecordingController {
                 RecordingState.RECORDING,
                 activityId,
                 activityType,
+                authority,
                 now,
                 now,
                 elapsedNow,
@@ -350,7 +385,7 @@ public final class RecordingController {
                 null);
         if (!persist(started)) {
             try {
-                store.deleteActivity(activityId);
+                startStore.deleteActivity(activityId);
             } catch (Exception rollbackError) {
                 publish(new RecordingSnapshot(
                         current.getState(),
@@ -538,7 +573,7 @@ public final class RecordingController {
             return;
         }
         try {
-            store.writeSample(current.getActivityId());
+            storeFor(current.getAuthority()).writeSample(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -568,21 +603,28 @@ public final class RecordingController {
             return;
         }
         try {
+            RecordingStore recordingStore = storeFor(current.getAuthority());
             if (current.getState() == RecordingState.STOPPING) {
                 if (endedSessionActivityId != current.getActivityId()) {
                     requestSessionEnd(true);
                     return;
                 }
                 if (finalSampleActivityId != current.getActivityId()) {
-                    store.writeSample(current.getActivityId());
+                    recordingStore.writeSample(current.getActivityId());
                     finalSampleActivityId = current.getActivityId();
                 }
-                store.finishActivity(current.getActivityId(), current.getEndedAtMillis());
+                recordingStore.finishActivity(
+                        current.getActivityId(),
+                        current.getEndedAtMillis());
                 if (closed.get() || !journal.isCurrent(lease)) {
                     return;
                 }
+                RecordingState completedState =
+                        current.getAuthority() == RecordingAuthority.CANONICAL
+                                ? RecordingState.EXPORT_QUEUED
+                                : RecordingState.EXPORT_PENDING;
                 PersistentRecording exportPending = current.withState(
-                        RecordingState.EXPORT_PENDING,
+                        completedState,
                         0L,
                         0L,
                         0L,
@@ -598,11 +640,32 @@ public final class RecordingController {
                 current = exportPending;
                 publish(current);
             }
+            if (current.getAuthority() == RecordingAuthority.CANONICAL) {
+                if (current.getState() == RecordingState.EXPORT_PENDING) {
+                    PersistentRecording queued = current.withState(
+                            RecordingState.EXPORT_QUEUED,
+                            0L,
+                            0L,
+                            0L,
+                            current.getAccumulatedMillis(),
+                            current.getAccumulatedElapsedMillis(),
+                            current.getEndedAtMillis(),
+                            -1,
+                            current.getError());
+                    if (persist(queued)) {
+                        current = queued;
+                        publish(current);
+                    } else {
+                        scheduleFinalizationRetry();
+                    }
+                }
+                return;
+            }
             if (current.getState() != RecordingState.EXPORT_PENDING
                     && current.getState() != RecordingState.EXPORT_QUEUED) {
                 return;
             }
-            SportActivity activity = store.loadActivity(current.getActivityId());
+            SportActivity activity = recordingStore.loadActivity(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -717,11 +780,12 @@ public final class RecordingController {
             return;
         }
         try {
+            RecordingStore recordingStore = storeFor(current.getAuthority());
             if (endedSessionActivityId != current.getActivityId()) {
                 requestSessionEnd(false);
                 return;
             }
-            store.deleteActivity(current.getActivityId());
+            recordingStore.deleteActivity(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -933,6 +997,7 @@ public final class RecordingController {
                 recording.getState(),
                 recording.getActivityId(),
                 recording.getActivityType(),
+                recording.getAuthority(),
                 recording.getStartedAtMillis(),
                 recording.durationAt(wallNow, elapsedNow, currentBootCount),
                 recording.elapsedDurationAt(wallNow, elapsedNow, currentBootCount),
@@ -940,6 +1005,12 @@ public final class RecordingController {
                 recording.getElapsedSinceElapsedRealtimeMillis(),
                 recording.getBootCount(),
                 error);
+    }
+
+    private RecordingStore storeFor(RecordingAuthority authority) {
+        return authority == RecordingAuthority.CANONICAL
+                ? canonicalStore
+                : legacyStore;
     }
 
     private long endTimestamp(long elapsedDurationMillis) {

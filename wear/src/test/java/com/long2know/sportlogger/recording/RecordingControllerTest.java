@@ -154,6 +154,89 @@ public class RecordingControllerTest {
     }
 
     @Test
+    public void canonicalAuthorityNeverWritesOrExportsLegacyMirror()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        FakeStore legacyStore = new FakeStore();
+        FakeStore canonicalStore = new FakeStore();
+        FakeExporter exporter = new FakeExporter();
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = new RecordingController(
+                journal,
+                legacyStore,
+                canonicalStore,
+                exporter,
+                RecordingSessionTerminator.NO_OP,
+                RecordingAuthority.CANONICAL,
+                worker(),
+                Runnable::run,
+                new MutableClock(2_500L),
+                snapshots,
+                attempt -> 5L);
+
+        controller.start();
+        RecordingSnapshot recording =
+                snapshots.awaitState(RecordingState.RECORDING);
+        assertEquals(RecordingAuthority.CANONICAL, recording.getAuthority());
+        controller.stop();
+        snapshots.awaitState(RecordingState.EXPORT_QUEUED);
+
+        assertEquals(0, legacyStore.createCount.get());
+        assertEquals(0, legacyStore.writeAttempts.get());
+        assertEquals(0, legacyStore.finishAttempts.get());
+        assertEquals(0, legacyStore.loadAttempts.get());
+        assertEquals(1, canonicalStore.createCount.get());
+        assertTrue(canonicalStore.writeAttempts.get() >= 1);
+        assertEquals(1, canonicalStore.finishAttempts.get());
+        assertEquals(0, canonicalStore.loadAttempts.get());
+        assertFalse(exporter.awaitCount(1, 50L));
+        assertEquals(RecordingAuthority.CANONICAL, journal.state.getAuthority());
+        controller.closeAsync();
+    }
+
+    @Test
+    public void preCutoverLegacyTerminalStateStillUsesLegacyExporter()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        journal.state = new PersistentRecording(
+                RecordingState.STOPPING,
+                1,
+                1_000L,
+                0L,
+                500L,
+                1_500L,
+                null);
+        FakeStore legacyStore = new FakeStore();
+        legacyStore.addActivity(1, 1_000L);
+        FakeStore canonicalStore = new FakeStore();
+        FakeExporter exporter = new FakeExporter();
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = new RecordingController(
+                journal,
+                legacyStore,
+                canonicalStore,
+                exporter,
+                RecordingSessionTerminator.NO_OP,
+                RecordingAuthority.CANONICAL,
+                worker(),
+                Runnable::run,
+                new MutableClock(2_000L),
+                snapshots,
+                attempt -> 5L);
+
+        controller.recover();
+
+        assertTrue(exporter.awaitCount(1, 1_000L));
+        assertEquals(1, legacyStore.finishAttempts.get());
+        assertEquals(1, legacyStore.loadAttempts.get());
+        assertEquals(0, canonicalStore.finishAttempts.get());
+        assertEquals(
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                journal.state.getAuthority());
+        controller.closeAsync();
+    }
+
+    @Test
     public void pausedSessionRecoversAcrossActivityRecreationWithDurationPreserved()
             throws Exception {
         InMemoryJournal journal = new InMemoryJournal();
@@ -661,6 +744,7 @@ public class RecordingControllerTest {
         private final AtomicInteger createCount = new AtomicInteger();
         private final AtomicInteger finishAttempts = new AtomicInteger();
         private final AtomicInteger writeAttempts = new AtomicInteger();
+        private final AtomicInteger loadAttempts = new AtomicInteger();
         private final AtomicInteger finishFailures = new AtomicInteger();
         private final Map<Integer, SportActivity> activities = new ConcurrentHashMap<>();
         private final CountDownLatch finishEntered = new CountDownLatch(1);
@@ -710,6 +794,7 @@ public class RecordingControllerTest {
 
         @Override
         public SportActivity loadActivity(int activityId) {
+            loadAttempts.incrementAndGet();
             SportActivity activity = activities.get(activityId);
             if (activity == null) {
                 throw new IllegalStateException("missing activity");

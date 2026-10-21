@@ -8,6 +8,7 @@ public final class PersistentRecording {
     private final RecordingState state;
     private final int activityId;
     private final ActivityType activityType;
+    private final RecordingAuthority authority;
     private final long startedAtMillis;
     private final long activeSinceMillis;
     private final long activeSinceElapsedRealtimeMillis;
@@ -30,6 +31,7 @@ public final class PersistentRecording {
                 state,
                 activityId,
                 defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 0L,
@@ -55,6 +57,7 @@ public final class PersistentRecording {
                 state,
                 activityId,
                 defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -79,9 +82,69 @@ public final class PersistentRecording {
             long endedAtMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error);
+    }
+
+    public PersistentRecording(
+            RecordingState state,
+            int activityId,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long activeSinceMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            long accumulatedMillis,
+            long accumulatedElapsedMillis,
+            long endedAtMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                defaultActivityType(activityId),
+                authority,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error);
+    }
+
+    public PersistentRecording(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long activeSinceMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            long accumulatedMillis,
+            long accumulatedElapsedMillis,
+            long endedAtMillis,
+            int bootCount,
+            RecordingError error) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
         this.activityType = Objects.requireNonNull(activityType);
+        this.authority = Objects.requireNonNull(authority);
         this.startedAtMillis = startedAtMillis;
         this.activeSinceMillis = activeSinceMillis;
         this.activeSinceElapsedRealtimeMillis =
@@ -111,6 +174,10 @@ public final class PersistentRecording {
 
     public ActivityType getActivityType() {
         return activityType;
+    }
+
+    public RecordingAuthority getAuthority() {
+        return authority;
     }
 
     public long getStartedAtMillis() {
@@ -233,6 +300,7 @@ public final class PersistentRecording {
                 state,
                 activityId,
                 activityType,
+                authority,
                 startedAtMillis,
                 state == RecordingState.RECORDING ? wallClockMillis : 0L,
                 state == RecordingState.RECORDING ? elapsedRealtimeMillis : 0L,
@@ -296,6 +364,7 @@ public final class PersistentRecording {
                 nextState,
                 activityId,
                 activityType,
+                authority,
                 startedAtMillis,
                 nextActiveSinceMillis,
                 nextActiveSinceElapsedRealtimeMillis,
@@ -312,6 +381,7 @@ public final class PersistentRecording {
                 state,
                 activityId,
                 activityType,
+                authority,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,

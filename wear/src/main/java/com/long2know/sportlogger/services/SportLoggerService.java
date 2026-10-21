@@ -38,9 +38,11 @@ import com.long2know.sportlogger.measurements.ResourceOwner;
 import com.long2know.sportlogger.persistence.watch.LegacyWatchMigrator;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
 import com.long2know.sportlogger.recording.AndroidRecordingClock;
+import com.long2know.sportlogger.recording.CanonicalAuthorityRecordingStore;
 import com.long2know.sportlogger.recording.RecordingController;
 import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
 import com.long2know.sportlogger.recording.RecordingError;
+import com.long2know.sportlogger.recording.RecordingAuthority;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
@@ -175,11 +177,13 @@ public final class SportLoggerService extends Service {
             recordingController = new RecordingController(
                     new SharedPreferencesRecordingJournal(this),
                     new SqlRecordingStore(this),
+                    new CanonicalAuthorityRecordingStore(this),
                     new WearDataLayerExporter(
                             this,
                             getString(R.string.wear_path),
                             recordingWorker),
                     this::terminateRecordingSession,
+                    RecordingAuthority.CANONICAL,
                     recordingWorker,
                     mainExecutor,
                     new AndroidRecordingClock(this),
@@ -371,7 +375,8 @@ public final class SportLoggerService extends Service {
             sharedData.resetMeasurements();
             measurementBridge.beginSession();
         }
-        if (canonicalRecordingSession != null) {
+        if (canonicalRecordingSession != null
+                && snapshot.getAuthority() == RecordingAuthority.CANONICAL) {
             canonicalRecordingSession.onRecordingSnapshot(snapshot);
         }
         synchronizeAcquisition(snapshot);
@@ -745,6 +750,15 @@ public final class SportLoggerService extends Service {
         if (canonicalRecordingSession == null || healthServicesManager == null) {
             callback.onFailure(new IllegalStateException(
                     "Recording acquisition is not initialized"));
+            return;
+        }
+        if (finalSnapshot.getAuthority()
+                == RecordingAuthority.LEGACY_COMPATIBILITY) {
+            healthServicesManager.endSession(
+                    activityId,
+                    preserveFinalData,
+                    finalSnapshot,
+                    callback);
             return;
         }
         if (!preserveFinalData) {
