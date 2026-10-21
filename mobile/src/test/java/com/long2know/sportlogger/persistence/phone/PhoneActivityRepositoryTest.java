@@ -249,7 +249,7 @@ public class PhoneActivityRepositoryTest {
                 null);
         byte[] phoneAck = CanonicalTransfers.tombstoneCommitAck(
                         CanonicalTransfers.parseTombstone(outbox.getPayload()),
-                        AckResult.ACK_RESULT_ACCEPTED,
+                        AckResult.ACK_RESULT_STALE,
                         null,
                         null)
                 .toByteArray();
