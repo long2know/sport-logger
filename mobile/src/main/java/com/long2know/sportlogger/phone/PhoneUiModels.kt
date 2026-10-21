@@ -23,6 +23,12 @@ data class ActivityDetailUi(
     val exportSource: CanonicalTcxExportSource,
     val availability: List<MeasurementAvailabilityUi>,
     val exportWarnings: List<String>,
+    val routePreview: List<RoutePointUi>,
+)
+
+data class RoutePointUi(
+    val latitude: Double,
+    val longitude: Double,
 )
 
 data class MeasurementAvailabilityUi(
@@ -72,6 +78,8 @@ data class StatusUi(
     val countCapped: Boolean = false,
     val committedCount: Long = 0,
     val partialImportCount: Long = 0,
+    val pendingDeleteSyncCount: Int = 0,
+    val failedDeleteSyncCount: Int = 0,
     val availability: List<MeasurementAvailabilityUi> = emptyList(),
     val integrations: IntegrationSnapshot? = null,
     val loading: Boolean = true,
@@ -115,6 +123,8 @@ data class PhoneUiState(
     val detailLoading: Boolean = false,
     val detailError: String? = null,
     val editor: MetadataEditorUi? = null,
+    val deleteConfirmation: Boolean = false,
+    val deleteBusy: Boolean = false,
     val trends: TrendsUi? = null,
     val trendsLoading: Boolean = false,
     val trendsError: String? = null,

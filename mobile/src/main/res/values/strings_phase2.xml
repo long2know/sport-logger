@@ -6,6 +6,11 @@
     <string name="trends_title">Activity trends</string>
     <string name="status_title">Phone status</string>
     <string name="edit_activity">Edit activity</string>
+    <string name="delete_activity">Delete activity</string>
+    <string name="delete_activity_title">Delete from phone and paired watch?</string>
+    <string name="delete_activity_message">This creates a durable deletion for this phone and its paired watch. Health Connect and Endurain copies are not deleted; use their explicit provider actions separately.</string>
+    <string name="delete">Delete</string>
+    <string name="delete_working">Deleting from this phone and queuing paired-watch deletion…</string>
     <string name="edit_phone_metadata">Edit phone title and notes</string>
     <string name="phone_title_label">Phone title</string>
     <string name="phone_notes_label">Phone notes</string>
@@ -25,6 +30,8 @@
     <string name="revision_label">Revision</string>
     <string name="recorded_description_label">Watch-recorded description</string>
     <string name="availability_title">Measurement availability</string>
+    <string name="route_preview_title">Route preview</string>
+    <string name="route_preview_description">Route preview with %1$d recorded coordinates</string>
     <string name="no_availability_evidence">No recorded measurement availability evidence is present.</string>
     <string name="export_limitations_title">TCX format notes</string>
     <string name="trends_empty">Record or import activities to see persisted trends.</string>
@@ -44,6 +51,9 @@
     <string name="status_activity_count_capped">%1$d+ canonical activities</string>
     <string name="status_committed_count">%1$d committed receipts</string>
     <string name="status_partial_count">%1$d partial or unhealthy imports</string>
+    <string name="status_pending_delete_count">%1$d phone-to-watch deletions pending</string>
+    <string name="status_failed_delete_count">%1$d phone-to-watch deletions need retry</string>
+    <string name="retry_delete_sync">Retry watch deletion sync</string>
     <string name="status_recovery_summary">%1$d imported, %2$d already processed, %3$d partial or failed</string>
     <string name="status_recovery_empty">No legacy inbox files required recovery.</string>
     <string name="metadata_title_count">%1$d / %2$d</string>

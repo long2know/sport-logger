@@ -2,6 +2,7 @@ package com.long2know.sportlogger.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Refresh
@@ -63,6 +65,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -116,6 +119,9 @@ fun SportLoggerPhoneRoute(
             onSelectActivity = viewModel::selectActivity,
             onBack = viewModel::handleBack,
             onOpenEditor = viewModel::openEditor,
+            onRequestDelete = viewModel::requestDelete,
+            onConfirmDelete = viewModel::confirmDelete,
+            onCancelDelete = viewModel::cancelDelete,
             onEditorTitle = viewModel::updateEditorTitle,
             onEditorNotes = viewModel::updateEditorNotes,
             onSaveMetadata = viewModel::saveMetadata,
@@ -123,6 +129,7 @@ fun SportLoggerPhoneRoute(
             onPrepareSave = viewModel::prepareSave,
             onPrepareShare = onPrepareShare,
             onRetryBackfill = viewModel::retryBackfill,
+            onRetryDeleteSync = viewModel::retryDeleteSync,
             onIntegrationAction = viewModel::performIntegrationAction,
             onConsumeNotice = viewModel::consumeNotice,
         )
@@ -139,6 +146,9 @@ fun SportLoggerPhoneApp(
     onSelectActivity: (String, Long) -> Unit,
     onBack: () -> Boolean,
     onOpenEditor: () -> Unit,
+    onRequestDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    onCancelDelete: () -> Unit,
     onEditorTitle: (String) -> Unit,
     onEditorNotes: (String) -> Unit,
     onSaveMetadata: () -> Unit,
@@ -146,6 +156,7 @@ fun SportLoggerPhoneApp(
     onPrepareSave: () -> Unit,
     onPrepareShare: () -> Unit,
     onRetryBackfill: () -> Unit,
+    onRetryDeleteSync: () -> Unit,
     onIntegrationAction: (IntegrationAction) -> Unit,
     onConsumeNotice: () -> Unit,
 ) {
@@ -208,6 +219,7 @@ fun SportLoggerPhoneApp(
                             state = state,
                             onPrepareSave = onPrepareSave,
                             onPrepareShare = onPrepareShare,
+                            onRequestDelete = onRequestDelete,
                             modifier = Modifier
                                 .weight(0.56f)
                                 .fillMaxHeight(),
@@ -231,6 +243,7 @@ fun SportLoggerPhoneApp(
                             state = state,
                             onPrepareSave = onPrepareSave,
                             onPrepareShare = onPrepareShare,
+                            onRequestDelete = onRequestDelete,
                         )
                         state.destination == PhoneDestination.HISTORY -> HistoryScreen(
                             state = state,
@@ -242,6 +255,7 @@ fun SportLoggerPhoneApp(
                         state.destination == PhoneDestination.STATUS -> StatusScreen(
                             state = state,
                             onRetryBackfill = onRetryBackfill,
+                            onRetryDeleteSync = onRetryDeleteSync,
                             onIntegrationAction = onIntegrationAction,
                         )
                     }
@@ -257,6 +271,13 @@ fun SportLoggerPhoneApp(
             onNotesChange = onEditorNotes,
             onSave = onSaveMetadata,
             onCancel = onCancelEditor,
+        )
+    }
+    if (state.deleteConfirmation) {
+        DeleteConfirmationDialog(
+            deleting = state.deleteBusy,
+            onConfirm = onConfirmDelete,
+            onCancel = onCancelDelete,
         )
     }
 }
@@ -536,6 +557,7 @@ private fun DetailScreen(
     state: PhoneUiState,
     onPrepareSave: () -> Unit,
     onPrepareShare: () -> Unit,
+    onRequestDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when {
@@ -550,8 +572,10 @@ private fun DetailScreen(
         else -> ActivityDetailContent(
             detail = state.detail,
             exportBusy = state.exportBusy,
+            deleteBusy = state.deleteBusy,
             onPrepareSave = onPrepareSave,
             onPrepareShare = onPrepareShare,
+            onRequestDelete = onRequestDelete,
             modifier = modifier,
         )
     }
@@ -561,8 +585,10 @@ private fun DetailScreen(
 private fun ActivityDetailContent(
     detail: ActivityDetailUi,
     exportBusy: Boolean,
+    deleteBusy: Boolean,
     onPrepareSave: () -> Unit,
     onPrepareShare: () -> Unit,
+    onRequestDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val activity = detail.detail.activity
@@ -618,12 +644,16 @@ private fun ActivityDetailContent(
                     "${activity.summary.heartRateSampleCount}",
             ),
         )
+        if (detail.routePreview.size >= 2) {
+            RoutePreview(detail)
+        }
         if (metadata.notes?.isNotBlank() == true) {
             TextSection(
                 title = stringResource(R.string.phone_notes_label),
                 value = metadata.notes,
             )
         }
+
         if (activity.hasRecordedDescription() && activity.recordedDescription.isNotBlank()) {
             TextSection(
                 title = stringResource(R.string.recorded_description_label),
@@ -655,19 +685,23 @@ private fun ActivityDetailContent(
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(stringResource(R.string.export_working))
         }
+        if (deleteBusy) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(stringResource(R.string.delete_working))
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Button(
                 onClick = onPrepareSave,
-                enabled = !exportBusy,
+                enabled = !exportBusy && !deleteBusy,
                 modifier = Modifier.testTag("save_tcx"),
             ) {
                 Text(stringResource(R.string.save_tcx))
             }
             OutlinedButton(
                 onClick = onPrepareShare,
-                enabled = !exportBusy,
+                enabled = !exportBusy && !deleteBusy,
                 modifier = Modifier.testTag("share_tcx"),
             ) {
                 Icon(Icons.Outlined.Share, contentDescription = null)
@@ -675,7 +709,77 @@ private fun ActivityDetailContent(
                 Text(stringResource(R.string.share_tcx))
             }
         }
+        OutlinedButton(
+            onClick = onRequestDelete,
+            enabled = !exportBusy && !deleteBusy,
+            modifier = Modifier.testTag("delete_activity"),
+        ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.delete_activity))
+        }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun RoutePreview(detail: ActivityDetailUi) {
+    val points = detail.routePreview
+    val lineColor = MaterialTheme.colorScheme.primary
+    val background = MaterialTheme.colorScheme.surfaceVariant
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.route_preview_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            val description = stringResource(
+                R.string.route_preview_description,
+                points.size,
+            )
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .semantics { contentDescription = description },
+            ) {
+                drawRect(background)
+                val minLatitude = points.minOf { it.latitude }
+                val maxLatitude = points.maxOf { it.latitude }
+                val minLongitude = points.minOf { it.longitude }
+                val maxLongitude = points.maxOf { it.longitude }
+                val latitudeRange = (maxLatitude - minLatitude).takeIf { it > 0.0 } ?: 1.0
+                val longitudeRange = (maxLongitude - minLongitude).takeIf { it > 0.0 } ?: 1.0
+                val padding = 12.dp.toPx()
+                val drawableWidth = (size.width - padding * 2).coerceAtLeast(1f)
+                val drawableHeight = (size.height - padding * 2).coerceAtLeast(1f)
+                val path = Path()
+                points.forEachIndexed { index, point ->
+                    val x = padding +
+                        ((point.longitude - minLongitude) / longitudeRange).toFloat() *
+                        drawableWidth
+                    val y = padding +
+                        (1f - ((point.latitude - minLatitude) / latitudeRange).toFloat()) *
+                        drawableHeight
+                    if (index == 0) {
+                        path.moveTo(x, y)
+                    } else {
+                        path.lineTo(x, y)
+                    }
+                }
+                drawPath(
+                    path = path,
+                    color = lineColor,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 4.dp.toPx(),
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -936,6 +1040,7 @@ private fun TrendTotalCard(
 private fun StatusScreen(
     state: PhoneUiState,
     onRetryBackfill: () -> Unit,
+    onRetryDeleteSync: () -> Unit,
     onIntegrationAction: (IntegrationAction) -> Unit,
 ) {
     val status = state.status
@@ -958,6 +1063,7 @@ private fun StatusScreen(
                 status = status,
                 backfill = state.backfill,
                 onRetryBackfill = onRetryBackfill,
+                onRetryDeleteSync = onRetryDeleteSync,
             )
         }
         item {
@@ -1005,6 +1111,7 @@ private fun StatusSummaryCard(
     status: StatusUi,
     backfill: com.long2know.sportlogger.phone.BackfillUi,
     onRetryBackfill: () -> Unit,
+    onRetryDeleteSync: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -1043,6 +1150,26 @@ private fun StatusSummaryCard(
                     ),
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+            if (status.pendingDeleteSyncCount > 0) {
+                Text(
+                    stringResource(
+                        R.string.status_pending_delete_count,
+                        status.pendingDeleteSyncCount,
+                    ),
+                )
+            }
+            if (status.failedDeleteSyncCount > 0) {
+                Text(
+                    stringResource(
+                        R.string.status_failed_delete_count,
+                        status.failedDeleteSyncCount,
+                    ),
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Button(onClick = onRetryDeleteSync) {
+                    Text(stringResource(R.string.retry_delete_sync))
+                }
             }
             HorizontalDivider()
             Text(
@@ -1115,6 +1242,40 @@ private fun ConnectorStatusCard(
             }
         }
     }
+}
+
+@Composable
+private fun DeleteConfirmationDialog(
+    deleting: Boolean,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!deleting) {
+                onCancel()
+            }
+        },
+        title = { Text(stringResource(R.string.delete_activity_title)) },
+        text = { Text(stringResource(R.string.delete_activity_message)) },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = !deleting,
+                modifier = Modifier.testTag("confirm_delete"),
+            ) {
+                Text(stringResource(R.string.delete))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !deleting,
+            ) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
 }
 
 @Composable

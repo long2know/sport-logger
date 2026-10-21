@@ -14,12 +14,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.viewModels
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.long2know.sportlogger.integration.UnboundPhoneIntegrationStatusGateway
 import com.long2know.sportlogger.healthconnect.HealthConnectProviderFactory
 import com.long2know.sportlogger.phone.CanonicalPhoneDataSource
 import com.long2know.sportlogger.phone.PhoneUiEvent
 import com.long2know.sportlogger.transfer.PhoneSyncEvents
+import com.long2know.sportlogger.transfer.PhoneTombstoneSyncHook
 import com.long2know.sportlogger.ui.SportLoggerPhoneRoute
 import com.long2know.utilities.export.tcx.TcxWriter
 import java.io.File
@@ -41,8 +43,30 @@ class MainActivity : ComponentActivity() {
         ) {
             if (intent.action == ListenerService.ACTION_ACTIVITY_RECEIVED) {
                 viewModel.refreshFromReceipt()
+            } else if (intent.action == PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED) {
+                viewModel.onTombstoneSyncState(
+                    intent.getStringExtra(PhoneSyncEvents.EXTRA_DISPLAY_STATE).orEmpty(),
+                )
             } else {
                 viewModel.refreshHistory()
+            }
+        }
+    }
+
+    private val canonicalSyncReceiver = object : BroadcastReceiver() {
+        override fun onReceive(
+            context: Context,
+            intent: Intent,
+        ) {
+            if (intent.action == PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED) {
+                viewModel.onCanonicalSyncHint(
+                    acknowledgementDelivered = intent.getBooleanExtra(
+                        PhoneSyncEvents.EXTRA_ACK_DELIVERED,
+                        false,
+                    ),
+                )
+            } else {
+                viewModel.onCanonicalSyncFailure()
             }
         }
     }
@@ -57,6 +81,12 @@ class MainActivity : ComponentActivity() {
             integrationGateway = UnboundPhoneIntegrationStatusGateway(),
             healthConnectProviderFactory = {
                 HealthConnectProviderFactory.create(applicationContext)
+            },
+            deletionCommittedHook = { outbox ->
+                PhoneTombstoneSyncHook.onDeletionCommitted(applicationContext, outbox)
+            },
+            deleteRetryHook = {
+                PhoneTombstoneSyncHook.requestRetry(applicationContext)
             },
         )
         healthPermissionLauncher = registerForActivityResult(
@@ -78,10 +108,17 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         LocalBroadcastManager.getInstance(this).registerReceiver(
             activityReceiver,
+            IntentFilter(ListenerService.ACTION_ACTIVITY_RECEIVED),
+        )
+        ContextCompat.registerReceiver(
+            this,
+            canonicalSyncReceiver,
             IntentFilter().apply {
-                addAction(ListenerService.ACTION_ACTIVITY_RECEIVED)
                 addAction(PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED)
+                addAction(PhoneSyncEvents.ACTION_CANONICAL_SYNC_FAILED)
+                addAction(PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED)
             },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
 
@@ -92,6 +129,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         LocalBroadcastManager.getInstance(this).unregisterReceiver(activityReceiver)
+        unregisterReceiver(canonicalSyncReceiver)
         super.onStop()
     }
 
@@ -106,7 +144,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     startActivity(event.intent)
                 } catch (_: ActivityNotFoundException) {
-                    viewModel.shareLaunchFailed()
+                    viewModel.providerResolutionLaunchFailed()
                 }
             }
         }

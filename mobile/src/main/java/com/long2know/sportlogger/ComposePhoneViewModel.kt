@@ -16,6 +16,8 @@ import com.long2know.sportlogger.healthconnect.HealthConnectPermissionGrant
 import com.long2know.sportlogger.healthconnect.HealthConnectPermissions
 import com.long2know.sportlogger.healthconnect.HealthConnectProvider
 import com.long2know.sportlogger.healthconnect.HealthConnectSessionStatus
+import com.long2know.sportlogger.healthconnect.HealthConnectVerificationResult
+import com.long2know.sportlogger.healthconnect.HealthConnectVerificationState
 import com.long2know.sportlogger.phone.ActivityDetailUi
 import com.long2know.sportlogger.phone.ActivityKey
 import com.long2know.sportlogger.phone.ActivityTypeTrendUi
@@ -26,10 +28,12 @@ import com.long2know.sportlogger.phone.MetadataEditorUi
 import com.long2know.sportlogger.phone.PhoneDestination
 import com.long2know.sportlogger.phone.PhoneUiEvent
 import com.long2know.sportlogger.phone.PhoneUiState
+import com.long2know.sportlogger.phone.RoutePointUi
 import com.long2know.sportlogger.phone.StatusUi
 import com.long2know.sportlogger.phone.TrendsUi
 import com.long2know.sportlogger.phone.WeeklyTrendUi
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.utilities.contract.CanonicalContractException
 import com.long2know.utilities.contract.proto.ActivityRecord
 import com.long2know.utilities.export.tcx.TcxCancellation
 import com.long2know.utilities.export.tcx.TcxWriter
@@ -72,11 +76,20 @@ class ComposePhoneViewModel(
 
     private val tcxWriter = TcxWriter()
     private val eventIds = AtomicLong()
+    private val repositoryCallbackExecutor = Executor { command ->
+        viewModelScope.launch(Dispatchers.IO) {
+            command.run()
+        }
+    }
 
     private var dataSource: CanonicalPhoneDataSource? = null
     private var integrationGateway: PhoneIntegrationStatusGateway? = null
     private var healthConnectProvider: HealthConnectProvider? = null
+    private var deletionCommittedHook:
+        ((PhoneActivityRepository.TombstoneOutboxItem) -> Unit)? = null
+    private var deleteRetryHook: (() -> Unit)? = null
     private var latestHealthConnectStatus: HealthConnectSessionStatus? = null
+    private var latestHealthVerification: HealthConnectVerificationResult? = null
     private var repositoryObserver: AutoCloseable? = null
     private var integrationObserver: AutoCloseable? = null
     private var healthConnectObserver: AutoCloseable? = null
@@ -91,6 +104,8 @@ class ComposePhoneViewModel(
         dataSourceFactory: () -> CanonicalPhoneDataSource,
         integrationGateway: PhoneIntegrationStatusGateway,
         healthConnectProviderFactory: () -> HealthConnectProvider,
+        deletionCommittedHook: (PhoneActivityRepository.TombstoneOutboxItem) -> Unit,
+        deleteRetryHook: () -> Unit,
     ) {
         if (dataSource != null) {
             return
@@ -98,20 +113,13 @@ class ComposePhoneViewModel(
         dataSource = dataSourceFactory()
         this.integrationGateway = integrationGateway
         healthConnectProvider = healthConnectProviderFactory()
-        val callbackExecutor = Executor { command ->
-            viewModelScope.launch(Dispatchers.IO) {
-                command.run()
-            }
-        }
-        repositoryObserver = requireDataSource().observeChanges(
-            callbackExecutor,
-            Runnable { scheduleRepositoryRefresh() },
-        )
+        this.deletionCommittedHook = deletionCommittedHook
+        this.deleteRetryHook = deleteRetryHook
         integrationObserver = integrationGateway.observe {
             refreshStatus()
         }
         healthConnectObserver = requireHealthConnectProvider().observeCanonicalChanges(
-            callbackExecutor,
+            repositoryCallbackExecutor,
             Runnable { refreshStatus() },
         )
         loadInitial()
@@ -159,6 +167,25 @@ class ComposePhoneViewModel(
 
     fun refreshHistory() {
         refreshAll(runBackfill = false, refreshing = true)
+    }
+
+    fun onCanonicalSyncHint(acknowledgementDelivered: Boolean) {
+        if (!acknowledgementDelivered) {
+            _state.update {
+                it.copy(
+                    notice = "Activity committed on this phone; watch acknowledgement will retry.",
+                )
+            }
+        }
+        refreshHistory()
+    }
+
+    fun onCanonicalSyncFailure() {
+        _state.update {
+            it.copy(
+                notice = "Watch sync failed before a phone commit. Existing activities are unchanged.",
+            )
+        }
     }
 
     fun loadMoreHistory() {
@@ -232,6 +259,8 @@ class ComposePhoneViewModel(
                 detailLoading = false,
                 detailError = null,
                 editor = null,
+                deleteConfirmation = false,
+                deleteBusy = false,
                 notice = null,
             )
         }
@@ -298,6 +327,122 @@ class ComposePhoneViewModel(
         savedStateHandle.remove<String>(EDIT_TITLE_KEY)
         savedStateHandle.remove<String>(EDIT_NOTES_KEY)
         _state.update { it.copy(editor = null) }
+    }
+
+    fun requestDelete() {
+        if (_state.value.detail == null || _state.value.deleteBusy) {
+            return
+        }
+        _state.update { it.copy(deleteConfirmation = true, notice = null) }
+    }
+
+    fun cancelDelete() {
+        if (!_state.value.deleteBusy) {
+            _state.update { it.copy(deleteConfirmation = false) }
+        }
+    }
+
+    fun confirmDelete() {
+        val detail = _state.value.detail ?: return
+        if (_state.value.deleteBusy) {
+            return
+        }
+        _state.update {
+            it.copy(
+                deleteBusy = true,
+                deleteConfirmation = false,
+                notice = null,
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val deleteResult = runCatching {
+                requireDataSource().deleteLocal(
+                    sessionId = detail.detail.sessionId,
+                    expectedAcceptedRevision = detail.detail.revision,
+                    deletedAtUtcMs = System.currentTimeMillis(),
+                )
+            }
+            deleteResult.onSuccess { result ->
+                val hookSucceeded = runCatching {
+                    checkNotNull(deletionCommittedHook).invoke(result.outbox)
+                }.isSuccess
+                savedStateHandle.remove<String>(SELECTED_SESSION_KEY)
+                savedStateHandle.remove<Long>(SELECTED_REVISION_KEY)
+                _state.update {
+                    it.copy(
+                        selectedKey = null,
+                        detail = null,
+                        detailLoading = false,
+                        deleteBusy = false,
+                        notice = if (hookSucceeded) {
+                            "Activity deleted on this phone; paired-watch deletion is queued."
+                        } else {
+                            "Activity deleted on this phone; paired-watch deletion remains durably queued."
+                        },
+                    )
+                }
+                scheduleRepositoryRefresh(immediate = true)
+            }.onFailure { error ->
+                when ((error as? CanonicalContractException)?.code) {
+                    "DELETE_HEAD_CHANGED" -> {
+                        _state.update {
+                            it.copy(
+                                deleteBusy = false,
+                                notice = "Activity changed before deletion. Review the latest revision and confirm again.",
+                            )
+                        }
+                        scheduleRepositoryRefresh(immediate = true)
+                    }
+                    "DELETE_ALREADY_DELETED" -> {
+                        closeDetail()
+                        _state.update {
+                            it.copy(
+                                deleteBusy = false,
+                                notice = "This activity was already deleted by a canonical source.",
+                            )
+                        }
+                        scheduleRepositoryRefresh(immediate = true)
+                    }
+                    else -> {
+                        _state.update {
+                            it.copy(
+                                deleteBusy = false,
+                                notice = "Activity deletion could not be committed.",
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun retryDeleteSync() {
+        runCatching { checkNotNull(deleteRetryHook).invoke() }
+            .onSuccess {
+                _state.update {
+                    it.copy(notice = "Paired-watch deletion retry requested.")
+                }
+            }
+            .onFailure {
+                _state.update {
+                    it.copy(notice = "Paired-watch deletion retry could not be scheduled.")
+                }
+            }
+    }
+
+    fun onTombstoneSyncState(displayState: String) {
+        _state.update {
+            it.copy(
+                notice = when (displayState) {
+                    "QUEUED" -> "Paired-watch deletion is queued."
+                    "TRANSFERRING" -> "Paired-watch deletion is transferring."
+                    "SYNCED" -> "Paired-watch deletion is synced."
+                    "FAILED" -> "Paired-watch deletion needs retry."
+                    else -> it.notice
+                },
+            )
+        }
+        refreshStatus()
     }
 
     fun saveMetadata() {
@@ -395,7 +540,7 @@ class ComposePhoneViewModel(
                 }
             }
             HEALTH_PERMISSION_ACTION -> {
-                val permissions = status.permissions.requestInput
+                val permissions = status.permissionRequestInput
                 if (permissions.isEmpty()) {
                     _state.update {
                         it.copy(notice = "No Health Connect permissions are missing.")
@@ -434,6 +579,24 @@ class ComposePhoneViewModel(
                     }
                 }
             }
+            HEALTH_VERIFY_ACTION -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    val result = runCatching {
+                        provider.verifyOwnedExerciseSession(
+                            status.sessionId,
+                            status.revision,
+                        )
+                    }.getOrNull()
+                    latestHealthVerification = result
+                    _state.update {
+                        it.copy(
+                            notice = result?.let(::healthConnectVerificationMessage)
+                                ?: "Health Connect provider verification failed.",
+                        )
+                    }
+                    refreshStatus()
+                }
+            }
         }
     }
 
@@ -444,8 +607,30 @@ class ComposePhoneViewModel(
             setHealthConnectWorking()
             runCatching { operation() }
                 .onSuccess { result ->
+                    val verification = if (
+                        result.state == HealthConnectOperationState.SUCCEEDED ||
+                        result.state == HealthConnectOperationState.PARTIAL
+                    ) {
+                        runCatching {
+                            requireHealthConnectProvider().verifyOwnedExerciseSession(
+                                result.sessionId,
+                                result.revision,
+                            )
+                        }.getOrNull()
+                    } else {
+                        null
+                    }
+                    latestHealthVerification = verification
                     _state.update {
-                        it.copy(notice = healthConnectResultMessage(result))
+                        it.copy(
+                            notice = buildString {
+                                append(healthConnectResultMessage(result))
+                                if (verification != null) {
+                                    append(" ")
+                                    append(healthConnectVerificationMessage(verification))
+                                }
+                            },
+                        )
                     }
                 }
                 .onFailure {
@@ -617,6 +802,12 @@ class ComposePhoneViewModel(
         _state.update { it.copy(notice = "No compatible sharing app could be opened.") }
     }
 
+    fun providerResolutionLaunchFailed() {
+        _state.update {
+            it.copy(notice = "The Health Connect provider page could not be opened.")
+        }
+    }
+
     fun consumeEvent(id: Long) {
         _state.update {
             if (it.event?.id == id) {
@@ -650,6 +841,7 @@ class ComposePhoneViewModel(
         initialLoadJob?.cancel()
         initialLoadJob = viewModelScope.launch(Dispatchers.IO) {
             runBackfill()
+            ensureRepositoryObserver()
             val page = runCatching {
                 requireDataSource().summaries(0, HISTORY_PAGE_SIZE)
             }.getOrElse {
@@ -740,6 +932,16 @@ class ComposePhoneViewModel(
             }
             refreshRepositoryViews()
         }
+    }
+
+    private fun ensureRepositoryObserver() {
+        if (repositoryObserver != null) {
+            return
+        }
+        repositoryObserver = requireDataSource().observeChanges(
+            repositoryCallbackExecutor,
+            Runnable { scheduleRepositoryRefresh() },
+        )
     }
 
     private suspend fun refreshRepositoryViews() {
@@ -844,7 +1046,28 @@ class ComposePhoneViewModel(
             exportSource = source,
             availability = availability(detail.activity),
             exportWarnings = warnings,
+            routePreview = routePreview(detail.activity),
         )
+    }
+
+    private fun routePreview(activity: ActivityRecord): List<RoutePointUi> {
+        val points = activity.samplesList.mapNotNull { sample ->
+            if (sample.hasLocation() && sample.location.hasValue()) {
+                RoutePointUi(
+                    latitude = sample.location.value.latitudeDegrees,
+                    longitude = sample.location.value.longitudeDegrees,
+                )
+            } else {
+                null
+            }
+        }
+        if (points.size <= ROUTE_PREVIEW_LIMIT) {
+            return points
+        }
+        val step = (points.size - 1).toDouble() / (ROUTE_PREVIEW_LIMIT - 1)
+        return List(ROUTE_PREVIEW_LIMIT) { index ->
+            points[(index * step).toInt().coerceAtMost(points.lastIndex)]
+        }
     }
 
     private fun refreshTrends() {
@@ -959,6 +1182,7 @@ class ComposePhoneViewModel(
         }
         latestHealthConnectStatus = healthConnect
         val baseIntegrations = integrationGateway?.snapshot()
+        val pendingTombstones = requireDataSource().pendingTombstones(500)
         return StatusUi(
             canonicalActivityCount = count,
             countCapped = countCapped,
@@ -966,6 +1190,12 @@ class ComposePhoneViewModel(
             partialImportCount = summaries.count {
                 it.importHealth != PhoneActivityRepository.IMPORT_COMPLETE
             }.toLong(),
+            pendingDeleteSyncCount = pendingTombstones.count {
+                it.state != PhoneActivityRepository.TOMBSTONE_COMMITTED
+            },
+            failedDeleteSyncCount = pendingTombstones.count {
+                it.state == PhoneActivityRepository.TOMBSTONE_RETRYABLE
+            },
             availability = latestAvailability,
             integrations = baseIntegrations?.copy(
                 healthConnect = healthConnectConnectorStatus(
@@ -1122,6 +1352,9 @@ class ComposePhoneViewModel(
             if (status.canRetry) {
                 add(IntegrationAction(HEALTH_RETRY_ACTION, "Retry"))
             }
+            if (status.canVerifyProvider && status.lastOperation != null) {
+                add(IntegrationAction(HEALTH_VERIFY_ACTION, "Verify provider record"))
+            }
         }
         val operationState = status.lastOperation?.state
         val state = when {
@@ -1149,6 +1382,10 @@ class ComposePhoneViewModel(
             append(status.permissions.granted.size)
             append("/")
             append(status.permissions.required.size)
+            append(" write granted; read ")
+            append(status.readPermissions.granted.size)
+            append("/")
+            append(status.readPermissions.required.size)
             append(" granted.")
             if (status.routePresent) {
                 append(" Route data is present.")
@@ -1163,6 +1400,16 @@ class ComposePhoneViewModel(
                     append(" Missing ")
                     append(operation.missingPermissions.size)
                     append(" permission(s).")
+                }
+                latestHealthVerification?.let { verification ->
+                    append(" Verification: ")
+                    append(verification.state.name.lowercase())
+                    append(".")
+                    verification.providerRoutePointCount?.let { count ->
+                        append(" Provider route points: ")
+                        append(count)
+                        append(".")
+                    }
                 }
             }
         }
@@ -1216,6 +1463,22 @@ class ComposePhoneViewModel(
         }
     }
 
+    private fun healthConnectVerificationMessage(
+        result: HealthConnectVerificationResult,
+    ): String =
+        when (result.state) {
+            HealthConnectVerificationState.PRESENT ->
+                "Provider query verified the owned exercise record."
+            HealthConnectVerificationState.ABSENT ->
+                "Provider query verified the owned exercise record is absent."
+            HealthConnectVerificationState.BLOCKED ->
+                "Provider verification is blocked by availability or permission."
+            HealthConnectVerificationState.MISMATCH ->
+                "Provider verification found a record mismatch."
+            HealthConnectVerificationState.FAILED ->
+                "Provider verification failed."
+        }
+
     private fun weekStart(timestampUtcMs: Long): Long =
         Instant.ofEpochMilli(timestampUtcMs)
             .atZone(ZoneOffset.UTC)
@@ -1243,6 +1506,7 @@ class ComposePhoneViewModel(
         private const val TREND_ACTIVITY_LIMIT = 5_000
         private const val STATUS_SCAN_LIMIT = 5_000
         private const val WEEK_BUCKETS = 12
+        private const val ROUTE_PREVIEW_LIMIT = 500
         private const val WEEK_MILLIS = 7L * 24L * 60L * 60L * 1_000L
         private const val HISTORY_LOAD_ERROR =
             "Activity history could not be loaded. Stored activities were not changed."
@@ -1264,5 +1528,6 @@ class ComposePhoneViewModel(
         private const val HEALTH_UPDATE_ACTION = "health-connect.update"
         private const val HEALTH_DELETE_ACTION = "health-connect.delete"
         private const val HEALTH_RETRY_ACTION = "health-connect.retry"
+        private const val HEALTH_VERIFY_ACTION = "health-connect.verify"
     }
 }

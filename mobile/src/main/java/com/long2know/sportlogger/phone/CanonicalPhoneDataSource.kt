@@ -31,6 +31,20 @@ class CanonicalPhoneDataSource private constructor(
         repository.setMetadata(sessionId, title, notes, tags, updatedAtUtcMs)
     }
 
+    fun deleteLocal(
+        sessionId: String,
+        expectedAcceptedRevision: Long,
+        deletedAtUtcMs: Long,
+    ): PhoneActivityRepository.LocalDeleteResult =
+        repository.deleteLocal(
+            sessionId,
+            expectedAcceptedRevision,
+            deletedAtUtcMs,
+        )
+
+    fun pendingTombstones(limit: Int): List<PhoneActivityRepository.TombstoneOutboxItem> =
+        repository.pendingTombstoneOutbox(limit)
+
     fun backfill(nowUtcMs: Long): LegacyPhoneInboxBackfill.BackfillResult {
         val backfill = LegacyPhoneInboxBackfill(repository)
         return if (applicationContext != null) {

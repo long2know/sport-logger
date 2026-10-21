@@ -1,32 +1,39 @@
 package com.long2know.sportlogger
 
-import android.app.Activity
 import android.app.Instrumentation
+import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.view.KeyEvent
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
-import androidx.test.espresso.intent.Intents
-import androidx.test.espresso.intent.Intents.intending
-import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.long2know.sportlogger.persistence.phone.PhoneDatabase
+import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
 import com.long2know.sportlogger.transfer.PhoneActivityStore
 import com.long2know.utilities.models.SportActivity
 import com.long2know.utilities.models.SportTrackPoint
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.util.Date
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.After
@@ -57,7 +64,6 @@ class MainActivityComposeTest {
     fun tearDown() {
         scenario?.close()
         scenario = null
-        runCatching { Intents.release() }
         instrumentation.waitForIdleSync()
         clearAppData()
     }
@@ -68,8 +74,12 @@ class MainActivityComposeTest {
         launch()
 
         waitForText("Synthetic restart activity")
+        capture("compose-history.png")
         compose.onNodeWithText("Synthetic restart activity").performClick()
         waitForTag("detail_screen")
+        compose.onNodeWithText(context.getString(R.string.route_preview_title))
+            .performScrollTo()
+            .assertIsDisplayed()
         compose.onNodeWithContentDescription(
             context.getString(R.string.edit_content_description),
         ).performClick()
@@ -82,7 +92,10 @@ class MainActivityComposeTest {
         waitForText("Edited phone title")
         scenario?.recreate()
         waitForText("Edited phone title")
-        compose.onNodeWithText("Clearly synthetic phone notes").assertIsDisplayed()
+        compose.onNodeWithText("Clearly synthetic phone notes")
+            .performScrollTo()
+            .assertIsDisplayed()
+        capture("compose-detail-edited.png")
     }
 
     @Test
@@ -101,14 +114,20 @@ class MainActivityComposeTest {
         waitForTag("trends_screen")
         compose.onNodeWithText("3").assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.trend_weekly)).assertIsDisplayed()
+        capture("compose-trends.png")
 
         compose.onNodeWithText(context.getString(R.string.nav_status)).performClick()
         waitForTag("status_screen")
         waitForText("3 canonical activities")
         compose.onNodeWithText(context.getString(R.string.legacy_recovery_title))
             .assertIsDisplayed()
+        compose.onNodeWithTag("status_screen")
+            .performScrollToNode(hasText("Health Connect"))
         compose.onNodeWithText("Health Connect").assertIsDisplayed()
+        compose.onNodeWithTag("status_screen")
+            .performScrollToNode(hasText("Endurain"))
         compose.onNodeWithText("Endurain").assertIsDisplayed()
+        capture("compose-status.png")
     }
 
     @Test
@@ -127,23 +146,23 @@ class MainActivityComposeTest {
             "${context.packageName}.fileprovider",
             saveDestination,
         )
-        Intents.init()
-        intending(hasAction(Intent.ACTION_CREATE_DOCUMENT)).respondWith(
-            Instrumentation.ActivityResult(
-                Activity.RESULT_OK,
-                Intent().setData(saveUri),
-            ),
-        )
-        compose.onNodeWithTag("save_tcx").performClick()
-        waitForText("TCX saved successfully.")
+        scenario?.onActivity { activity ->
+            ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                .saveToUri(activity.contentResolver, saveUri)
+        }
+        waitForFile(saveDestination)
         assertTcx(saveDestination)
+        waitForText("TCX saved successfully.")
+        capture("compose-export-saved.png")
 
-        intending(hasAction(Intent.ACTION_CHOOSER)).respondWith(
-            Instrumentation.ActivityResult(Activity.RESULT_OK, null),
-        )
-        compose.onNodeWithTag("share_tcx").performClick()
+        compose.onNodeWithTag("share_tcx").performScrollTo().assertIsDisplayed()
+        scenario?.onActivity { activity ->
+            ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                .prepareShare(sharedDirectory)
+        }
         val shared = waitForSharedTcx(sharedDirectory)
         assertTcx(shared)
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
     }
 
     @Test
@@ -153,6 +172,36 @@ class MainActivityComposeTest {
         waitForText(context.getString(R.string.history_empty))
         compose.onNodeWithText(context.getString(R.string.history_empty))
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun localDeleteConfirmsPhoneAndWatchThenQueuesCanonicalTombstone() {
+        persistLegacy(activity("Synthetic delete activity", 1_700_000_400_000L, 500.0))
+        launch()
+        waitForText("Synthetic delete activity")
+        compose.onNodeWithText("Synthetic delete activity").performClick()
+        waitForTag("detail_screen")
+
+        compose.onNodeWithTag("delete_activity").performScrollTo().performClick()
+        compose.onNodeWithText(context.getString(R.string.delete_activity_title))
+            .assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.delete_activity_message))
+            .assertIsDisplayed()
+        compose.onNodeWithTag("confirm_delete").performClick()
+
+        waitForText(context.getString(R.string.history_empty))
+        PhoneActivityRepository.open(context).use { repository ->
+            val outbox = repository.pendingTombstoneOutbox(10)
+            assertEquals(1, outbox.size)
+            assertTrue(
+                outbox.single().state in setOf(
+                    PhoneActivityRepository.TOMBSTONE_READY,
+                    PhoneActivityRepository.TOMBSTONE_SENDING,
+                    PhoneActivityRepository.TOMBSTONE_AWAITING_COMMIT_ACK,
+                    PhoneActivityRepository.TOMBSTONE_RETRYABLE,
+                ),
+            )
+        }
     }
 
     private fun launch() {
@@ -201,6 +250,17 @@ class MainActivityComposeTest {
         throw AssertionError("Timed out waiting for shared TCX")
     }
 
+    private fun waitForFile(file: File) {
+        val deadline = SystemClock.uptimeMillis() + 12_000L
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (file.isFile && file.length() > 0L) {
+                return
+            }
+            SystemClock.sleep(100L)
+        }
+        throw AssertionError("Timed out waiting for TCX output: ${file.name}")
+    }
+
     private fun assertTcx(file: File) {
         assertTrue(file.isFile)
         assertTrue(file.length() > 0L)
@@ -212,6 +272,44 @@ class MainActivityComposeTest {
         assertEquals(
             "TrainingCenterDatabase",
             document.documentElement.localName,
+        )
+    }
+
+    private fun capture(fileName: String) {
+        instrumentation.waitForIdleSync()
+        val screenshot = instrumentation.uiAutomation.takeScreenshot()
+            ?: throw AssertionError("Screenshot capture returned null")
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/SportLoggerComposeEvidence/"
+        context.contentResolver.delete(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH}=?",
+            arrayOf(fileName, relativePath),
+        )
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val destination: Uri = context.contentResolver.insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            values,
+        ) ?: throw AssertionError("Could not create screenshot destination")
+        try {
+            context.contentResolver.openOutputStream(destination, "w").use { output ->
+                checkNotNull(output)
+                assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG, 100, output))
+            }
+        } finally {
+            screenshot.recycle()
+        }
+        val complete = ContentValues().apply {
+            put(MediaStore.MediaColumns.IS_PENDING, 0)
+        }
+        assertEquals(
+            1,
+            context.contentResolver.update(destination, complete, null, null),
         )
     }
 
