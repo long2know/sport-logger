@@ -92,14 +92,21 @@ transition(sessionId, leaseToken, lifecycle fields...)
 finishSession(sessionId, leaseToken, ActivityRecord, transferId, completedAt)
 discardSession(sessionId, leaseToken, TombstoneRecord, createdAt)
 readyOutbox(limit)
+outbox(transferId) / pendingOutbox(limit) / reclaimPendingOutbox(limit, now)
 transitionOutbox(transferId, expectedState, nextState, attempt/failure fields...)
+acceptCommitAck(exactAckBytes, committedAt)
+pendingTombstoneOutbox / transitionTombstoneOutbox / acceptTombstoneCommitAck
+observeOutbox(Executor, Runnable)
 ```
 
 Writes return `CompletableFuture` on the caller-supplied executor. Session/sample/lifecycle writes
 are fenced by the persisted session UUID and non-zero recording lease. A stale callback cannot
 append or transition. `finishSession` writes the completed revision, final samples, and immutable
 outbox bytes in one Room transaction. `discardSession` writes the tombstone/outbox before ending
-ownership.
+ownership. Process-start recovery reclaims interrupted `SENDING` rows and returns
+`READY`/`RETRYABLE`/`AWAITING_COMMIT_ACK` rows for exact-byte resend. Only a protobuf ACK whose
+transfer/session/revision/hash matches the immutable outbox can mark it `COMMITTED`; duplicate exact
+ACKs are harmless. Tombstone outbox and ACK handling use the same persisted semantics.
 
 Trinity owns adapting the existing controller/journal to persist the UUID and call this API. This
 change does not alter `PersistentRecording`, recording services, `SqlLogger`, or legacy models.
@@ -127,6 +134,7 @@ The phone consumer API is:
 
 ```text
 summaries(offset, limit)
+summaryCount()
 detail(sessionId, acceptedRevision)
 pointPage(sessionId, revision, afterSequence, limit, CancellationSignal)
 metadata(sessionId) / setMetadata(...)
@@ -136,6 +144,11 @@ observeChanges(Executor, Runnable)
 Summaries are paged and sorted without materializing point graphs. Details are immutable
 session/revision snapshots. Point queries are cancellable, copy ordered protobuf samples into an
 immutable page, and close the SQLite cursor before returning.
+
+Production repository and backfill calls are synchronous Room/file I/O and belong on a background
+executor. A repository opened with `PhoneActivityRepository.open(context)` may be retained by a
+ViewModel and closed from `onCleared`. Phone metadata limits are 200 title characters, 10,000 notes
+characters, 50 unique tags, and 64 characters per non-empty single-line tag.
 
 Connector ledger identity is the complete tuple:
 
@@ -150,6 +163,27 @@ tombstoning; delete-unsupported is explicit.
 
 Neo owns transport, ACK delivery, connector networking, and scheduling. Switch owns replacing the
 legacy phone adapter with these read methods after integration.
+
+## Health Connect owned-record ledger
+
+Health Connect record ownership is separate from the Endurain positive-integer remote-ID ledger.
+`HealthConnectLedgerRepository` stores opaque provider record ID strings and a deterministic
+descriptor:
+
+```text
+(session UUID, revision, record type, chunk index,
+ deterministic client record ID, monotonic client record version)
+```
+
+Its API allocates monotonic versions, prepares only named records without deleting omitted
+route/child data, records `PUBLISH`/`UPDATE`/`DELETE` operation state, persists a `BEFORE` receipt
+before provider I/O, persists success/failure receipts after provider I/O, retains every opaque
+provider record ID, and exposes deletion progress/receipts across all revisions. Changed chunk
+counts therefore leave prior owned records discoverable for explicit deletion instead of orphaning
+them. Partial delete failures remain `DELETE_PENDING` across process death.
+
+This is only the canonical ledger contract. The Health Connect owner supplies record mapping,
+permissions, provider calls, route-safe update policy, and retry scheduling.
 
 ## Read-only legacy ETL
 
@@ -182,6 +216,12 @@ preserves existing phone-owned metadata. Legacy zero-valued fields whose seriali
 prove presence remain absent, except latitude/longitude where the legacy model always carried both
 values and `0,0` must remain valid.
 
+Neither migration auto-starts from the repository. After integration, Trinity owns one
+background-dispatcher call to `LegacyWatchMigrator.migrateDefault(context, now)` from the watch
+startup/recovery path. Switch owns one background-dispatcher call to
+`LegacyPhoneInboxBackfill.backfillDefault(context, now)` from phone app startup before canonical
+history is displayed. Both calls are idempotent and retain raw sources, receipts, and quarantine.
+
 ## Validation tiers and rollback
 
 - Pure JVM: protobuf binary compatibility, IDs, validation, and reserved-source checks.
@@ -189,7 +229,9 @@ values and `0,0` must remain valid.
   point paging, connector ledgers, SQLite fixture ETL, interruption retry, and serialized inbox
   backfill.
 - Android instrumentation: phone and Wear version-1 database tests compile into their debug test
-  APKs. Device execution is a separate recorded gate and is not implied by host tests.
+  APKs. `PhoneDatabaseInstrumentedTest` passed 1/1 on API 36; the Wear instrumentation test remains
+  compile-only until its owner provides the Wear lane. No sensor, UI, or cross-device claim follows
+  from either storage test.
 
 Both legacy stores remain the rollback source. The canonical databases are separately named and may
 be deleted to return to the legacy application path while this migration is staged. Automatic

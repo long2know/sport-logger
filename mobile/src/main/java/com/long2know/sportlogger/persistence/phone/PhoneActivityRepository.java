@@ -37,6 +37,10 @@ public final class PhoneActivityRepository implements AutoCloseable {
     public static final String IMPORT_CORRUPT = "CORRUPT";
     public static final String IMPORT_UNSUPPORTED = "UNSUPPORTED";
     public static final String IMPORT_IO_FAILURE = "IO_FAILURE";
+    public static final int MAX_TITLE_LENGTH = 200;
+    public static final int MAX_NOTES_LENGTH = 10_000;
+    public static final int MAX_TAG_COUNT = 50;
+    public static final int MAX_TAG_LENGTH = 64;
 
     private final PhoneDatabase database;
     private final PhoneDao dao;
@@ -87,6 +91,10 @@ public final class PhoneActivityRepository implements AutoCloseable {
                     row.title));
         }
         return Collections.unmodifiableList(summaries);
+    }
+
+    public long summaryCount() {
+        return dao.summaryCount();
     }
 
     public ActivityDetail detail(String sessionId, long revision) {
@@ -169,6 +177,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
             List<String> tags,
             long updatedAtUtcMs) {
         CanonicalIds.requireUuid(sessionId, "Session identifier");
+        validateLength(title, MAX_TITLE_LENGTH, "Title");
+        validateLength(notes, MAX_NOTES_LENGTH, "Notes");
         PhoneMetadataEntity entity = new PhoneMetadataEntity();
         entity.sessionId = sessionId;
         entity.title = title;
@@ -275,6 +285,11 @@ public final class PhoneActivityRepository implements AutoCloseable {
                             "Connector ledger already has different immutable delivery inputs");
                 }
                 return;
+            }
+            if (dao.revision(key.sessionId, key.revision) == null) {
+                throw new CanonicalContractException(
+                        "ACTIVITY_REVISION_NOT_FOUND",
+                        "Connector delivery requires an immutable stored activity revision");
             }
             ConnectorLedgerEntity ledger = new ConnectorLedgerEntity();
             applyKey(ledger, key);
@@ -782,10 +797,18 @@ public final class PhoneActivityRepository implements AutoCloseable {
         if (tags == null || tags.isEmpty()) {
             return "";
         }
+        if (tags.size() > MAX_TAG_COUNT) {
+            throw new IllegalArgumentException(
+                    "At most " + MAX_TAG_COUNT + " tags are supported");
+        }
         Set<String> unique = new LinkedHashSet<>();
         for (String tag : tags) {
             if (tag == null || tag.isEmpty() || tag.contains("\n") || tag.contains("\r")) {
                 throw new IllegalArgumentException("Tags must be non-empty single-line values");
+            }
+            if (tag.length() > MAX_TAG_LENGTH) {
+                throw new IllegalArgumentException(
+                        "Tags cannot exceed " + MAX_TAG_LENGTH + " characters");
             }
             unique.add(tag);
         }
@@ -804,6 +827,13 @@ public final class PhoneActivityRepository implements AutoCloseable {
 
     private static boolean isEmpty(String value) {
         return value == null || value.isEmpty();
+    }
+
+    private static void validateLength(String value, int maximum, String label) {
+        if (value != null && value.length() > maximum) {
+            throw new IllegalArgumentException(
+                    label + " cannot exceed " + maximum + " characters");
+        }
     }
 
     private static String sha256Hex(byte[] bytes) {
