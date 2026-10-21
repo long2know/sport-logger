@@ -18,7 +18,6 @@ import com.long2know.sportlogger.transfer.ActivityTransferReceiver;
 import com.long2know.sportlogger.transfer.PendingAcknowledgementRetry;
 import com.long2know.sportlogger.transfer.PhoneActivityStore;
 import com.long2know.sportlogger.transfer.WearDataLayerAcknowledger;
-import com.long2know.utilities.models.SportActivity;
 import com.long2know.utilities.transfer.ActivityTransferProtocol;
 
 import java.io.ByteArrayOutputStream;
@@ -28,20 +27,15 @@ import java.util.concurrent.TimeUnit;
 public class ListenerService extends WearableListenerService {
     private static final String TAG = "ListenerService";
     private static final long DATA_LAYER_TIMEOUT_SECONDS = 30L;
+    public static final String ACTION_ACTIVITY_RECEIVED =
+            "com.long2know.sportlogger.action.ACTIVITY_RECEIVED";
 
     @Override
     public void onMessageReceived(MessageEvent messageEvent) {
 
         if (messageEvent.getPath().equals(getString(R.string.wear_path))) {
-            final String message = new String(messageEvent.getData());
             Log.v(TAG, "Message path received on phone is: " + messageEvent.getPath());
-            Log.v(TAG, "Message received on phone is: " + message);
-
-            // Broadcast message to MainActivity for display
-            Intent messageIntent = new Intent();
-            messageIntent.setAction(Intent.ACTION_SEND);
-            messageIntent.putExtra("message", message);
-            LocalBroadcastManager.getInstance(this).sendBroadcast(messageIntent);
+            Log.v(TAG, "Wear message received on phone");
         } else {
             super.onMessageReceived(messageEvent);
         }
@@ -107,7 +101,7 @@ public class ListenerService extends WearableListenerService {
                         : null;
                 String declaredPayloadSha256 = dataMapItem.getDataMap().getString(
                         ActivityTransferProtocol.PAYLOAD_SHA256_KEY);
-                SportActivity sportActivity = receiver.receive(
+                receiver.receive(
                         itemPath,
                         sourceNodeId,
                         sourceUri,
@@ -116,8 +110,7 @@ public class ListenerService extends WearableListenerService {
                         declaredPayloadSha256,
                         bytes);
 
-                Intent activityIntent = new Intent(Intent.ACTION_SEND);
-                activityIntent.putExtra("sportActivity", sportActivity);
+                Intent activityIntent = new Intent(ACTION_ACTIVITY_RECEIVED);
                 LocalBroadcastManager.getInstance(this).sendBroadcast(activityIntent);
             } catch (Exception error) {
                 Log.e(TAG, "Could not durably receive activity transfer", error);
