@@ -10,25 +10,25 @@ The supported baseline is the existing three-module Groovy build:
 | Gradle | 9.5.0, binary distribution SHA-256 pinned in the wrapper |
 | Android Gradle Plugin | 9.3.3 |
 | Android SDK / build tools | compile SDK 36 / build tools 36.0.0 |
-| Kotlin | Built-in Kotlin is disabled per module; modules remain Java with Groovy Gradle scripts |
+| Kotlin | AGP built-in Kotlin 2.2.10 where enabled; Java Room code uses `annotationProcessor` |
 | Mobile | min SDK 26 / target SDK 36 |
 | Wear | min SDK 30 / target SDK 35 |
 | Utilities | min SDK 23 |
 | Java source and bytecode | 17 |
 
 Dependencies resolve from Google Maven and Maven Central. AndroidX is enabled, Jetifier is
-disabled, and no `jcenter()` or `com.android.support.*` dependency remains. AGP 9's public DSL is
+disabled, and no `jcenter()` or `com.android.support.*` dependency remains.
 
 The Wear app requires Wear OS 3 / API 30 or newer because the verified
 `androidx.health:health-services-client:1.1.0` AAR declares min SDK 30. The app does not use
 `tools:overrideLibrary` to claim unsupported Wear OS 2 compatibility. Raw sensor and location
 fallbacks remain available when Health Services or an individual metric is unavailable on a
 supported OS; they are not a promise of support for pre-API-30 watches. Raising the app minimum
-does not delete or rewrite the existing legacy watch database or serialized activity payloads. AGP 9's public DSL is
-used without `android.newDsl=false` or another compatibility opt-out.
+does not delete or rewrite the existing legacy watch database or serialized activity payloads.
+AGP 9's public DSL is used without `android.newDsl=false` or another compatibility opt-out.
 
 AGP 9.3.1 was not retained because the official 9.3 release notes record a JDK 17 lint crash that
-was fixed in 9.3.2. Version 9.3.3 is the newest patch in the same supported line and keeps the
+was fixed in 9.3.2. The selected 9.3.3 patch keeps the
 documented Gradle 9.5.0 / JDK 17 / build tools 36.0.0 compatibility tuple. Wrapper integrity is
 pinned and checked in CI:
 
@@ -61,7 +61,16 @@ adb -s <wear-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
 The pinned CI workflow is `.github/workflows/android-build.yml`. It runs for pull requests
 and pushes targeting both `dev` and `main`.
 
-## Recording ownership
+For device pairing, signing compatibility, and non-destructive upgrade instructions, see
+the [installation guide](installing.md).
+
+## Canonical and legacy recording boundaries
+
+The current canonical contracts, Room repositories, and commit acknowledgements are
+documented in [canonical storage](canonical-storage.md) and [durable sync](durable-sync.md).
+Those documents describe the primary activity identity and transfer protocol. The retained
+Java controller and legacy compatibility path below must not be mistaken for the canonical
+phone commit boundary.
 
 `SportLoggerService` delegates durable recording transitions to a serial
 `RecordingController`. START, PAUSE, RESUME, STOP, DISCARD, sampling, and finalization are
@@ -107,7 +116,11 @@ a supported persisted upgrade source; acceptance devices using that build must r
 rather than merge identities heuristically. Matching current watch and phone versions are
 required for new canonical transfers.
 
-## Validation
+## Toolchain-upgrade validation checkpoint
+
+The counts in this section describe the original Java-only toolchain upgrade, before the
+canonical storage, Health Services, and provider work. They are historical evidence, not
+the current product test count or a paired-device acceptance claim.
 
 The clean host validation command is:
 

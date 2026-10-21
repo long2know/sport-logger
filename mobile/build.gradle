@@ -27,6 +27,11 @@ android {
             minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        sideload {
+            initWith release
+            signingConfig = signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
     }
 
     compileOptions {

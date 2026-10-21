@@ -11,6 +11,7 @@ transfer, and shared activity/TCX-oriented utilities.
 [![Migration oracle](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml)
 
 [Get started](#get-started) | [Build and run](#build-and-run) |
+[Install on a phone and watch](docs/installing.md) |
 [Project layout](#project-layout) | [Roadmap](#roadmap) | [Contributing](#contributing)
 
 > **Developer preview:** SportLogger is being modernized incrementally from its original
@@ -40,8 +41,8 @@ post-processing workflow. Keeping recorded data usable and portable remains the 
 
 - **JDK 17**, selected both for your terminal and Android Studio's Gradle JDK.
 - **Android SDK command-line tools**, platform tools, Android SDK Platform 36, and Build Tools 36.0.0.
-- An Android phone and a paired Wear OS watch, both running Android API 26 or newer,
-  for real recording and transfer checks.
+- An Android phone running API 26 or newer and a paired Wear OS 3+ watch running
+  API 30 or newer for real recording and transfer checks.
   Emulators are useful for development but do not prove physical sensor behavior.
 - Network access for the first Gradle/dependency download.
 
@@ -50,8 +51,8 @@ The project uses its checked-in Gradle wrapper; a separate Gradle installation i
 | Build component | Project baseline |
 |---|---|
 | Java | 17 |
-| Gradle wrapper | 8.11.1 |
-| Android Gradle Plugin | 8.10.1 |
+| Gradle wrapper | 9.5.0 |
+| Android Gradle Plugin | 9.3.3 |
 | Compile SDK | 36 |
 | Phone target SDK | 36 |
 | Wear target SDK | 35 |
@@ -115,6 +116,11 @@ adb devices
 adb -s PHONE_SERIAL install -r mobile/build/outputs/apk/debug/mobile-debug.apk
 adb -s WATCH_SERIAL install -r wear/build/outputs/apk/debug/wear-debug.apk
 ```
+
+Use both APKs from the same build and signing identity. Do not install both APKs on one
+device: they intentionally share an application ID. The
+[installation guide](docs/installing.md) covers wireless debugging, signature mismatches,
+safe upgrades, and the difference between a queued transfer and a committed phone receipt.
 
 Pair the phone and watch, open the apps, and grant the permissions requested for the
 measurements you want to record. Heart rate and step availability depend on hardware;
