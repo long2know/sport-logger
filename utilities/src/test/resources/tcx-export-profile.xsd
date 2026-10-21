@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:tcx="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"
+    targetNamespace="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2"
+    elementFormDefault="qualified">
+
+    <xsd:element name="TrainingCenterDatabase">
+        <xsd:complexType>
+            <xsd:sequence>
+                <xsd:element name="Activities">
+                    <xsd:complexType>
+                        <xsd:sequence>
+                            <xsd:element name="Activity">
+                                <xsd:complexType>
+                                    <xsd:sequence>
+                                        <xsd:element name="Id" type="xsd:dateTime" />
+                                        <xsd:element name="Lap" type="tcx:LapType" />
+                                        <xsd:element name="Notes" type="xsd:string" minOccurs="0" />
+                                    </xsd:sequence>
+                                    <xsd:attribute name="Sport" use="required">
+                                        <xsd:simpleType>
+                                            <xsd:restriction base="xsd:string">
+                                                <xsd:enumeration value="Running" />
+                                                <xsd:enumeration value="Biking" />
+                                                <xsd:enumeration value="Other" />
+                                            </xsd:restriction>
+                                        </xsd:simpleType>
+                                    </xsd:attribute>
+                                </xsd:complexType>
+                            </xsd:element>
+                        </xsd:sequence>
+                    </xsd:complexType>
+                </xsd:element>
+            </xsd:sequence>
+        </xsd:complexType>
+    </xsd:element>
+
+    <xsd:complexType name="LapType">
+        <xsd:sequence>
+            <xsd:element name="TotalTimeSeconds" type="xsd:double" />
+            <xsd:element name="DistanceMeters" type="xsd:double" />
+            <xsd:element name="Calories" type="xsd:unsignedShort" />
+            <xsd:element name="AverageHeartRateBpm" type="tcx:HeartRateType" minOccurs="0" />
+            <xsd:element name="MaximumHeartRateBpm" type="tcx:HeartRateType" minOccurs="0" />
+            <xsd:element name="Intensity">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:enumeration value="Active" />
+                        <xsd:enumeration value="Resting" />
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="TriggerMethod">
+                <xsd:simpleType>
+                    <xsd:restriction base="xsd:string">
+                        <xsd:enumeration value="Manual" />
+                        <xsd:enumeration value="Distance" />
+                        <xsd:enumeration value="Location" />
+                        <xsd:enumeration value="Time" />
+                        <xsd:enumeration value="HeartRate" />
+                    </xsd:restriction>
+                </xsd:simpleType>
+            </xsd:element>
+            <xsd:element name="Track" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="Trackpoint" type="tcx:TrackpointType" maxOccurs="unbounded" />
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="Extensions" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:any namespace="##other" processContents="lax" maxOccurs="unbounded" />
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+        </xsd:sequence>
+        <xsd:attribute name="StartTime" type="xsd:dateTime" use="required" />
+    </xsd:complexType>
+
+    <xsd:complexType name="TrackpointType">
+        <xsd:sequence>
+            <xsd:element name="Time" type="xsd:dateTime" />
+            <xsd:element name="Position" minOccurs="0">
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <xsd:element name="LatitudeDegrees" type="xsd:double" />
+                        <xsd:element name="LongitudeDegrees" type="xsd:double" />
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            <xsd:element name="AltitudeMeters" type="xsd:double" minOccurs="0" />
+            <xsd:element name="DistanceMeters" type="xsd:double" minOccurs="0" />
+            <xsd:element name="HeartRateBpm" type="tcx:HeartRateType" minOccurs="0" />
+        </xsd:sequence>
+    </xsd:complexType>
+
+    <xsd:complexType name="HeartRateType">
+        <xsd:sequence>
+            <xsd:element name="Value" type="xsd:unsignedByte" />
+        </xsd:sequence>
+    </xsd:complexType>
+</xsd:schema>
