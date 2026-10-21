@@ -175,12 +175,6 @@ public final class LegacyPhoneInboxBackfill {
         long wallDuration = Math.max(
                 0L,
                 legacy.EndTimeUTC.getTime() - legacy.StartTimeUTC.getTime());
-        Long activeDuration = legacy.Time > 0D
-                ? Math.round(finiteNonNegative(legacy.Time, "duration") * 1_000D)
-                : null;
-        long elapsedDuration = activeDuration == null
-                ? wallDuration
-                : Math.max(wallDuration, activeDuration);
         SourceMetadata source = source();
         ActivitySummary.Builder summary = ActivitySummary.newBuilder()
                 .setSampleCount(samples.size());
@@ -209,7 +203,7 @@ public final class LegacyPhoneInboxBackfill {
                 .setActivityType(ActivityType.ACTIVITY_TYPE_UNSPECIFIED)
                 .setStartTimeUtcMs(legacy.StartTimeUTC.getTime())
                 .setEndTimeUtcMs(legacy.EndTimeUTC.getTime())
-                .setElapsedDurationMs(elapsedDuration)
+                .setElapsedDurationMs(wallDuration)
                 .setSummary(summary)
                 .setSource(source)
                 .setLegacyIdentity(LegacyIdentity.newBuilder()
@@ -220,9 +214,6 @@ public final class LegacyPhoneInboxBackfill {
                         .setActivityId(legacyActivityId)
                         .setRawPayloadSha256(sourceSha256))
                 .addAllSamples(samples);
-        if (activeDuration != null) {
-            activity.setActiveDurationMs(activeDuration);
-        }
         if (legacy.Name != null) {
             activity.setRecordedName(legacy.Name);
         }
