@@ -703,6 +703,9 @@ public final class SportLoggerService extends Service {
     }
 
     private void migrateLegacyWatchData() {
+        if (!LegacyWatchMigrator.defaultLegacyDatabase(this).isFile()) {
+            return;
+        }
         try (WatchActivityRepository repository = WatchActivityRepository.open(this)) {
             new LegacyWatchMigrator(repository).migrateDefault(
                     this,

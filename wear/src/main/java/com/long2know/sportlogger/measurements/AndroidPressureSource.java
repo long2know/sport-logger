@@ -9,6 +9,8 @@ import android.os.Handler;
 import android.os.HandlerThread;
 
 public final class AndroidPressureSource implements ResourceOwner.Source {
+    private static final int SAMPLING_PERIOD_MICROS = 1_000_000;
+
     private final SensorManager sensorManager;
 
     public AndroidPressureSource(Context context) {
@@ -48,7 +50,8 @@ public final class AndroidPressureSource implements ResourceOwner.Source {
             boolean registered = sensorManager.registerListener(
                     listener,
                     pressure,
-                    SensorManager.SENSOR_DELAY_GAME,
+                    SAMPLING_PERIOD_MICROS,
+                    0,
                     new Handler(callbackThread.getLooper()));
             if (!registered) {
                 throw new ResourceException(
