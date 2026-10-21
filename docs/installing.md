@@ -73,7 +73,47 @@ name and signing certificate; SportLogger intentionally uses `com.long2know.spor
 on both devices. Install both APKs from one build, not unrelated CI runs or signing keys.
 See Android's [Data Layer security requirements](https://developer.android.com/training/wearables/data/overview).
 
-## Get a matching APK pair
+## Download without building
+
+The planned manual prerelease page is
+[`v1.0.0-sideload.1`](https://github.com/long2know/sport-logger/releases/tag/v1.0.0-sideload.1).
+It is a future download route until the release and its assets are actually published; this
+link alone is not a claim that publication has happened.
+
+Once available, download these three assets into the same directory:
+
+```text
+mobile-sideload.apk
+wear-sideload.apk
+SHA256SUMS
+```
+
+Verify the downloaded bytes before installing:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+Then use exact device serials from `adb devices`:
+
+```bash
+adb -s PHONE_SERIAL install -r mobile-sideload.apk
+adb -s WATCH_SERIAL install -r wear-sideload.apk
+```
+
+The prerelease is a non-debuggable manual preview using a development signing certificate.
+It is not Play/production signing and does not replace physical-sensor, battery,
+square-watch, actual paired-acknowledgement, or production-service acceptance.
+
+The published pair should be the final full-CI pair. Its phone and watch APKs were compared
+with the retained actual-device-tested sideload binaries: entry names and every uncompressed
+entry payload were identical, including `AndroidManifest.xml`, resources, DEX classes, native
+libraries, and assets. Raw ZIP local-entry/compressed-data bytes and central-directory/EOCD
+bytes were also identical. Only APK Signing Block bytes differed, and `apksigner` reported the
+same public certificate. Verify `SHA256SUMS` because the complete APK files are not
+byte-for-byte interchangeable.
+
+## Build a matching pair yourself
 
 Follow the [build setup](../README.md#get-started), then build both apps in one checkout:
 

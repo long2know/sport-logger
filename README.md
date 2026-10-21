@@ -11,7 +11,8 @@ provenance and quality, so no sample remains different from an actually recorded
 [![SQLite compatibility](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml)
 [![Migration oracle](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/legacy-migration-oracle.yml)
 
-[Features](#features) | [Use SportLogger](#use-sportlogger) |
+[Download / install](#download-and-install) | [Features](#features) |
+[Use SportLogger](#use-sportlogger) |
 [Get started](#get-started) | [Build and install](#build-and-install) |
 [Project layout](#project-layout) | [Roadmap](#roadmap) | [Contributing](#contributing)
 
@@ -23,6 +24,38 @@ provenance and quality, so no sample remains different from an actually recorded
 > sideload Room/recreation tests, and the actual launcher recording flow. Production/Play
 > signing and declarations, physical sensors and battery, square-watch hardware, and an actual
 > paired-device commit acknowledgement remain separate release gates.
+
+## Download and install
+
+The planned manual prerelease is
+[`v1.0.0-sideload.1`](https://github.com/long2know/sport-logger/releases/tag/v1.0.0-sideload.1).
+Use that page only after it is published; if the assets are not available yet, use the
+[build-it-yourself path](#build-and-install) below.
+
+Download these three assets into one directory:
+
+- `mobile-sideload.apk`
+- `wear-sideload.apk`
+- `SHA256SUMS`
+
+Verify the exact published files, then install each APK on only its corresponding device:
+
+```bash
+sha256sum -c SHA256SUMS
+adb -s PHONE_SERIAL install -r mobile-sideload.apk
+adb -s WATCH_SERIAL install -r wear-sideload.apk
+```
+
+Use exact serials from `adb devices`. This is a non-debuggable **manual preview** signed with
+a development certificate, not Play/production signing or proof of the external physical and
+paired-device gates.
+
+The final full-CI phone/watch pair is the recommended persistent pair. Compared with the
+retained actual-device-tested sideload APKs, both final APKs have identical ZIP entry sets and
+payload bytes for the manifest, resources, classes, native libraries, assets, and every other
+entry. Their ZIP local-entry/compressed-data regions and central-directory/EOCD regions are
+also identical; only APK Signing Block bytes differ, while the public signing certificate is
+the same. Always use the release's `SHA256SUMS` for exact downloaded-file identity.
 
 ## Features
 
@@ -47,9 +80,9 @@ hierarchies with checksums; the images below remain representative visual exampl
 
 | Persisted phone history | Watch readiness and activity selection |
 |---|---|
-| <img alt="Synthetic Material 3 persisted activity history" src="https://github.com/user-attachments/assets/7efd99bc-f1c0-4a30-953f-fff78e3ae998" width="360"> | <img alt="Synthetic round Wear OS readiness and Running selection" src="https://github.com/user-attachments/assets/229a3e09-190e-4222-b65d-7f55e4a2a7d4" width="280"> |
+| <img alt="Synthetic Material 3 persisted activity history" src="https://github.com/user-attachments/assets/7efd99bc-f1c0-4a30-953f-fff78e3ae998" width="360"> | <img alt="Synthetic round Wear OS readiness and Running selection" src="https://github.com/user-attachments/assets/30a383c4-9335-4da2-a4d5-c8f000aa56b1" width="280"> |
 | **Phone activity detail and bounded route preview** | **Watch canonical summary and offline retry** |
-| <img alt="Synthetic activity detail with recorded metrics and bounded route preview" src="https://github.com/user-attachments/assets/47be4f4e-bec6-4a05-badd-3b945f7d5300" width="360"> | <img alt="Synthetic saved watch workout showing transfer retry without a phone acknowledgement" src="https://github.com/user-attachments/assets/41fc1322-fca4-41e9-b308-f5f7a05809f7" width="280"> |
+| <img alt="Synthetic activity detail with recorded metrics and bounded route preview" src="https://github.com/user-attachments/assets/47be4f4e-bec6-4a05-badd-3b945f7d5300" width="360"> | <img alt="Synthetic saved watch workout showing transfer retry without a phone acknowledgement" src="https://github.com/user-attachments/assets/4c68ce75-6104-4b12-8c64-474c7ca4891e" width="280"> |
 
 ### Actual phone sideload acceptance
 
