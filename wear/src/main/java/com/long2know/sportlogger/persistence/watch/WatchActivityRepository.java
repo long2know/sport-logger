@@ -42,33 +42,30 @@ public final class WatchActivityRepository implements AutoCloseable {
     private final WatchDatabase database;
     private final WatchDao dao;
     private final Executor writeExecutor;
-    private final boolean ownsDatabase;
     private final ExecutorService ownedExecutor;
 
     public WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor) {
-        this(database, writeExecutor, false);
+        this(database, writeExecutor, null);
     }
 
     private WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor,
-            boolean ownsDatabase) {
+            ExecutorService ownedExecutor) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.watchDao();
         this.writeExecutor = Objects.requireNonNull(writeExecutor);
-        this.ownsDatabase = ownsDatabase;
-        this.ownedExecutor = ownsDatabase && writeExecutor instanceof ExecutorService
-                ? (ExecutorService) writeExecutor
-                : null;
+        this.ownedExecutor = ownedExecutor;
     }
 
     public static WatchActivityRepository open(Context context) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
         return new WatchActivityRepository(
                 WatchDatabase.open(context),
-                Executors.newSingleThreadExecutor(),
-                true);
+                executor,
+                executor);
     }
 
     public CompletableFuture<SessionSnapshot> startSession(StartRequest request) {
@@ -1461,9 +1458,6 @@ public final class WatchActivityRepository implements AutoCloseable {
     public void close() {
         if (ownedExecutor != null) {
             ownedExecutor.shutdown();
-        }
-        if (ownsDatabase) {
-            database.close();
         }
     }
 

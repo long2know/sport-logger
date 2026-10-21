@@ -26,6 +26,7 @@ import androidx.annotation.NonNull;
         exportSchema = true)
 public abstract class WatchDatabase extends RoomDatabase {
     public static final String DATABASE_NAME = "sportlogger_watch_v1.db";
+    private static volatile WatchDatabase instance;
     public static final Migration MIGRATION_1_2 = new Migration(1, 2) {
         @Override
         public void migrate(@NonNull SupportSQLiteDatabase database) {
@@ -58,11 +59,31 @@ public abstract class WatchDatabase extends RoomDatabase {
     abstract WatchDao watchDao();
 
     public static WatchDatabase open(Context context) {
-        return Room.databaseBuilder(
-                        context.getApplicationContext(),
-                        WatchDatabase.class,
-                        DATABASE_NAME)
+        WatchDatabase current = instance;
+        if (current != null) {
+            return current;
+        }
+        synchronized (WatchDatabase.class) {
+            current = instance;
+            if (current == null) {
+                current = Room.databaseBuilder(
+                                context.getApplicationContext(),
+                                WatchDatabase.class,
+                                DATABASE_NAME)
                         .addMigrations(MIGRATION_1_2)
                         .build();
+                instance = current;
+            }
+            return current;
+        }
+    }
+
+    static void resetForTests() {
+        synchronized (WatchDatabase.class) {
+            if (instance != null) {
+                instance.close();
+                instance = null;
+            }
+        }
     }
 }
