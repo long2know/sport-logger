@@ -31,7 +31,7 @@ internal class HealthConnectAvailabilityDetector(
         if (!availability.canResolveWithProviderInstall) {
             return null
         }
-        return Intent(Intent.ACTION_VIEW).apply {
+        val marketIntent = Intent(Intent.ACTION_VIEW).apply {
             setPackage(PLAY_STORE_PACKAGE)
             data =
                 Uri.parse(
@@ -41,6 +41,13 @@ internal class HealthConnectAvailabilityDetector(
             putExtra("overlay", true)
             putExtra("callerId", context.packageName)
         }
+        if (marketIntent.resolveActivity(context.packageManager) != null) {
+            return marketIntent
+        }
+        return Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://play.google.com/store/apps/details?id=$PROVIDER_PACKAGE"),
+        )
     }
 
     private fun providerInstalled(): Boolean {
