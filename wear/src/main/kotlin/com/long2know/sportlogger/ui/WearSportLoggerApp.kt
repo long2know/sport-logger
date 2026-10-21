@@ -300,17 +300,31 @@ private fun LiveScreen(
         }
         if (state.recording.currentLapIndex > 0) {
             item {
+                val lastLapDetail = when {
+                    state.recording.lastLapActiveDurationMillis != null &&
+                        state.recording.lastLapElapsedDurationMillis != null &&
+                        state.recording.lastLapActiveDurationMillis !=
+                        state.recording.lastLapElapsedDurationMillis ->
+                        stringResource(
+                            R.string.last_lap_active_elapsed_value,
+                            formatDuration(state.recording.lastLapActiveDurationMillis),
+                            formatDuration(state.recording.lastLapElapsedDurationMillis),
+                        )
+
+                    state.recording.lastLapActiveDurationMillis != null ->
+                        stringResource(
+                            R.string.last_lap_value,
+                            formatDuration(state.recording.lastLapActiveDurationMillis),
+                        )
+
+                    else -> stringResource(R.string.first_lap_in_progress)
+                }
                 StatusPanel(
                     title = stringResource(
                         R.string.current_lap_value,
                         state.recording.currentLapIndex,
                     ),
-                    detail = state.recording.lastLapActiveDurationMillis?.let { duration ->
-                        stringResource(
-                            R.string.last_lap_value,
-                            formatDuration(duration),
-                        )
-                    } ?: stringResource(R.string.first_lap_in_progress),
+                    detail = lastLapDetail,
                 )
             }
         }
@@ -359,11 +373,18 @@ private fun LiveScreen(
                         },
                     onClick = actions.onLap,
                         enabled = state.lapAvailable &&
+                            !state.lapInFlight &&
                             !paused &&
                             state.recording.state == RecordingState.RECORDING,
-                    colors = ButtonDefaults.secondaryButtonColors(),
+                        colors = ButtonDefaults.secondaryButtonColors(),
                 ) {
-                    Text(stringResource(R.string.lap_short))
+                        Text(
+                            if (state.lapInFlight) {
+                                stringResource(R.string.lap_saving_short)
+                            } else {
+                                stringResource(R.string.lap_short)
+                            },
+                        )
                 }
             }
         }

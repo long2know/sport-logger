@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.ui
 
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot
 import com.long2know.utilities.contract.CanonicalPayload
 import com.long2know.utilities.contract.CanonicalTransfers
 import com.long2know.utilities.contract.proto.ActivityRecord
@@ -92,12 +93,46 @@ class CanonicalSummaryMapperTest {
         )
     }
 
+    @Test
+    fun serviceCompletionSnapshotRestoresCommittedSummary() {
+        val transferId = UUID.randomUUID().toString()
+        val mapped = CanonicalSummaryMapper.fromCompleted(
+            CompletedRecordingSnapshot(
+                activity(ActivitySummary.getDefaultInstance()),
+                transferId,
+                WatchActivityRepository.OUTBOX_COMMITTED,
+                3L,
+                90_000L,
+            ),
+        )
+
+        assertEquals(transferId, mapped.transferId)
+        assertEquals(ActivityChoice.WALKING, mapped.activity)
+        assertEquals(1, mapped.lapCount)
+        assertEquals(SyncUiState.SYNCED, mapped.syncState)
+        assertEquals(3L, mapped.attemptCount)
+    }
+
     private fun presentation(
         summary: ActivitySummary,
         state: String,
     ): CanonicalOutboxPresentation {
-        val sessionId = UUID.randomUUID().toString()
         val transferId = UUID.randomUUID().toString()
+        val activity = activity(summary)
+        val transfer = CanonicalTransfers.activityTransfer(
+            transferId,
+            CanonicalPayload.create(activity),
+        )
+        return CanonicalOutboxPresentation(
+            transferId = transferId,
+            payload = transfer.toByteArray(),
+            canonicalState = state,
+            attemptCount = 2L,
+        )
+    }
+
+    private fun activity(summary: ActivitySummary): ActivityRecord {
+        val sessionId = UUID.randomUUID().toString()
         val lapId = UUID.randomUUID().toString()
         val activity = ActivityRecord.newBuilder()
             .setSessionId(sessionId)
@@ -125,16 +160,7 @@ class CanonicalSummaryMapperTest {
                     .setAppContractVersion(1),
             )
             .build()
-        val transfer = CanonicalTransfers.activityTransfer(
-            transferId,
-            CanonicalPayload.create(activity),
-        )
-        return CanonicalOutboxPresentation(
-            transferId = transferId,
-            payload = transfer.toByteArray(),
-            canonicalState = state,
-            attemptCount = 2L,
-        )
+        return activity
     }
 
     private fun status(

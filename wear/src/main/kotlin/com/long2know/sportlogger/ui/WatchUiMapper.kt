@@ -19,8 +19,12 @@ object WatchUiMapper {
             } else {
                 ActivityChoice.fromCanonical(snapshot.activityType)
             },
+            authority = snapshot.authority,
             activeDurationMillis = snapshot.durationMillis,
             elapsedDurationMillis = snapshot.elapsedDurationMillis,
+            currentLapIndex = snapshot.currentLapIndex,
+            lastLapElapsedDurationMillis = snapshot.lastLapElapsedDurationMillis,
+            lastLapActiveDurationMillis = snapshot.lastLapActiveDurationMillis,
             errorCode = snapshot.error?.code?.name,
             errorMessage = snapshot.error?.message,
         )

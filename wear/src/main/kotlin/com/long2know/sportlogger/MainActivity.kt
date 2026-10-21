@@ -1,10 +1,8 @@
 package com.long2know.sportlogger
 
-import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -25,18 +23,20 @@ import androidx.wear.ambient.AmbientLifecycleObserver
 import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot
+import com.long2know.sportlogger.recording.ManualLapResult
+import com.long2know.sportlogger.recording.RecordingAuthority
 import com.long2know.sportlogger.recording.RecordingSnapshot
 import com.long2know.sportlogger.recording.RecordingState
 import com.long2know.sportlogger.services.ISportLoggerServiceClient
 import com.long2know.sportlogger.services.SportLoggerService
-import com.long2know.sportlogger.sync.WatchSyncEvents
 import com.long2know.sportlogger.sync.WatchSyncFinishHook
 import com.long2know.sportlogger.ui.ActivityChoice
+import com.long2know.sportlogger.ui.CanonicalSummaryMapper
 import com.long2know.sportlogger.ui.ConfirmationAction
 import com.long2know.sportlogger.ui.ServiceClientRegistration
 import com.long2know.sportlogger.ui.ServiceConnectionState
 import com.long2know.sportlogger.ui.WatchAppActions
-import com.long2know.sportlogger.ui.WatchSummarySource
 import com.long2know.sportlogger.ui.WatchUiMapper
 import com.long2know.sportlogger.ui.WatchUiState
 import com.long2know.sportlogger.ui.WearSportLoggerApp
@@ -49,13 +49,12 @@ class MainActivity :
     private val preferences by lazy {
         getSharedPreferences(UI_PREFERENCES, Context.MODE_PRIVATE)
     }
-    private val summarySource by lazy { WatchSummarySource(this) }
     private var uiState by mutableStateOf(WatchUiState())
     private var latestRecordingSnapshot: RecordingSnapshot? = null
     private var latestSharedData: SharedData = SharedData.getInstance()
     private var service: SportLoggerService? = null
     private var bindRequested = false
-    private var receiverRegistered = false
+    private var lapRequestInFlight = false
     private var pendingStart: ActivityChoice? = null
     private lateinit var ambientObserver: AmbientLifecycleObserver
     private val clientRegistration = ServiceClientRegistration<SportLoggerService>(
@@ -88,6 +87,8 @@ class MainActivity :
             uiState = uiState.copy(
                 serviceConnection = ServiceConnectionState.CONNECTED,
                 supportedActivities = supportedActivities,
+                lapAvailable = latestRecordingSnapshot?.authority ==
+                    RecordingAuthority.CANONICAL,
                 activitySupport = WatchUiMapper.activitySupport(
                     uiState.selectedActivity,
                     uiState.acquisition,
@@ -100,7 +101,12 @@ class MainActivity :
         override fun onServiceDisconnected(name: ComponentName) {
             clientRegistration.serviceDisconnected()
             service = null
-            uiState = uiState.copy(serviceConnection = ServiceConnectionState.DISCONNECTED)
+            lapRequestInFlight = false
+            uiState = uiState.copy(
+                serviceConnection = ServiceConnectionState.DISCONNECTED,
+                lapAvailable = false,
+                lapInFlight = false,
+            )
         }
 
         override fun onBindingDied(name: ComponentName) {
@@ -109,12 +115,6 @@ class MainActivity :
 
         override fun onNullBinding(name: ComponentName) {
             handleDeadBinding(rebind = false)
-        }
-    }
-
-    private val syncStateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            summarySource.refreshLatest()
         }
     }
 
@@ -154,7 +154,6 @@ class MainActivity :
             },
             onRetrySync = {
                 WatchSyncFinishHook.requestRetry(this)
-                summarySource.refreshLatest()
             },
             onDismissSummary = ::dismissSummary,
             onDismissError = {
@@ -190,15 +189,6 @@ class MainActivity :
             ?: ActivityChoice.RUNNING
         uiState = uiState.copy(selectedActivity = selected)
         updatePermissionState()
-        summarySource.start(
-            listener = ::showSummary,
-            onError = {
-                uiState = uiState.copy(
-                    errorCode = "SUMMARY_READ_FAILED",
-                    errorMessage = getString(R.string.summary_read_failed),
-                )
-            },
-        )
         setContent {
             WearSportLoggerApp(
                 state = uiState,
@@ -210,25 +200,23 @@ class MainActivity :
     override fun onStart() {
         super.onStart()
         updatePermissionState()
-        registerSyncReceiver()
         startAndBindService()
     }
 
     override fun onStop() {
-        unregisterSyncReceiver()
         clientRegistration.bindingStopped()
         if (bindRequested) {
             unbindService(serviceConnection)
             bindRequested = false
         }
         service = null
-        uiState = uiState.copy(serviceConnection = ServiceConnectionState.DISCONNECTED)
+        lapRequestInFlight = false
+        uiState = uiState.copy(
+            serviceConnection = ServiceConnectionState.DISCONNECTED,
+            lapAvailable = false,
+            lapInFlight = false,
+        )
         super.onStop()
-    }
-
-    override fun onDestroy() {
-        summarySource.close()
-        super.onDestroy()
     }
 
     override fun onLoggerUpdate(data: SharedData) {
@@ -246,6 +234,12 @@ class MainActivity :
             previous.state == snapshot.state &&
             previous.activityId == snapshot.activityId &&
             previous.activityType == snapshot.activityType &&
+            previous.authority == snapshot.authority &&
+            previous.currentLapIndex == snapshot.currentLapIndex &&
+            previous.lastLapElapsedDurationMillis ==
+            snapshot.lastLapElapsedDurationMillis &&
+            previous.lastLapActiveDurationMillis ==
+            snapshot.lastLapActiveDurationMillis &&
             previous.error == snapshot.error &&
             previous.elapsedDurationMillis / 60_000L ==
             snapshot.elapsedDurationMillis / 60_000L
@@ -263,6 +257,7 @@ class MainActivity :
         uiState = uiState.copy(
             recording = recording,
             selectedActivity = authoritativeActivity ?: uiState.selectedActivity,
+            lapAvailable = snapshot.authority == RecordingAuthority.CANONICAL,
             confirmation = if (snapshot.state.isTerminalTransition()) {
                 null
             } else {
@@ -271,9 +266,6 @@ class MainActivity :
             errorCode = recording.errorCode ?: uiState.errorCode,
             errorMessage = recording.errorMessage ?: uiState.errorMessage,
         )
-        if (snapshot.state == RecordingState.EXPORT_QUEUED) {
-            summarySource.refreshLatest()
-        }
     }
 
     override fun onRouteStatusChanged(status: RouteStatus) {
@@ -291,6 +283,21 @@ class MainActivity :
             ),
         )
         updateMetrics()
+    }
+
+    override fun onLatestCompletedChanged(snapshot: CompletedRecordingSnapshot?) {
+        if (snapshot == null) {
+            showSummary(null)
+            return
+        }
+        runCatching {
+            CanonicalSummaryMapper.fromCompleted(snapshot)
+        }.onSuccess(::showSummary).onFailure {
+            uiState = uiState.copy(
+                errorCode = "SUMMARY_READ_FAILED",
+                errorMessage = getString(R.string.summary_read_failed),
+            )
+        }
     }
 
     override fun onLoggerError(code: String, message: String) {
@@ -326,7 +333,12 @@ class MainActivity :
             runCatching { unbindService(serviceConnection) }
             bindRequested = false
         }
-        uiState = uiState.copy(serviceConnection = ServiceConnectionState.DISCONNECTED)
+        lapRequestInFlight = false
+        uiState = uiState.copy(
+            serviceConnection = ServiceConnectionState.DISCONNECTED,
+            lapAvailable = false,
+            lapInFlight = false,
+        )
         if (rebind) {
             mainExecutor.execute {
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
@@ -374,10 +386,58 @@ class MainActivity :
     }
 
     private fun recordLap() {
+        val connected = service
+        if (connected == null || lapRequestInFlight) {
+            return
+        }
+        lapRequestInFlight = true
         uiState = uiState.copy(
-            errorCode = "LAP_CONTRACT_UNAVAILABLE",
-            errorMessage = getString(R.string.lap_not_ready),
+            lapInFlight = true,
+            errorCode = null,
+            errorMessage = null,
         )
+        connected.recordLap().whenComplete { result, error ->
+            mainExecutor.execute {
+                lapRequestInFlight = false
+                if (error != null || result == null) {
+                    uiState = uiState.copy(
+                        lapInFlight = false,
+                        errorCode = "LAP_FAILED",
+                        errorMessage = getString(R.string.lap_failed),
+                    )
+                    return@execute
+                }
+
+                onRecordingStateChanged(result.snapshot)
+                val fallbackMessage = when (result.status) {
+                    ManualLapResult.Status.ACCEPTED -> null
+                    ManualLapResult.Status.REJECTED_NOT_RECORDING ->
+                        getString(R.string.lap_not_recording)
+
+                    ManualLapResult.Status.REJECTED_BUSY ->
+                        getString(R.string.lap_busy)
+
+                    ManualLapResult.Status.REJECTED_LEGACY_AUTHORITY ->
+                        getString(R.string.lap_legacy_recording)
+
+                    ManualLapResult.Status.FAILED ->
+                        getString(R.string.lap_failed)
+                }
+                uiState = uiState.copy(
+                    lapInFlight = false,
+                    errorCode = if (result.isAccepted) {
+                        null
+                    } else {
+                        "LAP_${result.status.name}"
+                    },
+                    errorMessage = if (result.isAccepted) {
+                        null
+                    } else {
+                        result.message.ifBlank { requireNotNull(fallbackMessage) }
+                    },
+                )
+            }
+        }
     }
 
     private fun requestMissingPermissions() {
@@ -450,27 +510,6 @@ class MainActivity :
             putString(PREFERENCE_DISMISSED_SUMMARY, summary.transferId)
         }
         uiState = uiState.copy(summaryDismissed = true)
-    }
-
-    private fun registerSyncReceiver() {
-        if (receiverRegistered) {
-            return
-        }
-        ContextCompat.registerReceiver(
-            this,
-            syncStateReceiver,
-            IntentFilter(WatchSyncEvents.ACTION_SYNC_STATE_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
-        receiverRegistered = true
-    }
-
-    private fun unregisterSyncReceiver() {
-        if (!receiverRegistered) {
-            return
-        }
-        unregisterReceiver(syncStateReceiver)
-        receiverRegistered = false
     }
 
     private fun RecordingState.isTerminalTransition(): Boolean =

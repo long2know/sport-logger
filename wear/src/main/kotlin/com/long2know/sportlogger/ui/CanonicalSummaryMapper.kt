@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.ui
 
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot
 import com.long2know.utilities.contract.CanonicalTransfers
 import com.long2know.utilities.contract.proto.ActivityRecord
 import com.long2know.utilities.contract.proto.ActivitySummary
@@ -26,14 +27,14 @@ object CanonicalSummaryMapper {
     }
 
     fun fromCompleted(
-        completed: WatchActivityRepository.CompletedActivity,
+        completed: CompletedRecordingSnapshot,
         failureCode: String? = null,
     ): WorkoutSummaryUi =
         mapActivity(
             activity = completed.activity,
-            transferId = completed.outbox.transferId,
-            canonicalState = completed.outbox.state,
-            attemptCount = completed.outbox.attemptCount,
+            transferId = completed.transferId,
+            canonicalState = completed.outboxState,
+            attemptCount = completed.attemptCount,
             failureCode = failureCode,
         )
 
@@ -63,20 +64,6 @@ object CanonicalSummaryMapper {
             failureCode = failureCode,
         )
     }
-
-    fun fromOutbox(
-        item: WatchActivityRepository.OutboxItem,
-        failureCode: String? = null,
-    ): WorkoutSummaryUi =
-        map(
-            CanonicalOutboxPresentation(
-                transferId = item.transferId,
-                payload = item.payload,
-                canonicalState = item.state,
-                attemptCount = item.attemptCount,
-                failureCode = failureCode,
-            ),
-        )
 
     private fun syncState(canonicalState: String): SyncUiState =
         when (canonicalState) {

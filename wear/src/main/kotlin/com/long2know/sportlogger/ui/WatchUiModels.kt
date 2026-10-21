@@ -5,6 +5,7 @@ import androidx.health.services.client.data.ExerciseType
 import com.long2know.sportlogger.R
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
+import com.long2know.sportlogger.recording.RecordingAuthority
 import com.long2know.sportlogger.recording.RecordingState
 import com.long2know.utilities.contract.proto.ActivityType
 
@@ -115,9 +116,11 @@ data class RecordingUi(
     val state: RecordingState = RecordingState.IDLE,
     val activityId: Int = 0,
     val activity: ActivityChoice? = null,
+    val authority: RecordingAuthority = RecordingAuthority.LEGACY_COMPATIBILITY,
     val activeDurationMillis: Long = 0L,
     val elapsedDurationMillis: Long = 0L,
     val currentLapIndex: Int = 0,
+    val lastLapElapsedDurationMillis: Long? = null,
     val lastLapActiveDurationMillis: Long? = null,
     val errorCode: String? = null,
     val errorMessage: String? = null,
@@ -172,6 +175,7 @@ data class WatchUiState(
     val activitySupport: ActivitySupportState = ActivitySupportState.CHECKING,
     val supportedActivities: Set<ActivityChoice> = emptySet(),
     val lapAvailable: Boolean = false,
+    val lapInFlight: Boolean = false,
     val missingPermissionCount: Int = 0,
     val summary: WorkoutSummaryUi? = null,
     val summaryDismissed: Boolean = false,

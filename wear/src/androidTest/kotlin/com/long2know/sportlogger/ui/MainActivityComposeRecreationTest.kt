@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import com.long2know.sportlogger.MainActivity
+import com.long2know.sportlogger.recording.RecordingAuthority
 import com.long2know.sportlogger.recording.RecordingSnapshot
 import com.long2know.sportlogger.recording.RecordingState
 import com.long2know.utilities.contract.proto.ActivityType
@@ -36,6 +37,7 @@ class MainActivityComposeRecreationTest {
                     RecordingState.RECORDING,
                     82,
                     ActivityType.ACTIVITY_TYPE_CYCLING,
+                    RecordingAuthority.CANONICAL,
                     1_000L,
                     12_000L,
                     17_000L,
@@ -43,6 +45,9 @@ class MainActivityComposeRecreationTest {
                     4_000L,
                     3,
                     null,
+                    2,
+                    6_000L,
+                    5_000L,
                 ),
             )
         }

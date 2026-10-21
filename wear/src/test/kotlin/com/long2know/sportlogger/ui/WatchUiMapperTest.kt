@@ -6,6 +6,7 @@ import com.long2know.sportlogger.acquisition.MeasurementProvenance
 import com.long2know.sportlogger.acquisition.RouteStatus
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesCapabilityDimensions
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot
+import com.long2know.sportlogger.recording.RecordingAuthority
 import com.long2know.sportlogger.recording.RecordingSnapshot
 import com.long2know.sportlogger.recording.RecordingState
 import com.long2know.utilities.contract.proto.ActivityType
@@ -184,6 +185,7 @@ class WatchUiMapperTest {
             RecordingState.RECORDING,
             44,
             ActivityType.ACTIVITY_TYPE_CYCLING,
+            RecordingAuthority.CANONICAL,
             1_000L,
             12_000L,
             17_000L,
@@ -191,13 +193,20 @@ class WatchUiMapperTest {
             4_000L,
             3,
             null,
+            3,
+            9_000L,
+            8_000L,
         )
 
         val mapped = WatchUiMapper.recording(snapshot)
 
         assertEquals(ActivityChoice.CYCLING, mapped.activity)
+        assertEquals(RecordingAuthority.CANONICAL, mapped.authority)
         assertEquals(12_000L, mapped.activeDurationMillis)
         assertEquals(17_000L, mapped.elapsedDurationMillis)
+        assertEquals(3, mapped.currentLapIndex)
+        assertEquals(9_000L, mapped.lastLapElapsedDurationMillis)
+        assertEquals(8_000L, mapped.lastLapActiveDurationMillis)
     }
 
     private fun snapshot(

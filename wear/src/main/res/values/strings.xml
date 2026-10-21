@@ -87,7 +87,9 @@
     <string name="elapsed_value">Elapsed %1$s</string>
     <string name="current_lap_value">Lap %1$d</string>
     <string name="last_lap_value">Last lap %1$s</string>
+    <string name="last_lap_active_elapsed_value">Last lap active %1$s · elapsed %2$s</string>
     <string name="first_lap_in_progress">First lap in progress</string>
+    <string name="lap_saving_short">Saving</string>
     <string name="bpm_value">%1$d bpm</string>
     <string name="needs_attention">Needs attention — tap to dismiss</string>
     <string name="status_checking">Checking</string>
@@ -107,5 +109,8 @@
     <string name="sync_synced">Acknowledged by phone</string>
     <string name="sync_failed">Transfer needs retry</string>
     <string name="summary_read_failed">The saved workout could not be displayed yet. It remains stored on the watch; reopen the app to retry.</string>
-    <string name="lap_not_ready">Manual lap recording is waiting for the durable recording service contract.</string>
+    <string name="lap_not_recording">Laps are available only while actively recording.</string>
+    <string name="lap_busy">The previous lap is still being saved.</string>
+    <string name="lap_legacy_recording">This recovered legacy workout cannot add durable laps. Finish it and start a new workout.</string>
+    <string name="lap_failed">The lap could not be saved. Recording continues.</string>
 </resources>
