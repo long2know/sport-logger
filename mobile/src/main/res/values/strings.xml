@@ -1,4 +1,74 @@
-<resources tools:ignore="ExtraTranslation" xmlns:tools="http://schemas.android.com/tools">
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="ExtraTranslation">
     <string name="app_name">SportLogger</string>
     <string name="wear_path">/sportactivity</string>
+
+    <string name="history_title">Activity history</string>
+    <string name="refresh">Refresh</string>
+    <string name="history_loading">Loading received activities…</string>
+    <string name="history_empty">Activities received from your watch will appear here.</string>
+    <string name="history_no_readable_activities">Stored activities were found, but none can be read safely. Refresh after recovery or app update.</string>
+    <string name="history_load_error">Activity history could not be read. Your stored files were not changed.</string>
+    <plurals name="history_truncated">
+        <item quantity="one">Showing %1$d of 1 stored activity.</item>
+        <item quantity="other">Showing %1$d of %2$d stored activities.</item>
+    </plurals>
+    <plurals name="history_activity_count">
+        <item quantity="one">%d received activity</item>
+        <item quantity="other">%d received activities</item>
+    </plurals>
+    <plurals name="history_partial_unavailable">
+        <item quantity="one">1 stored activity is unavailable or corrupt. Readable activities are shown.</item>
+        <item quantity="other">%d stored activities are unavailable or corrupt. Readable activities are shown.</item>
+    </plurals>
+
+    <string name="activity_untitled">Untitled activity</string>
+    <string name="value_unavailable">Unavailable</string>
+    <string name="activity_metric_summary">%1$s • %2$s • %3$s</string>
+    <string name="activity_row_content_description">%1$s, %2$s, %3$s, %4$s</string>
+    <string name="distance_meters">%d m</string>
+    <string name="distance_kilometers">%.2f km</string>
+    <plurals name="track_point_count">
+        <item quantity="one">%d sample</item>
+        <item quantity="other">%d samples</item>
+    </plurals>
+    <string name="transfer_state_received">Received from watch</string>
+    <string name="transfer_state_ack_pending">Received from watch • acknowledgement pending</string>
+
+    <string name="back_to_history">Back to history</string>
+    <string name="detail_loading">Loading activity details</string>
+    <string name="detail_start_label">Started</string>
+    <string name="detail_end_label">Ended</string>
+    <string name="detail_duration_label">Elapsed duration</string>
+    <string name="detail_distance_label">Distance</string>
+    <string name="detail_samples_label">Recorded samples</string>
+    <string name="detail_route_label">Route</string>
+    <string name="detail_heart_rate_label">Heart rate</string>
+    <string name="detail_description_label">Description</string>
+    <string name="route_unavailable">No usable route coordinates were recorded.</string>
+    <string name="heart_rate_unavailable">No heart-rate samples were recorded.</string>
+    <plurals name="route_point_count">
+        <item quantity="one">%d route coordinate</item>
+        <item quantity="other">%d route coordinates</item>
+    </plurals>
+    <plurals name="heart_rate_point_count">
+        <item quantity="one">%d heart-rate sample</item>
+        <item quantity="other">%d heart-rate samples</item>
+    </plurals>
+    <string name="detail_load_error">This activity could not be read. The stored payload was not changed.</string>
+
+    <string name="export_section_title">TCX export</string>
+    <string name="export_privacy_note">Save creates a document you choose. Share grants read access only to the generated TCX file.</string>
+    <string name="save_tcx">Save TCX</string>
+    <string name="share_tcx">Share TCX</string>
+    <string name="share_tcx_chooser">Share activity TCX</string>
+    <string name="export_in_progress">Generating TCX…</string>
+    <string name="export_saved">TCX saved successfully.</string>
+    <string name="export_cancelled">TCX save cancelled. The activity remains stored.</string>
+    <string name="export_failed">TCX export failed. The activity remains stored.</string>
+    <string name="export_failed_removed">TCX export failed; the incomplete destination was removed. The activity remains stored.</string>
+    <string name="export_failed_partial">TCX export failed. The destination provider could not confirm cleanup, so an incomplete file may remain. The activity remains stored.</string>
+    <string name="share_launch_failed">No compatible document or sharing app could be opened.</string>
+    <string name="export_format_placeholder_warning">Some TCX-required values were not recorded. Export will use schema placeholders only for those fields and will include an explicit SportLogger limitation note and extension. Measured values are never inferred.</string>
+    <string name="export_required_data_missing">TCX export requires valid start time, duration, and distance data. The original activity remains stored.</string>
+    <string name="export_invalid_data">TCX export stopped because the stored data is invalid or out of order. No measurements were fabricated.</string>
 </resources>
