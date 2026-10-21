@@ -2,6 +2,9 @@ package com.long2know.sportlogger.persistence.watch;
 
 import android.content.Context;
 
+import androidx.room.InvalidationTracker;
+
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.long2know.utilities.contract.CanonicalActivityValidator;
 import com.long2know.utilities.contract.CanonicalContractException;
 import com.long2know.utilities.contract.CanonicalIds;
@@ -10,6 +13,8 @@ import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.ActivityRecord;
 import com.long2know.utilities.contract.proto.ActivityTransferFile;
 import com.long2know.utilities.contract.proto.ActivityType;
+import com.long2know.utilities.contract.proto.AckResult;
+import com.long2know.utilities.contract.proto.CommitAck;
 import com.long2know.utilities.contract.proto.MeasurementSample;
 import com.long2know.utilities.contract.proto.TombstoneRecord;
 
@@ -65,12 +70,21 @@ public final class WatchActivityRepository implements AutoCloseable {
 
     public CompletableFuture<SessionSnapshot> startSession(StartRequest request) {
         Objects.requireNonNull(request);
-        return CompletableFuture.supplyAsync(() -> {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
             CanonicalIds.requireUuid(request.sessionId, "Session identifier");
             if (request.leaseToken == 0L) {
                 throw new CanonicalContractException(
                         "LEASE_REQUIRED",
                         "A non-zero recording lease is required");
+            }
+            WatchSessionEntity existing = dao.session(request.sessionId);
+            if (existing != null) {
+                if (sameStart(existing, request)) {
+                    return snapshot(existing);
+                }
+                throw new CanonicalContractException(
+                        "START_REPLAY_CONFLICT",
+                        "Session UUID already stores different start metadata or lease");
             }
             WatchSessionEntity session = new WatchSessionEntity();
             session.sessionId = request.sessionId;
@@ -91,6 +105,16 @@ public final class WatchActivityRepository implements AutoCloseable {
             session.updatedAtUtcMs = request.startedAtUtcMs;
             dao.insertSession(session);
             return snapshot(session);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<OutboxItem> outboxForSessionRevision(
+            String sessionId,
+            long revision) {
+        return CompletableFuture.supplyAsync(() -> {
+            CanonicalIds.requireUuid(sessionId, "Session identifier");
+            WatchOutboxEntity entity = dao.outboxForRevision(sessionId, revision);
+            return entity == null ? null : outbox(entity);
         }, writeExecutor);
     }
 
@@ -173,6 +197,135 @@ public final class WatchActivityRepository implements AutoCloseable {
         }, writeExecutor);
     }
 
+    public CompletableFuture<OutboxItem> outbox(String transferId) {
+        return CompletableFuture.supplyAsync(() -> {
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            WatchOutboxEntity entity = dao.outbox(transferId);
+            return entity == null ? null : outbox(entity);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<List<OutboxItem>> pendingOutbox(int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            validateLimit(limit);
+            List<OutboxItem> items = new ArrayList<>();
+            for (WatchOutboxEntity entity : dao.pendingOutbox(limit)) {
+                items.add(outbox(entity));
+            }
+            return Collections.unmodifiableList(items);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<List<OutboxItem>> reclaimPendingOutbox(
+            int limit,
+            long recoveredAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            validateLimit(limit);
+            List<OutboxItem> items = new ArrayList<>();
+            for (WatchOutboxEntity entity : dao.pendingOutbox(limit)) {
+                if (OUTBOX_SENDING.equals(entity.state)) {
+                    entity.state = OUTBOX_RETRYABLE;
+                    entity.lastFailureCode = "PROCESS_RESTART";
+                    entity.lastFailureMessage =
+                            "Recovered transfer that was sending when the process stopped";
+                    entity.lastAttemptAtUtcMs = recoveredAtUtcMs;
+                    if (dao.updateOutbox(entity) != 1) {
+                        throw new CanonicalContractException(
+                                "OUTBOX_UPDATE_FAILED",
+                                "Recovered activity outbox was not updated");
+                    }
+                }
+                items.add(outbox(entity));
+            }
+            return Collections.unmodifiableList(items);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<SessionSnapshot> reserveCompletion(
+            String sessionId,
+            long leaseToken,
+            long revision,
+            String transferId,
+            long updatedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CanonicalIds.requireUuid(sessionId, "Session identifier");
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            if (revision <= 0L) {
+                throw new CanonicalContractException(
+                        "REVISION_INVALID",
+                        "Completion revision must be positive");
+            }
+            WatchSessionEntity session = requireSession(sessionId);
+            if (session.leaseToken != requireLease(leaseToken)) {
+                throw new CanonicalContractException(
+                        "SESSION_FENCE_REJECTED",
+                        "Completion reservation was rejected by its recording lease");
+            }
+            if (session.completionTransferId != null
+                    && (!session.completionTransferId.equals(transferId)
+                    || !Objects.equals(session.completionRevision, revision))) {
+                throw new CanonicalContractException(
+                        "COMPLETION_RESERVATION_CONFLICT",
+                        "Session already reserves a different completion identity");
+            }
+            session.completionTransferId = transferId;
+            session.completionRevision = revision;
+            session.state = LifecycleState.ENDING.name();
+            session.updatedAtUtcMs = updatedAtUtcMs;
+            if (dao.updateSession(session) != 1) {
+                throw new CanonicalContractException(
+                        "SESSION_UPDATE_FAILED",
+                        "Completion reservation was not persisted");
+            }
+            return snapshot(session);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<CompletionResult> finishSessionFromPersistedSamples(
+            String sessionId,
+            long leaseToken,
+            ActivityRecord finalMetadata,
+            long completedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            WatchSessionEntity session = requireSession(
+                    CanonicalIds.requireUuid(sessionId, "Session identifier"));
+            if (session.leaseToken != requireLease(leaseToken)) {
+                throw new CanonicalContractException(
+                        "SESSION_FENCE_REJECTED",
+                        "Completion was rejected by its recording lease");
+            }
+            if (session.completionTransferId == null
+                    || session.completionRevision == null) {
+                throw new CanonicalContractException(
+                        "COMPLETION_NOT_RESERVED",
+                        "Completion identity must be durably reserved before finalization");
+            }
+            ActivityRecord activity = finalMetadata.toBuilder()
+                    .setSessionId(sessionId)
+                    .setWatchRevision(session.completionRevision)
+                    .clearSamples()
+                    .addAllSamples(samplesInternal(sessionId))
+                    .build();
+            return finishInternal(
+                    sessionId,
+                    leaseToken,
+                    activity,
+                    session.completionTransferId,
+                    completedAtUtcMs,
+                    false,
+                    null,
+                    null);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<List<MeasurementSample>> samples(String sessionId) {
+        return CompletableFuture.supplyAsync(() ->
+                Collections.unmodifiableList(new ArrayList<>(
+                        samplesInternal(CanonicalIds.requireUuid(
+                                sessionId,
+                                "Session identifier")))), writeExecutor);
+    }
+
     public CompletableFuture<OutboxItem> transitionOutbox(
             String transferId,
             String expectedState,
@@ -207,6 +360,237 @@ public final class WatchActivityRepository implements AutoCloseable {
             }
             return outbox(entity);
         }), writeExecutor);
+    }
+
+    public CompletableFuture<AckAcceptance> acceptCommitAck(
+            byte[] acknowledgementBytes,
+            long committedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CommitAck acknowledgement = parseAck(acknowledgementBytes);
+            WatchOutboxEntity entity = dao.outbox(acknowledgement.getTransferId());
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "OUTBOX_NOT_FOUND",
+                        "Acknowledged activity transfer does not exist");
+            }
+            ActivityTransferFile transfer =
+                    CanonicalTransfers.parseActivityTransfer(entity.payload).getTransfer();
+            validateActivityAck(entity, transfer, acknowledgement);
+            if (OUTBOX_COMMITTED.equals(entity.state)) {
+                if (!MessageDigest.isEqual(entity.commitAckPayload, acknowledgementBytes)) {
+                    throw new CanonicalContractException(
+                            "ACK_CONFLICT",
+                            "Committed transfer already stores different acknowledgement bytes");
+                }
+                return new AckAcceptance(outbox(entity), acknowledgement, false);
+            }
+            if (!terminalActivityAck(acknowledgement.getResult())) {
+                throw new CanonicalContractException(
+                        "ACK_NOT_TERMINAL",
+                        "Activity acknowledgement does not terminate retry");
+            }
+            entity.state = OUTBOX_COMMITTED;
+            entity.commitAckPayload = acknowledgementBytes.clone();
+            entity.committedAtUtcMs = committedAtUtcMs;
+            entity.lastFailureCode = null;
+            entity.lastFailureMessage = null;
+            if (dao.updateOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "OUTBOX_UPDATE_FAILED",
+                        "Committed activity outbox was not updated");
+            }
+            return new AckAcceptance(outbox(entity), acknowledgement, true);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<List<TombstoneOutboxItem>> pendingTombstoneOutbox(int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            validateLimit(limit);
+            List<TombstoneOutboxItem> items = new ArrayList<>();
+            for (WatchTombstoneOutboxEntity entity : dao.pendingTombstoneOutbox(limit)) {
+                items.add(tombstoneOutbox(entity));
+            }
+            return Collections.unmodifiableList(items);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<TombstoneOutboxItem> tombstoneOutbox(String transferId) {
+        return CompletableFuture.supplyAsync(() -> {
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            WatchTombstoneOutboxEntity entity = dao.tombstoneOutbox(transferId);
+            return entity == null ? null : tombstoneOutbox(entity);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<TombstoneOutboxItem> transitionTombstoneOutbox(
+            String transferId,
+            String expectedState,
+            String nextState,
+            Long attemptedAtUtcMs,
+            String failureCode,
+            String failureMessage) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            WatchTombstoneOutboxEntity entity = dao.tombstoneOutbox(transferId);
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_NOT_FOUND",
+                        "Tombstone outbox transfer does not exist");
+            }
+            if (!entity.state.equals(expectedState)) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_CAS_REJECTED",
+                        "Tombstone outbox transition was rejected by its state");
+            }
+            entity.state = nextState;
+            if (attemptedAtUtcMs != null) {
+                entity.lastAttemptAtUtcMs = attemptedAtUtcMs;
+                entity.attemptCount++;
+            }
+            entity.lastFailureCode = failureCode;
+            entity.lastFailureMessage = failureMessage;
+            if (dao.updateTombstoneOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_UPDATE_FAILED",
+                        "Tombstone outbox transition did not update exactly one row");
+            }
+            return tombstoneOutbox(entity);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<TombstoneAckAcceptance> acceptTombstoneCommitAck(
+            byte[] acknowledgementBytes,
+            long committedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CommitAck acknowledgement = parseAck(acknowledgementBytes);
+            WatchTombstoneOutboxEntity entity =
+                    dao.tombstoneOutbox(acknowledgement.getTransferId());
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_NOT_FOUND",
+                        "Acknowledged tombstone transfer does not exist");
+            }
+            validateTombstoneAck(entity, acknowledgement);
+            if (OUTBOX_COMMITTED.equals(entity.state)) {
+                if (!MessageDigest.isEqual(entity.commitAckPayload, acknowledgementBytes)) {
+                    throw new CanonicalContractException(
+                            "ACK_CONFLICT",
+                            "Committed tombstone already stores different acknowledgement bytes");
+                }
+                return new TombstoneAckAcceptance(
+                        tombstoneOutbox(entity),
+                        acknowledgement,
+                        false);
+            }
+            if (acknowledgement.getResult() != AckResult.ACK_RESULT_ACCEPTED
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE) {
+                throw new CanonicalContractException(
+                        "ACK_NOT_TERMINAL",
+                        "Tombstone acknowledgement does not confirm receiver commit");
+            }
+            entity.state = OUTBOX_COMMITTED;
+            entity.commitAckPayload = acknowledgementBytes.clone();
+            entity.committedAtUtcMs = committedAtUtcMs;
+            entity.lastFailureCode = null;
+            entity.lastFailureMessage = null;
+            if (dao.updateTombstoneOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_UPDATE_FAILED",
+                        "Committed tombstone outbox was not updated");
+            }
+            return new TombstoneAckAcceptance(
+                    tombstoneOutbox(entity),
+                    acknowledgement,
+                    true);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<TombstoneReceiveResult> acceptTombstoneTransfer(
+            byte[] tombstoneBytes,
+            long committedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CanonicalTransfers.VerifiedTombstone verified =
+                    CanonicalTransfers.parseTombstone(tombstoneBytes);
+            TombstoneRecord incoming = verified.getTombstone();
+            WatchTombstoneReceiptEntity existing =
+                    dao.tombstoneReceipt(incoming.getTransferId());
+            if (existing != null) {
+                if (!existing.payloadSha256.equals(verified.getSha256Hex())) {
+                    throw new CanonicalContractException(
+                            "TRANSFER_ID_REUSED",
+                            "Tombstone transfer identifier already stores different bytes");
+                }
+                try {
+                    CommitAck ack = CommitAck.parseFrom(existing.ackPayload);
+                    return new TombstoneReceiveResult(ack, existing.ackPayload.clone(), false);
+                } catch (InvalidProtocolBufferException error) {
+                    throw new CanonicalContractException(
+                            "ACK_PAYLOAD_CORRUPT",
+                            "Stored tombstone acknowledgement is corrupt",
+                            error);
+                }
+            }
+            WatchTombstoneEntity current = dao.tombstone(incoming.getSessionId());
+            boolean wins = current == null || CanonicalTransfers.compareTombstoneOrder(
+                    incoming,
+                    CanonicalTransfers.parseTombstone(current.payload).getTombstone()) > 0;
+            AckResult result = wins
+                    ? AckResult.ACK_RESULT_ACCEPTED
+                    : AckResult.ACK_RESULT_STALE;
+            if (wins) {
+                dao.putTombstone(tombstoneEntity(
+                        incoming,
+                        verified.getExactBytes(),
+                        verified.getSha256Hex()));
+                WatchSessionEntity session = dao.session(incoming.getSessionId());
+                if (session != null
+                        && session.watchRevision <= incoming.getCoveredSessionRevision()) {
+                    session.state = LifecycleState.DISCARDED.name();
+                    session.leaseToken = 0L;
+                    session.updatedAtUtcMs = committedAtUtcMs;
+                    if (dao.updateSession(session) != 1) {
+                        throw new CanonicalContractException(
+                                "SESSION_UPDATE_FAILED",
+                                "Tombstoned watch session was not updated");
+                    }
+                }
+                dao.suppressCoveredActivityOutbox(
+                        incoming.getSessionId(),
+                        incoming.getCoveredSessionRevision());
+            }
+            CommitAck ack = CanonicalTransfers.tombstoneCommitAck(
+                    verified,
+                    result,
+                    null,
+                    null);
+            byte[] ackBytes = ack.toByteArray();
+            WatchTombstoneReceiptEntity receipt = new WatchTombstoneReceiptEntity();
+            receipt.transferId = incoming.getTransferId();
+            receipt.sessionId = incoming.getSessionId();
+            receipt.deleteRevision = incoming.getDeleteRevision();
+            receipt.coveredSessionRevision = incoming.getCoveredSessionRevision();
+            receipt.origin = incoming.getOriginValue();
+            receipt.payloadSha256 = verified.getSha256Hex();
+            receipt.committedAtUtcMs = committedAtUtcMs;
+            receipt.ackPayload = ackBytes;
+            dao.insertTombstoneReceipt(receipt);
+            return new TombstoneReceiveResult(ack, ackBytes, true);
+        }), writeExecutor);
+    }
+
+    public AutoCloseable observeOutbox(Executor executor, Runnable listener) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(listener);
+        InvalidationTracker.Observer observer = new InvalidationTracker.Observer(
+                "watch_activity_outbox",
+                "watch_tombstone_outbox") {
+            @Override
+            public void onInvalidated(java.util.Set<String> tables) {
+                executor.execute(listener);
+            }
+        };
+        database.getInvalidationTracker().addObserver(observer);
+        return () -> database.getInvalidationTracker().removeObserver(observer);
     }
 
     public CompletableFuture<Void> discardSession(
@@ -344,6 +728,17 @@ public final class WatchActivityRepository implements AutoCloseable {
                         "REVISION_STALE",
                         "Completion revision must increase");
             }
+            if (session.completionTransferId == null) {
+                session.completionTransferId = transferId;
+                session.completionRevision = activity.getWatchRevision();
+            } else if (!session.completionTransferId.equals(transferId)
+                    || !Objects.equals(
+                    session.completionRevision,
+                    activity.getWatchRevision())) {
+                throw new CanonicalContractException(
+                        "COMPLETION_RESERVATION_CONFLICT",
+                        "Completion does not match the durably reserved identity");
+            }
             for (MeasurementSample sample : activity.getSamplesList()) {
                 writeSampleInternal(sessionId, leaseToken, sample, legacyImport);
             }
@@ -417,6 +812,21 @@ public final class WatchActivityRepository implements AutoCloseable {
         return session;
     }
 
+    private List<MeasurementSample> samplesInternal(String sessionId) {
+        List<MeasurementSample> samples = new ArrayList<>();
+        for (WatchSampleEntity entity : dao.samples(sessionId)) {
+            try {
+                samples.add(MeasurementSample.parseFrom(entity.payload));
+            } catch (InvalidProtocolBufferException error) {
+                throw new CanonicalContractException(
+                        "SAMPLE_PAYLOAD_CORRUPT",
+                        "Stored sample payload is not valid protobuf",
+                        error);
+            }
+        }
+        return samples;
+    }
+
     private boolean writeSampleInternal(
             String sessionId,
             long leaseToken,
@@ -484,6 +894,21 @@ public final class WatchActivityRepository implements AutoCloseable {
         return session;
     }
 
+    private static boolean sameStart(
+            WatchSessionEntity session,
+            StartRequest request) {
+        return session.sessionId.equals(request.sessionId)
+                && session.leaseToken == request.leaseToken
+                && session.activityType == request.activityType.getNumber()
+                && session.startedAtUtcMs == request.startedAtUtcMs
+                && Objects.equals(session.timeZoneId, request.timeZoneId)
+                && Objects.equals(session.utcOffsetMinutes, request.utcOffsetMinutes)
+                && Objects.equals(session.bootId, request.bootId)
+                && Objects.equals(session.monotonicAnchorMs, request.monotonicAnchorMs)
+                && Objects.equals(session.legacySourceKey, request.legacySourceKey)
+                && Objects.equals(session.legacyActivityId, request.legacyActivityId);
+    }
+
     private static long requireLease(long leaseToken) {
         if (leaseToken == 0L) {
             throw new CanonicalContractException(
@@ -503,6 +928,8 @@ public final class WatchActivityRepository implements AutoCloseable {
                 entity.endedAtUtcMs,
                 entity.accumulatedActiveMs,
                 entity.bootId,
+                entity.completionTransferId,
+                entity.completionRevision,
                 entity.sampleCount,
                 entity.routePointCount,
                 entity.heartRateSampleCount,
@@ -519,7 +946,111 @@ public final class WatchActivityRepository implements AutoCloseable {
                 entity.payloadSha256,
                 entity.payloadLength,
                 entity.state,
-                entity.attemptCount);
+                entity.attemptCount,
+                entity.commitAckPayload == null ? null : entity.commitAckPayload.clone(),
+                entity.committedAtUtcMs);
+    }
+
+    private static TombstoneOutboxItem tombstoneOutbox(
+            WatchTombstoneOutboxEntity entity) {
+        return new TombstoneOutboxItem(
+                entity.transferId,
+                entity.sessionId,
+                entity.deleteRevision,
+                entity.coveredSessionRevision,
+                entity.origin,
+                entity.payload.clone(),
+                entity.payloadSha256,
+                entity.payloadLength,
+                entity.state,
+                entity.attemptCount,
+                entity.commitAckPayload == null ? null : entity.commitAckPayload.clone(),
+                entity.committedAtUtcMs);
+    }
+
+    private static CommitAck parseAck(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new CanonicalContractException(
+                    "ACK_REQUIRED",
+                    "Acknowledgement bytes are required");
+        }
+        try {
+            CommitAck acknowledgement = CommitAck.parseFrom(bytes);
+            if (acknowledgement.getSchemaVersion() != CanonicalTransfers.SCHEMA_VERSION) {
+                throw new CanonicalContractException(
+                        "ACK_SCHEMA_UNSUPPORTED",
+                        "Unsupported acknowledgement schema");
+            }
+            CanonicalIds.requireUuid(
+                    acknowledgement.getTransferId(),
+                    "Transfer identifier");
+            CanonicalIds.requireUuid(
+                    acknowledgement.getSessionId(),
+                    "Session identifier");
+            return acknowledgement;
+        } catch (InvalidProtocolBufferException error) {
+            throw new CanonicalContractException(
+                    "ACK_CORRUPT",
+                    "Acknowledgement is not valid protobuf",
+                    error);
+        }
+    }
+
+    private static void validateActivityAck(
+            WatchOutboxEntity entity,
+            ActivityTransferFile transfer,
+            CommitAck acknowledgement) {
+        if (!entity.transferId.equals(acknowledgement.getTransferId())
+                || !entity.sessionId.equals(acknowledgement.getSessionId())
+                || acknowledgement.getAcceptedSessionRevision() < entity.sessionRevision
+                || !MessageDigest.isEqual(
+                transfer.getPayloadSha256().toByteArray(),
+                acknowledgement.getPayloadSha256().toByteArray())) {
+            throw new CanonicalContractException(
+                    "ACK_IDENTITY_MISMATCH",
+                    "Activity acknowledgement does not match immutable outbox identity");
+        }
+    }
+
+    private static void validateTombstoneAck(
+            WatchTombstoneOutboxEntity entity,
+            CommitAck acknowledgement) {
+        if (!entity.transferId.equals(acknowledgement.getTransferId())
+                || !entity.sessionId.equals(acknowledgement.getSessionId())
+                || !acknowledgement.hasDeleteRevision()
+                || acknowledgement.getDeleteRevision() != entity.deleteRevision
+                || !acknowledgement.hasTombstoneOrigin()
+                || acknowledgement.getTombstoneOriginValue() != entity.origin
+                || !MessageDigest.isEqual(
+                hexBytes(entity.payloadSha256),
+                acknowledgement.getPayloadSha256().toByteArray())) {
+            throw new CanonicalContractException(
+                    "ACK_IDENTITY_MISMATCH",
+                    "Tombstone acknowledgement does not match immutable outbox identity");
+        }
+    }
+
+    private static boolean terminalActivityAck(AckResult result) {
+        return result == AckResult.ACK_RESULT_ACCEPTED
+                || result == AckResult.ACK_RESULT_DUPLICATE
+                || result == AckResult.ACK_RESULT_STALE
+                || result == AckResult.ACK_RESULT_TOMBSTONED;
+    }
+
+    private static byte[] hexBytes(String value) {
+        byte[] bytes = new byte[value.length() / 2];
+        for (int index = 0; index < value.length(); index += 2) {
+            bytes[index / 2] = (byte) Integer.parseInt(
+                    value.substring(index, index + 2),
+                    16);
+        }
+        return bytes;
+    }
+
+    private static void validateLimit(int limit) {
+        if (limit < 1 || limit > 1_000) {
+            throw new IllegalArgumentException("Outbox limit must be between 1 and 1000");
+        }
     }
 
     private static WatchTombstoneEntity tombstoneEntity(
@@ -659,6 +1190,8 @@ public final class WatchActivityRepository implements AutoCloseable {
         private final Long endedAtUtcMs;
         private final long accumulatedActiveMs;
         private final String bootId;
+        private final String completionTransferId;
+        private final Long completionRevision;
         private final long sampleCount;
         private final long routePointCount;
         private final long heartRateSampleCount;
@@ -674,6 +1207,8 @@ public final class WatchActivityRepository implements AutoCloseable {
                 Long endedAtUtcMs,
                 long accumulatedActiveMs,
                 String bootId,
+                String completionTransferId,
+                Long completionRevision,
                 long sampleCount,
                 long routePointCount,
                 long heartRateSampleCount,
@@ -687,6 +1222,8 @@ public final class WatchActivityRepository implements AutoCloseable {
             this.endedAtUtcMs = endedAtUtcMs;
             this.accumulatedActiveMs = accumulatedActiveMs;
             this.bootId = bootId;
+            this.completionTransferId = completionTransferId;
+            this.completionRevision = completionRevision;
             this.sampleCount = sampleCount;
             this.routePointCount = routePointCount;
             this.heartRateSampleCount = heartRateSampleCount;
@@ -726,6 +1263,14 @@ public final class WatchActivityRepository implements AutoCloseable {
             return bootId;
         }
 
+        public String getCompletionTransferId() {
+            return completionTransferId;
+        }
+
+        public Long getCompletionRevision() {
+            return completionRevision;
+        }
+
         public long getSampleCount() {
             return sampleCount;
         }
@@ -756,6 +1301,8 @@ public final class WatchActivityRepository implements AutoCloseable {
         private final long payloadLength;
         private final String state;
         private final long attemptCount;
+        private final byte[] commitAckPayload;
+        private final Long committedAtUtcMs;
 
         private OutboxItem(
                 String transferId,
@@ -765,7 +1312,9 @@ public final class WatchActivityRepository implements AutoCloseable {
                 String payloadSha256,
                 long payloadLength,
                 String state,
-                long attemptCount) {
+                long attemptCount,
+                byte[] commitAckPayload,
+                Long committedAtUtcMs) {
             this.transferId = transferId;
             this.sessionId = sessionId;
             this.sessionRevision = sessionRevision;
@@ -774,6 +1323,8 @@ public final class WatchActivityRepository implements AutoCloseable {
             this.payloadLength = payloadLength;
             this.state = state;
             this.attemptCount = attemptCount;
+            this.commitAckPayload = commitAckPayload;
+            this.committedAtUtcMs = committedAtUtcMs;
         }
 
         public String getTransferId() {
@@ -806,6 +1357,185 @@ public final class WatchActivityRepository implements AutoCloseable {
 
         public long getAttemptCount() {
             return attemptCount;
+        }
+
+        public byte[] getCommitAckPayload() {
+            return commitAckPayload == null ? null : commitAckPayload.clone();
+        }
+
+        public Long getCommittedAtUtcMs() {
+            return committedAtUtcMs;
+        }
+    }
+
+    public static final class AckAcceptance {
+        private final OutboxItem outbox;
+        private final CommitAck acknowledgement;
+        private final boolean committedNow;
+
+        private AckAcceptance(
+                OutboxItem outbox,
+                CommitAck acknowledgement,
+                boolean committedNow) {
+            this.outbox = outbox;
+            this.acknowledgement = acknowledgement;
+            this.committedNow = committedNow;
+        }
+
+        public OutboxItem getOutbox() {
+            return outbox;
+        }
+
+        public CommitAck getAcknowledgement() {
+            return acknowledgement;
+        }
+
+        public boolean isCommittedNow() {
+            return committedNow;
+        }
+    }
+
+    public static final class TombstoneOutboxItem {
+        private final String transferId;
+        private final String sessionId;
+        private final long deleteRevision;
+        private final long coveredSessionRevision;
+        private final int origin;
+        private final byte[] payload;
+        private final String payloadSha256;
+        private final long payloadLength;
+        private final String state;
+        private final long attemptCount;
+        private final byte[] commitAckPayload;
+        private final Long committedAtUtcMs;
+
+        private TombstoneOutboxItem(
+                String transferId,
+                String sessionId,
+                long deleteRevision,
+                long coveredSessionRevision,
+                int origin,
+                byte[] payload,
+                String payloadSha256,
+                long payloadLength,
+                String state,
+                long attemptCount,
+                byte[] commitAckPayload,
+                Long committedAtUtcMs) {
+            this.transferId = transferId;
+            this.sessionId = sessionId;
+            this.deleteRevision = deleteRevision;
+            this.coveredSessionRevision = coveredSessionRevision;
+            this.origin = origin;
+            this.payload = payload;
+            this.payloadSha256 = payloadSha256;
+            this.payloadLength = payloadLength;
+            this.state = state;
+            this.attemptCount = attemptCount;
+            this.commitAckPayload = commitAckPayload;
+            this.committedAtUtcMs = committedAtUtcMs;
+        }
+
+        public String getTransferId() {
+            return transferId;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public long getDeleteRevision() {
+            return deleteRevision;
+        }
+
+        public long getCoveredSessionRevision() {
+            return coveredSessionRevision;
+        }
+
+        public int getOrigin() {
+            return origin;
+        }
+
+        public byte[] getPayload() {
+            return payload.clone();
+        }
+
+        public String getPayloadSha256() {
+            return payloadSha256;
+        }
+
+        public long getPayloadLength() {
+            return payloadLength;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public long getAttemptCount() {
+            return attemptCount;
+        }
+
+        public byte[] getCommitAckPayload() {
+            return commitAckPayload == null ? null : commitAckPayload.clone();
+        }
+
+        public Long getCommittedAtUtcMs() {
+            return committedAtUtcMs;
+        }
+    }
+
+    public static final class TombstoneAckAcceptance {
+        private final TombstoneOutboxItem outbox;
+        private final CommitAck acknowledgement;
+        private final boolean committedNow;
+
+        private TombstoneAckAcceptance(
+                TombstoneOutboxItem outbox,
+                CommitAck acknowledgement,
+                boolean committedNow) {
+            this.outbox = outbox;
+            this.acknowledgement = acknowledgement;
+            this.committedNow = committedNow;
+        }
+
+        public TombstoneOutboxItem getOutbox() {
+            return outbox;
+        }
+
+        public CommitAck getAcknowledgement() {
+            return acknowledgement;
+        }
+
+        public boolean isCommittedNow() {
+            return committedNow;
+        }
+    }
+
+    public static final class TombstoneReceiveResult {
+        private final CommitAck acknowledgement;
+        private final byte[] exactAcknowledgementBytes;
+        private final boolean created;
+
+        private TombstoneReceiveResult(
+                CommitAck acknowledgement,
+                byte[] exactAcknowledgementBytes,
+                boolean created) {
+            this.acknowledgement = acknowledgement;
+            this.exactAcknowledgementBytes = exactAcknowledgementBytes;
+            this.created = created;
+        }
+
+        public CommitAck getAcknowledgement() {
+            return acknowledgement;
+        }
+
+        public byte[] getExactAcknowledgementBytes() {
+            return exactAcknowledgementBytes.clone();
+        }
+
+        public boolean isCreated() {
+            return created;
         }
     }
 

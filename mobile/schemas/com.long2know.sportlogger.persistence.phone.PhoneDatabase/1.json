@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "ed525945c7b03bde8cb28114eba64d86",
+    "identityHash": "d55255b8dcd42468ee7411836fc3858b",
     "entities": [
       {
         "tableName": "phone_session_heads",
@@ -531,7 +531,7 @@
       },
       {
         "tableName": "phone_tombstone_outbox",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, `commit_ack_payload` BLOB, `committed_at_utc_ms` INTEGER, PRIMARY KEY(`transfer_id`))",
         "fields": [
           {
             "fieldPath": "transferId",
@@ -613,6 +613,16 @@
             "fieldPath": "lastFailureMessage",
             "columnName": "last_failure_message",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "commitAckPayload",
+            "columnName": "commit_ack_payload",
+            "affinity": "BLOB"
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -640,6 +650,77 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_outbox_state_created_at_utc_ms` ON `${TABLE_NAME}` (`state`, `created_at_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_tombstone_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload_sha256` TEXT NOT NULL, `committed_at_utc_ms` INTEGER NOT NULL, `ack_payload` BLOB NOT NULL, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ackPayload",
+            "columnName": "ack_payload",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_tombstone_receipts_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_receipts_session_id` ON `${TABLE_NAME}` (`session_id`)"
           }
         ]
       },
@@ -914,11 +995,443 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_legacy_backfill_receipts_session_id` ON `${TABLE_NAME}` (`session_id`)"
           }
         ]
+      },
+      {
+        "tableName": "health_connect_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `record_type` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `client_record_id` TEXT NOT NULL, `client_record_version` INTEGER NOT NULL, `provider_record_id` TEXT, `mapping_sha256` TEXT NOT NULL, `state` TEXT NOT NULL, `operation` TEXT NOT NULL, `attempt_count` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `last_error_code` TEXT, `last_error_message` TEXT, `created_at_utc_ms` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `session_revision`, `record_type`, `chunk_index`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordType",
+            "columnName": "record_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkIndex",
+            "columnName": "chunk_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordId",
+            "columnName": "client_record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordVersion",
+            "columnName": "client_record_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerRecordId",
+            "columnName": "provider_record_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mappingSha256",
+            "columnName": "mapping_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operation",
+            "columnName": "operation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attemptCount",
+            "columnName": "attempt_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAttemptAtUtcMs",
+            "columnName": "last_attempt_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastErrorCode",
+            "columnName": "last_error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastErrorMessage",
+            "columnName": "last_error_message",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "session_revision",
+            "record_type",
+            "chunk_index"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_health_connect_records_state_updated_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "updated_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_records_state_updated_at_utc_ms` ON `${TABLE_NAME}` (`state`, `updated_at_utc_ms`)"
+          },
+          {
+            "name": "index_health_connect_records_client_record_id",
+            "unique": false,
+            "columnNames": [
+              "client_record_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_records_client_record_id` ON `${TABLE_NAME}` (`client_record_id`)"
+          },
+          {
+            "name": "index_health_connect_records_provider_record_id",
+            "unique": false,
+            "columnNames": [
+              "provider_record_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_records_provider_record_id` ON `${TABLE_NAME}` (`provider_record_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "health_connect_owned_record_ids",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `record_type` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `provider_record_id` TEXT NOT NULL, `recorded_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `session_revision`, `record_type`, `chunk_index`, `provider_record_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordType",
+            "columnName": "record_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkIndex",
+            "columnName": "chunk_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerRecordId",
+            "columnName": "provider_record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordedAtUtcMs",
+            "columnName": "recorded_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "session_revision",
+            "record_type",
+            "chunk_index",
+            "provider_record_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_health_connect_owned_record_ids_session_id_session_revision_record_type_chunk_index",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "session_revision",
+              "record_type",
+              "chunk_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_owned_record_ids_session_id_session_revision_record_type_chunk_index` ON `${TABLE_NAME}` (`session_id`, `session_revision`, `record_type`, `chunk_index`)"
+          }
+        ]
+      },
+      {
+        "tableName": "health_connect_deletion_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`receipt_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `record_type` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `client_record_id` TEXT NOT NULL, `client_record_version` INTEGER NOT NULL, `provider_record_id` TEXT, `result` TEXT NOT NULL, `error_code` TEXT, `deleted_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`receipt_id`))",
+        "fields": [
+          {
+            "fieldPath": "receiptId",
+            "columnName": "receipt_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordType",
+            "columnName": "record_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkIndex",
+            "columnName": "chunk_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordId",
+            "columnName": "client_record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordVersion",
+            "columnName": "client_record_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerRecordId",
+            "columnName": "provider_record_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "result",
+            "columnName": "result",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deletedAtUtcMs",
+            "columnName": "deleted_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "receipt_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_health_connect_deletion_receipts_session_id_session_revision_record_type_chunk_index",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "session_revision",
+              "record_type",
+              "chunk_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_deletion_receipts_session_id_session_revision_record_type_chunk_index` ON `${TABLE_NAME}` (`session_id`, `session_revision`, `record_type`, `chunk_index`)"
+          }
+        ]
+      },
+      {
+        "tableName": "health_connect_client_versions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `client_record_id` TEXT NOT NULL, `allocated_version` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `client_record_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordId",
+            "columnName": "client_record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "allocatedVersion",
+            "columnName": "allocated_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "client_record_id"
+          ]
+        }
+      },
+      {
+        "tableName": "health_connect_operation_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`receipt_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `record_type` TEXT NOT NULL, `chunk_index` INTEGER NOT NULL, `client_record_id` TEXT NOT NULL, `client_record_version` INTEGER NOT NULL, `operation` TEXT NOT NULL, `phase` TEXT NOT NULL, `result` TEXT NOT NULL, `provider_record_id` TEXT, `error_code` TEXT, `recorded_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`receipt_id`))",
+        "fields": [
+          {
+            "fieldPath": "receiptId",
+            "columnName": "receipt_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordType",
+            "columnName": "record_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkIndex",
+            "columnName": "chunk_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordId",
+            "columnName": "client_record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientRecordVersion",
+            "columnName": "client_record_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operation",
+            "columnName": "operation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phase",
+            "columnName": "phase",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "result",
+            "columnName": "result",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerRecordId",
+            "columnName": "provider_record_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "recordedAtUtcMs",
+            "columnName": "recorded_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "receipt_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_health_connect_operation_receipts_session_id_session_revision_record_type_chunk_index",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "session_revision",
+              "record_type",
+              "chunk_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_health_connect_operation_receipts_session_id_session_revision_record_type_chunk_index` ON `${TABLE_NAME}` (`session_id`, `session_revision`, `record_type`, `chunk_index`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ed525945c7b03bde8cb28114eba64d86')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd55255b8dcd42468ee7411836fc3858b')"
     ]
   }
 }

@@ -53,6 +53,10 @@ final class WatchSessionEntity {
     public long accumulatedActiveMs;
     @ColumnInfo(name = "lease_token")
     public long leaseToken;
+    @ColumnInfo(name = "completion_transfer_id")
+    public String completionTransferId;
+    @ColumnInfo(name = "completion_revision")
+    public Long completionRevision;
     @ColumnInfo(name = "sample_count")
     public long sampleCount;
     @ColumnInfo(name = "route_point_count")
@@ -154,6 +158,10 @@ final class WatchOutboxEntity {
     public String lastFailureCode;
     @ColumnInfo(name = "last_failure_message")
     public String lastFailureMessage;
+    @ColumnInfo(name = "commit_ack_payload", typeAffinity = ColumnInfo.BLOB)
+    public byte[] commitAckPayload;
+    @ColumnInfo(name = "committed_at_utc_ms")
+    public Long committedAtUtcMs;
 }
 
 @Entity(
@@ -297,6 +305,10 @@ final class WatchTombstoneOutboxEntity {
     public String lastFailureCode;
     @ColumnInfo(name = "last_failure_message")
     public String lastFailureMessage;
+    @ColumnInfo(name = "commit_ack_payload", typeAffinity = ColumnInfo.BLOB)
+    public byte[] commitAckPayload;
+    @ColumnInfo(name = "committed_at_utc_ms")
+    public Long committedAtUtcMs;
 }
 
 @Entity(
@@ -373,12 +385,21 @@ interface WatchDao {
     @Query("SELECT * FROM watch_activity_outbox WHERE transfer_id = :transferId")
     WatchOutboxEntity outbox(String transferId);
 
+    @Query("SELECT * FROM watch_activity_outbox WHERE session_id = :sessionId "
+            + "AND session_revision = :revision")
+    WatchOutboxEntity outboxForRevision(String sessionId, long revision);
+
     @Update
     int updateOutbox(WatchOutboxEntity outbox);
 
     @Query("SELECT * FROM watch_activity_outbox WHERE state IN ('READY', 'RETRYABLE') "
             + "ORDER BY created_at_utc_ms, transfer_id LIMIT :limit")
     List<WatchOutboxEntity> readyOutbox(int limit);
+
+    @Query("SELECT * FROM watch_activity_outbox "
+            + "WHERE state IN ('READY', 'RETRYABLE', 'SENDING', 'AWAITING_COMMIT_ACK') "
+            + "ORDER BY created_at_utc_ms, transfer_id LIMIT :limit")
+    List<WatchOutboxEntity> pendingOutbox(int limit);
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertMigrationReceipt(WatchMigrationReceiptEntity receipt);
@@ -404,9 +425,27 @@ interface WatchDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertTombstoneOutbox(WatchTombstoneOutboxEntity outbox);
 
+    @Query("SELECT * FROM watch_tombstone_outbox WHERE transfer_id = :transferId")
+    WatchTombstoneOutboxEntity tombstoneOutbox(String transferId);
+
+    @Update
+    int updateTombstoneOutbox(WatchTombstoneOutboxEntity outbox);
+
+    @Query("SELECT * FROM watch_tombstone_outbox "
+            + "WHERE state IN ('READY', 'RETRYABLE', 'SENDING', 'AWAITING_COMMIT_ACK') "
+            + "ORDER BY created_at_utc_ms, transfer_id LIMIT :limit")
+    List<WatchTombstoneOutboxEntity> pendingTombstoneOutbox(int limit);
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertTombstoneReceipt(WatchTombstoneReceiptEntity receipt);
 
     @Query("SELECT * FROM watch_tombstone_receipts WHERE transfer_id = :transferId")
     WatchTombstoneReceiptEntity tombstoneReceipt(String transferId);
+
+    @Query("UPDATE watch_activity_outbox SET state = 'TOMBSTONED', "
+            + "last_failure_code = 'TOMBSTONED', "
+            + "last_failure_message = 'Covered by accepted tombstone' "
+            + "WHERE session_id = :sessionId AND session_revision <= :coveredRevision "
+            + "AND state != 'COMMITTED'")
+    int suppressCoveredActivityOutbox(String sessionId, long coveredRevision);
 }

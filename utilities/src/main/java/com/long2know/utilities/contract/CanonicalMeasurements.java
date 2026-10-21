@@ -122,6 +122,10 @@ public final class CanonicalMeasurements {
         SWIMMING_LAP_COUNT(
                 "SWIMMING_LAP_COUNT",
                 "count",
+                AggregationSemantics.AGGREGATION_SEMANTICS_DELTA),
+        SWIMMING_LAP_COUNT_TOTAL(
+                "SWIMMING_LAP_COUNT_TOTAL",
+                "count",
                 AggregationSemantics.AGGREGATION_SEMANTICS_CUMULATIVE),
         REPETITION_COUNT(
                 "REP_COUNT",

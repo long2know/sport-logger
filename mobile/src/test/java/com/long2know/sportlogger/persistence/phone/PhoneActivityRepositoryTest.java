@@ -26,6 +26,7 @@ import com.long2know.utilities.contract.proto.PositionMeasurement;
 import com.long2know.utilities.contract.proto.Quality;
 import com.long2know.utilities.contract.proto.SourceKind;
 import com.long2know.utilities.contract.proto.SourceMetadata;
+import com.long2know.utilities.contract.proto.TombstoneOrigin;
 
 import org.junit.After;
 import org.junit.Before;
@@ -174,6 +175,9 @@ public class PhoneActivityRepositoryTest {
 
     @Test
     public void connectorLedgerRetainsEveryRemoteIdAndRequiresLeaseCAS() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                900L);
         PhoneActivityRepository.ConnectorKey key =
                 new PhoneActivityRepository.ConnectorKey(
                         SESSION_ID,
@@ -213,6 +217,71 @@ public class PhoneActivityRepositoryTest {
         assertEquals(Arrays.asList(10L, 11L), second.getRemoteIds());
         repository.markConnectorDeleteUnsupported(key, 1_700L);
         assertTrue(repository.connectorDelivery(key).isDeleteUnsupported());
+    }
+
+    @Test
+    public void phoneOutboxAndIncomingWatchTombstoneUseExactDuplicateSafeAcks() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                1_000L);
+        String phoneDeleteTransfer = "528b5fc9-86dd-4b57-84a4-461fa29e59ec";
+        repository.deleteLocal(
+                SESSION_ID,
+                1L,
+                1L,
+                phoneDeleteTransfer,
+                2_000L);
+        PhoneActivityRepository.TombstoneOutboxItem outbox =
+                repository.tombstoneOutbox(phoneDeleteTransfer);
+        repository.transitionTombstoneOutbox(
+                phoneDeleteTransfer,
+                PhoneActivityRepository.TOMBSTONE_READY,
+                PhoneActivityRepository.TOMBSTONE_SENDING,
+                2_100L,
+                null,
+                null);
+        repository.transitionTombstoneOutbox(
+                phoneDeleteTransfer,
+                PhoneActivityRepository.TOMBSTONE_SENDING,
+                PhoneActivityRepository.TOMBSTONE_AWAITING_COMMIT_ACK,
+                null,
+                null,
+                null);
+        byte[] phoneAck = CanonicalTransfers.tombstoneCommitAck(
+                        CanonicalTransfers.parseTombstone(outbox.getPayload()),
+                        AckResult.ACK_RESULT_ACCEPTED,
+                        null,
+                        null)
+                .toByteArray();
+
+        assertTrue(repository.acceptTombstoneCommitAck(phoneAck, 2_200L)
+                .isCommittedNow());
+        assertFalse(repository.acceptTombstoneCommitAck(phoneAck, 2_300L)
+                .isCommittedNow());
+        assertTrue(repository.pendingTombstoneOutbox(10).isEmpty());
+
+        String watchDeleteTransfer = "aa880852-2437-4539-9c52-c0080b1c800f";
+        byte[] incoming = CanonicalTransfers.tombstone(
+                        watchDeleteTransfer,
+                        SESSION_ID,
+                        2L,
+                        1L,
+                        TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH,
+                        3_000L)
+                .toByteArray();
+        PhoneActivityRepository.TombstoneReceiveResult first =
+                repository.acceptTombstoneTransfer(incoming, 3_100L);
+        PhoneActivityRepository.TombstoneReceiveResult duplicate =
+                repository.acceptTombstoneTransfer(incoming, 3_200L);
+
+        assertTrue(first.isCreated());
+        assertFalse(duplicate.isCreated());
+        assertArrayEquals(
+                first.getExactAcknowledgementBytes(),
+                duplicate.getExactAcknowledgementBytes());
+        assertEquals(AckResult.ACK_RESULT_ACCEPTED,
+                first.getAcknowledgement().getResult());
+        assertTrue(repository.summaries(0, 10).isEmpty());
     }
 
     private static byte[] transfer(String transferId, ActivityRecord activity) {

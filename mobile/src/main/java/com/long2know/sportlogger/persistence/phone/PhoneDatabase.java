@@ -15,9 +15,15 @@ import androidx.room.RoomDatabase;
                 PhoneInboxReceiptEntity.class,
                 PhoneTombstoneEntity.class,
                 PhoneTombstoneOutboxEntity.class,
+                PhoneTombstoneReceiptEntity.class,
                 ConnectorLedgerEntity.class,
                 ConnectorRemoteIdEntity.class,
-                PhoneLegacyBackfillReceiptEntity.class
+                PhoneLegacyBackfillReceiptEntity.class,
+                HealthConnectRecordEntity.class,
+                HealthConnectOwnedRecordIdEntity.class,
+                HealthConnectDeletionReceiptEntity.class,
+                HealthConnectClientVersionEntity.class,
+                HealthConnectOperationReceiptEntity.class
         },
         version = 1,
         exportSchema = true)
