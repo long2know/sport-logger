@@ -38,6 +38,8 @@ import org.robolectric.annotation.Config;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -400,6 +402,36 @@ public class PhoneActivityRepositoryTest {
         assertEquals(Arrays.asList(10L, 11L), second.getRemoteIds());
         repository.markConnectorDeleteUnsupported(key, 1_700L);
         assertTrue(repository.connectorDelivery(key).isDeleteUnsupported());
+    }
+
+    @Test
+    public void connectorLedgerChangesNotifyRepositoryObserver() throws Exception {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                900L);
+        PhoneActivityRepository.ConnectorKey key =
+                new PhoneActivityRepository.ConnectorKey(
+                        SESSION_ID,
+                        1L,
+                        "endurain",
+                        "https://endurain.example",
+                        "observer-connection");
+        CountDownLatch invalidated = new CountDownLatch(1);
+        AutoCloseable observer =
+                repository.observeChanges(Runnable::run, invalidated::countDown);
+        try {
+            repository.prepareConnectorDelivery(
+                    key,
+                    "credential-ref-observer",
+                    500L,
+                    repeat("34", 32),
+                    1_000L);
+            database.getInvalidationTracker().refreshAsync();
+
+            assertTrue(invalidated.await(2, TimeUnit.SECONDS));
+        } finally {
+            observer.close();
+        }
     }
 
     @Test
