@@ -403,6 +403,158 @@ public class PhoneActivityRepositoryTest {
     }
 
     @Test
+    public void connectorDeliveryExposesPersistedAmbiguousAndDefinitiveFailuresAfterRestart() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                900L);
+        PhoneActivityRepository.ConnectorKey key =
+                new PhoneActivityRepository.ConnectorKey(
+                        SESSION_ID,
+                        1L,
+                        "endurain",
+                        "https://endurain.example",
+                        "connection-status");
+        repository.prepareConnectorDelivery(
+                key,
+                "credential-ref-a",
+                500L,
+                repeat("cd", 32),
+                1_000L);
+        assertTrue(repository.claimConnectorDelivery(
+                key,
+                PhoneActivityRepository.ConnectorState.PENDING,
+                101L,
+                "worker-a",
+                5_000L,
+                1_100L));
+        repository.transitionConnectorDelivery(
+                key,
+                101L,
+                PhoneActivityRepository.ConnectorState.PENDING,
+                PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY,
+                null,
+                "DROPPED_RESPONSE",
+                "The provider may have accepted the upload",
+                1_200L);
+
+        PhoneActivityRepository restarted = new PhoneActivityRepository(database);
+        PhoneActivityRepository.ConnectorDelivery ambiguous =
+                restarted.connectorDelivery(key);
+        assertEquals(
+                PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY,
+                ambiguous.getState());
+        assertEquals("DROPPED_RESPONSE", ambiguous.getLastFailureCode());
+        assertEquals(
+                "The provider may have accepted the upload",
+                ambiguous.getLastFailureMessage());
+
+        restarted.authorizeDuplicateRiskRetry(key, 1_300L);
+        assertTrue(restarted.claimConnectorDelivery(
+                key,
+                PhoneActivityRepository.ConnectorState.PENDING,
+                102L,
+                "worker-b",
+                6_000L,
+                1_400L));
+        restarted.transitionConnectorDelivery(
+                key,
+                102L,
+                PhoneActivityRepository.ConnectorState.PENDING,
+                PhoneActivityRepository.ConnectorState.FAILED,
+                null,
+                "UNSUPPORTED_ACTIVITY",
+                "The provider rejected this activity permanently",
+                1_500L);
+
+        PhoneActivityRepository.ConnectorDelivery definitive =
+                new PhoneActivityRepository(database).connectorDelivery(key);
+        assertEquals(
+                PhoneActivityRepository.ConnectorState.FAILED,
+                definitive.getState());
+        assertEquals("UNSUPPORTED_ACTIVITY", definitive.getLastFailureCode());
+        assertEquals(
+                "The provider rejected this activity permanently",
+                definitive.getLastFailureMessage());
+    }
+
+    @Test
+    public void expiredClaimRecoversAsUnknownWithoutTouchingActiveOrUnclaimedRows() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                900L);
+        PhoneActivityRepository.ConnectorKey claimedKey =
+                new PhoneActivityRepository.ConnectorKey(
+                        SESSION_ID,
+                        1L,
+                        "endurain",
+                        "https://endurain.example",
+                        "claimed-connection");
+        repository.prepareConnectorDelivery(
+                claimedKey,
+                "credential-ref-a",
+                500L,
+                repeat("ef", 32),
+                1_000L);
+        assertTrue(repository.claimConnectorDelivery(
+                claimedKey,
+                PhoneActivityRepository.ConnectorState.PENDING,
+                201L,
+                "worker-a",
+                1_500L,
+                1_100L));
+
+        assertFalse(repository.recoverExpiredConnectorClaimAsUnknown(
+                claimedKey,
+                1_499L));
+        PhoneActivityRepository.ConnectorDelivery active =
+                repository.connectorDelivery(claimedKey);
+        assertEquals(PhoneActivityRepository.ConnectorState.PENDING, active.getState());
+        assertNull(active.getLastFailureCode());
+
+        assertTrue(repository.recoverExpiredConnectorClaimAsUnknown(
+                claimedKey,
+                1_500L));
+        PhoneActivityRepository.ConnectorDelivery recovered =
+                new PhoneActivityRepository(database).connectorDelivery(claimedKey);
+        assertEquals(
+                PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY,
+                recovered.getState());
+        assertEquals(
+                "PROCESS_RESTART_AMBIGUOUS",
+                recovered.getLastFailureCode());
+        assertEquals(
+                "Recovered expired claimed delivery after process restart",
+                recovered.getLastFailureMessage());
+        assertNull(recovered.getRetryNotBeforeUtcMs());
+        assertFalse(repository.recoverExpiredConnectorClaimAsUnknown(
+                claimedKey,
+                2_000L));
+
+        PhoneActivityRepository.ConnectorKey unclaimedKey =
+                new PhoneActivityRepository.ConnectorKey(
+                        SESSION_ID,
+                        1L,
+                        "endurain",
+                        "https://endurain.example",
+                        "unclaimed-connection");
+        repository.prepareConnectorDelivery(
+                unclaimedKey,
+                "credential-ref-b",
+                500L,
+                repeat("12", 32),
+                1_000L);
+        assertFalse(repository.recoverExpiredConnectorClaimAsUnknown(
+                unclaimedKey,
+                5_000L));
+        PhoneActivityRepository.ConnectorDelivery unclaimed =
+                repository.connectorDelivery(unclaimedKey);
+        assertEquals(
+                PhoneActivityRepository.ConnectorState.PENDING,
+                unclaimed.getState());
+        assertNull(unclaimed.getLastFailureCode());
+    }
+
+    @Test
     public void phoneOutboxAndIncomingWatchTombstoneUseExactDuplicateSafeAcks() {
         repository.acceptActivityTransfer(
                 transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
