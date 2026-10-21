@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class LegacyMeasurementBridgeTest {
@@ -93,5 +94,34 @@ public class LegacyMeasurementBridgeTest {
         assertEquals(
                 MeasurementProvenance.RAW_PLATFORM,
                 accepted.get().getProvenance());
+    }
+
+    @Test
+    public void newSessionClearsEveryLiveValueWithoutInventingZeroes() {
+        bridge.configure(Collections.emptySet());
+        assertTrue(bridge.applyRaw(MeasurementEvent.heartRate(41L, 0F)));
+        assertTrue(bridge.applyRaw(MeasurementEvent.steps(42L, 0)));
+        LocationData location = new LocationData();
+        location.Latitude = 0D;
+        location.Longitude = 0D;
+        location.TotalDistance = 0D;
+        assertTrue(bridge.applyRaw(MeasurementEvent.location(43L, location)));
+
+        LiveMeasurementSnapshot populated = bridge.getLiveSnapshot();
+        assertEquals(0D, populated.getHeartRateBpm().getValue(), 0D);
+        assertEquals(0L, populated.getSteps().getValue().longValue());
+        assertEquals(0D, populated.getDistanceMeters().getValue(), 0D);
+        assertEquals(
+                new LocationSample(0D, 0D, null, null, null),
+                populated.getLocation().getValue());
+
+        bridge.beginSession(91);
+
+        LiveMeasurementSnapshot reset = bridge.getLiveSnapshot();
+        assertEquals(91, reset.getActivityId());
+        assertNull(reset.getHeartRateBpm());
+        assertNull(reset.getSteps());
+        assertNull(reset.getDistanceMeters());
+        assertNull(reset.getLocation());
     }
 }
