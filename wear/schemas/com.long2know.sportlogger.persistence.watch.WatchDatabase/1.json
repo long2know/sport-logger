@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "7c1fe9283a65021d4fed42cf55cb6dc8",
+    "identityHash": "8e03cba20c32606ef3ccaeafcd2d29fa",
     "entities": [
       {
         "tableName": "watch_sessions",
@@ -281,7 +281,7 @@
       },
       {
         "tableName": "watch_activity_outbox",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`), FOREIGN KEY(`session_id`) REFERENCES `watch_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, `commit_ack_payload` BLOB, `committed_at_utc_ms` INTEGER, PRIMARY KEY(`transfer_id`), FOREIGN KEY(`session_id`) REFERENCES `watch_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "transferId",
@@ -351,6 +351,16 @@
             "fieldPath": "lastFailureMessage",
             "columnName": "last_failure_message",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "commitAckPayload",
+            "columnName": "commit_ack_payload",
+            "affinity": "BLOB"
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -682,7 +692,7 @@
       },
       {
         "tableName": "watch_tombstone_outbox",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, `commit_ack_payload` BLOB, `committed_at_utc_ms` INTEGER, PRIMARY KEY(`transfer_id`))",
         "fields": [
           {
             "fieldPath": "transferId",
@@ -764,6 +774,16 @@
             "fieldPath": "lastFailureMessage",
             "columnName": "last_failure_message",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "commitAckPayload",
+            "columnName": "commit_ack_payload",
+            "affinity": "BLOB"
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -868,7 +888,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7c1fe9283a65021d4fed42cf55cb6dc8')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8e03cba20c32606ef3ccaeafcd2d29fa')"
     ]
   }
 }

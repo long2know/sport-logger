@@ -1,5 +1,7 @@
 package com.long2know.sportlogger.persistence.phone;
 
+import android.content.Context;
+
 import com.long2know.utilities.contract.CanonicalIds;
 import com.long2know.utilities.contract.CanonicalPayload;
 import com.long2know.utilities.contract.CanonicalTransfers;
@@ -35,10 +37,23 @@ import java.util.Comparator;
 import java.util.List;
 
 public final class LegacyPhoneInboxBackfill {
+    public static final String LEGACY_INBOX_DIRECTORY = "received-sport-activities";
+
     private final PhoneActivityRepository repository;
 
     public LegacyPhoneInboxBackfill(PhoneActivityRepository repository) {
         this.repository = repository;
+    }
+
+    public static File defaultInboxDirectory(Context context) {
+        return new File(
+                context.getApplicationContext().getFilesDir(),
+                LEGACY_INBOX_DIRECTORY);
+    }
+
+    public BackfillResult backfillDefault(Context context, long completedAtUtcMs)
+            throws IOException {
+        return backfill(defaultInboxDirectory(context), completedAtUtcMs);
     }
 
     public BackfillResult backfill(File inboxDirectory, long completedAtUtcMs) throws IOException {

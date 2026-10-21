@@ -354,6 +354,187 @@ final class PhoneLegacyBackfillReceiptEntity {
     public long completedAtUtcMs;
 }
 
+@Entity(
+        tableName = "health_connect_records",
+        primaryKeys = {
+                "session_id",
+                "session_revision",
+                "record_type",
+                "chunk_index"
+        },
+        indices = {
+                @Index(value = {"state", "updated_at_utc_ms"}),
+                @Index("client_record_id"),
+                @Index("provider_record_id")
+        })
+final class HealthConnectRecordEntity {
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "session_revision")
+    public long sessionRevision;
+    @NonNull
+    @ColumnInfo(name = "record_type")
+    public String recordType;
+    @ColumnInfo(name = "chunk_index")
+    public int chunkIndex;
+    @NonNull
+    @ColumnInfo(name = "client_record_id")
+    public String clientRecordId;
+    @ColumnInfo(name = "client_record_version")
+    public long clientRecordVersion;
+    @ColumnInfo(name = "provider_record_id")
+    public String providerRecordId;
+    @NonNull
+    @ColumnInfo(name = "mapping_sha256")
+    public String mappingSha256;
+    @NonNull
+    public String state;
+    @NonNull
+    public String operation;
+    @ColumnInfo(name = "attempt_count")
+    public long attemptCount;
+    @ColumnInfo(name = "last_attempt_at_utc_ms")
+    public Long lastAttemptAtUtcMs;
+    @ColumnInfo(name = "last_error_code")
+    public String lastErrorCode;
+    @ColumnInfo(name = "last_error_message")
+    public String lastErrorMessage;
+    @ColumnInfo(name = "created_at_utc_ms")
+    public long createdAtUtcMs;
+    @ColumnInfo(name = "updated_at_utc_ms")
+    public long updatedAtUtcMs;
+}
+
+@Entity(
+        tableName = "health_connect_owned_record_ids",
+        primaryKeys = {
+                "session_id",
+                "session_revision",
+                "record_type",
+                "chunk_index",
+                "provider_record_id"
+        },
+        indices = @Index(value = {
+                "session_id",
+                "session_revision",
+                "record_type",
+                "chunk_index"
+        }))
+final class HealthConnectOwnedRecordIdEntity {
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "session_revision")
+    public long sessionRevision;
+    @NonNull
+    @ColumnInfo(name = "record_type")
+    public String recordType;
+    @ColumnInfo(name = "chunk_index")
+    public int chunkIndex;
+    @NonNull
+    @ColumnInfo(name = "provider_record_id")
+    public String providerRecordId;
+    @ColumnInfo(name = "recorded_at_utc_ms")
+    public long recordedAtUtcMs;
+}
+
+@Entity(
+        tableName = "health_connect_deletion_receipts",
+        indices = @Index(value = {
+                "session_id",
+                "session_revision",
+                "record_type",
+                "chunk_index"
+        }))
+final class HealthConnectDeletionReceiptEntity {
+    @PrimaryKey
+    @NonNull
+    @ColumnInfo(name = "receipt_id")
+    public String receiptId;
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "session_revision")
+    public long sessionRevision;
+    @NonNull
+    @ColumnInfo(name = "record_type")
+    public String recordType;
+    @ColumnInfo(name = "chunk_index")
+    public int chunkIndex;
+    @NonNull
+    @ColumnInfo(name = "client_record_id")
+    public String clientRecordId;
+    @ColumnInfo(name = "client_record_version")
+    public long clientRecordVersion;
+    @ColumnInfo(name = "provider_record_id")
+    public String providerRecordId;
+    @NonNull
+    public String result;
+    @ColumnInfo(name = "error_code")
+    public String errorCode;
+    @ColumnInfo(name = "deleted_at_utc_ms")
+    public long deletedAtUtcMs;
+}
+
+@Entity(
+        tableName = "health_connect_client_versions",
+        primaryKeys = {"session_id", "client_record_id"})
+final class HealthConnectClientVersionEntity {
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @NonNull
+    @ColumnInfo(name = "client_record_id")
+    public String clientRecordId;
+    @ColumnInfo(name = "allocated_version")
+    public long allocatedVersion;
+    @ColumnInfo(name = "updated_at_utc_ms")
+    public long updatedAtUtcMs;
+}
+
+@Entity(
+        tableName = "health_connect_operation_receipts",
+        indices = @Index(value = {
+                "session_id",
+                "session_revision",
+                "record_type",
+                "chunk_index"
+        }))
+final class HealthConnectOperationReceiptEntity {
+    @PrimaryKey
+    @NonNull
+    @ColumnInfo(name = "receipt_id")
+    public String receiptId;
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "session_revision")
+    public long sessionRevision;
+    @NonNull
+    @ColumnInfo(name = "record_type")
+    public String recordType;
+    @ColumnInfo(name = "chunk_index")
+    public int chunkIndex;
+    @NonNull
+    @ColumnInfo(name = "client_record_id")
+    public String clientRecordId;
+    @ColumnInfo(name = "client_record_version")
+    public long clientRecordVersion;
+    @NonNull
+    public String operation;
+    @NonNull
+    public String phase;
+    @NonNull
+    public String result;
+    @ColumnInfo(name = "provider_record_id")
+    public String providerRecordId;
+    @ColumnInfo(name = "error_code")
+    public String errorCode;
+    @ColumnInfo(name = "recorded_at_utc_ms")
+    public long recordedAtUtcMs;
+}
+
 final class PhoneSummaryRow {
     @ColumnInfo(name = "session_id")
     public String sessionId;
@@ -424,6 +605,9 @@ interface PhoneDao {
             + "ORDER BY r.start_time_utc_ms DESC, h.session_id ASC "
             + "LIMIT :limit OFFSET :offset")
     List<PhoneSummaryRow> summaries(int offset, int limit);
+
+    @Query("SELECT COUNT(*) FROM phone_session_heads WHERE deleted = 0")
+    long summaryCount();
 
     @Query("SELECT * FROM phone_metadata WHERE session_id = :sessionId")
     PhoneMetadataEntity metadata(String sessionId);
@@ -503,4 +687,80 @@ interface PhoneDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertLegacyBackfillReceipt(PhoneLegacyBackfillReceiptEntity receipt);
+
+    @Query("SELECT * FROM health_connect_records WHERE session_id = :sessionId "
+            + "AND session_revision = :revision AND record_type = :recordType "
+            + "AND chunk_index = :chunkIndex")
+    HealthConnectRecordEntity healthConnectRecord(
+            String sessionId,
+            long revision,
+            String recordType,
+            int chunkIndex);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertHealthConnectRecord(HealthConnectRecordEntity record);
+
+    @Update
+    int updateHealthConnectRecord(HealthConnectRecordEntity record);
+
+    @Query("SELECT * FROM health_connect_records WHERE session_id = :sessionId "
+            + "AND session_revision = :revision ORDER BY record_type, chunk_index")
+    List<HealthConnectRecordEntity> healthConnectRecords(
+            String sessionId,
+            long revision);
+
+    @Query("SELECT * FROM health_connect_records WHERE session_id = :sessionId "
+            + "ORDER BY session_revision, record_type, chunk_index")
+    List<HealthConnectRecordEntity> healthConnectRecordsForSession(String sessionId);
+
+    @Query("SELECT * FROM health_connect_records WHERE session_id = :sessionId "
+            + "AND session_revision = :revision AND state IN (:states) "
+            + "ORDER BY record_type, chunk_index")
+    List<HealthConnectRecordEntity> healthConnectRecordsInStates(
+            String sessionId,
+            long revision,
+            List<String> states);
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    long insertHealthConnectOwnedRecordId(HealthConnectOwnedRecordIdEntity recordId);
+
+    @Query("SELECT provider_record_id FROM health_connect_owned_record_ids "
+            + "WHERE session_id = :sessionId AND session_revision = :revision "
+            + "AND record_type = :recordType AND chunk_index = :chunkIndex "
+            + "ORDER BY recorded_at_utc_ms, provider_record_id")
+    List<String> healthConnectOwnedRecordIds(
+            String sessionId,
+            long revision,
+            String recordType,
+            int chunkIndex);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertHealthConnectDeletionReceipt(HealthConnectDeletionReceiptEntity receipt);
+
+    @Query("SELECT * FROM health_connect_deletion_receipts WHERE session_id = :sessionId "
+            + "AND session_revision = :revision ORDER BY deleted_at_utc_ms, receipt_id")
+    List<HealthConnectDeletionReceiptEntity> healthConnectDeletionReceipts(
+            String sessionId,
+            long revision);
+
+    @Query("SELECT * FROM health_connect_client_versions WHERE session_id = :sessionId "
+            + "AND client_record_id = :clientRecordId")
+    HealthConnectClientVersionEntity healthConnectClientVersion(
+            String sessionId,
+            String clientRecordId);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertHealthConnectClientVersion(HealthConnectClientVersionEntity version);
+
+    @Update
+    int updateHealthConnectClientVersion(HealthConnectClientVersionEntity version);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertHealthConnectOperationReceipt(HealthConnectOperationReceiptEntity receipt);
+
+    @Query("SELECT * FROM health_connect_operation_receipts WHERE session_id = :sessionId "
+            + "AND session_revision = :revision ORDER BY recorded_at_utc_ms, receipt_id")
+    List<HealthConnectOperationReceiptEntity> healthConnectOperationReceipts(
+            String sessionId,
+            long revision);
 }
