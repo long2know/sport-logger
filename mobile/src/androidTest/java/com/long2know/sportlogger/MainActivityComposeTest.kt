@@ -190,6 +190,7 @@ class MainActivityComposeTest {
             .assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.delete_activity_message))
             .assertIsDisplayed()
+        capture("compose-delete-confirmation.png")
         compose.onNodeWithTag("confirm_delete").performClick()
 
         waitForText(context.getString(R.string.history_empty))
@@ -205,6 +206,9 @@ class MainActivityComposeTest {
                 ),
             )
         }
+        compose.onNodeWithText(context.getString(R.string.nav_status)).performClick()
+        waitForText(context.getString(R.string.status_pending_delete_count, 1))
+        capture("compose-delete-queued.png")
     }
 
     @Test
