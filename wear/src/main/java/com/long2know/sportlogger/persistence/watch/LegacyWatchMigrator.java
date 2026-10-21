@@ -233,7 +233,7 @@ public final class LegacyWatchMigrator {
         String activitySql = "SELECT "
                 + "ID AS legacy_id, GMTSTART AS started_at, GMTEND AS ended_at, "
                 + "NAME AS activity_name, DESCRIPTION AS activity_description, "
-                + "DISTANCE AS distance_m, TIME AS duration_seconds, PACE AS pace "
+                + "DISTANCE AS distance_m, TIME AS time_value, PACE AS pace "
                 + "FROM ACTIVITY ORDER BY ID";
         try (Cursor activities = source.rawQuery(activitySql, null)) {
             while (activities.moveToNext()) {
@@ -380,7 +380,6 @@ public final class LegacyWatchMigrator {
                 nullableText(cursor, "activity_name"),
                 nullableText(cursor, "activity_description"),
                 nullableDouble(cursor, "distance_m"),
-                nullableDouble(cursor, "duration_seconds"),
                 rawActivity(cursor));
     }
 
@@ -458,14 +457,6 @@ public final class LegacyWatchMigrator {
             LegacyActivityRow legacy,
             PointResult points) {
         long wallDuration = legacy.endedAtUtcMs - legacy.startedAtUtcMs;
-        Long activeDuration = null;
-        if (legacy.durationSeconds != null && legacy.durationSeconds > 0D) {
-            activeDuration = Math.round(
-                    nonNegative(legacy.durationSeconds, "activity duration") * 1_000D);
-        }
-        long elapsedDuration = activeDuration == null
-                ? wallDuration
-                : Math.max(wallDuration, activeDuration);
         SourceMetadata source = legacySource();
         ActivitySummary.Builder summary = ActivitySummary.newBuilder()
                 .setSampleCount(points.samples.size());
@@ -498,7 +489,7 @@ public final class LegacyWatchMigrator {
                 .setActivityType(ActivityType.ACTIVITY_TYPE_UNSPECIFIED)
                 .setStartTimeUtcMs(legacy.startedAtUtcMs)
                 .setEndTimeUtcMs(legacy.endedAtUtcMs)
-                .setElapsedDurationMs(elapsedDuration)
+                .setElapsedDurationMs(wallDuration)
                 .setSummary(summary)
                 .setSource(source)
                 .setLegacyIdentity(LegacyIdentity.newBuilder()
@@ -509,9 +500,6 @@ public final class LegacyWatchMigrator {
                         .setSourceRowSha256(sha256Hex(
                                 legacy.rawRow.getBytes(StandardCharsets.UTF_8))))
                 .addAllSamples(points.samples);
-        if (activeDuration != null) {
-            activity.setActiveDurationMs(activeDuration);
-        }
         if (legacy.name != null) {
             activity.setRecordedName(legacy.name);
         }
@@ -687,7 +675,7 @@ public final class LegacyWatchMigrator {
                 "activity_name",
                 "activity_description",
                 "distance_m",
-                "duration_seconds",
+                "time_value",
                 "pace");
     }
 
@@ -876,7 +864,6 @@ public final class LegacyWatchMigrator {
         private final String name;
         private final String description;
         private final Double distanceM;
-        private final Double durationSeconds;
         private final String rawRow;
 
         private LegacyActivityRow(
@@ -886,7 +873,6 @@ public final class LegacyWatchMigrator {
                 String name,
                 String description,
                 Double distanceM,
-                Double durationSeconds,
                 String rawRow) {
             this.activityId = activityId;
             this.startedAtUtcMs = startedAtUtcMs;
@@ -894,7 +880,6 @@ public final class LegacyWatchMigrator {
             this.name = name;
             this.description = description;
             this.distanceM = distanceM;
-            this.durationSeconds = durationSeconds;
             this.rawRow = rawRow;
         }
     }
