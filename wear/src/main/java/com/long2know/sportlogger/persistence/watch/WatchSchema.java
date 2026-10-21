@@ -53,6 +53,10 @@ final class WatchSessionEntity {
     public long accumulatedActiveMs;
     @ColumnInfo(name = "lease_token")
     public long leaseToken;
+    @ColumnInfo(name = "completion_transfer_id")
+    public String completionTransferId;
+    @ColumnInfo(name = "completion_revision")
+    public Long completionRevision;
     @ColumnInfo(name = "sample_count")
     public long sampleCount;
     @ColumnInfo(name = "route_point_count")
@@ -381,6 +385,10 @@ interface WatchDao {
     @Query("SELECT * FROM watch_activity_outbox WHERE transfer_id = :transferId")
     WatchOutboxEntity outbox(String transferId);
 
+    @Query("SELECT * FROM watch_activity_outbox WHERE session_id = :sessionId "
+            + "AND session_revision = :revision")
+    WatchOutboxEntity outboxForRevision(String sessionId, long revision);
+
     @Update
     int updateOutbox(WatchOutboxEntity outbox);
 
@@ -433,4 +441,11 @@ interface WatchDao {
 
     @Query("SELECT * FROM watch_tombstone_receipts WHERE transfer_id = :transferId")
     WatchTombstoneReceiptEntity tombstoneReceipt(String transferId);
+
+    @Query("UPDATE watch_activity_outbox SET state = 'TOMBSTONED', "
+            + "last_failure_code = 'TOMBSTONED', "
+            + "last_failure_message = 'Covered by accepted tombstone' "
+            + "WHERE session_id = :sessionId AND session_revision <= :coveredRevision "
+            + "AND state != 'COMMITTED'")
+    int suppressCoveredActivityOutbox(String sessionId, long coveredRevision);
 }

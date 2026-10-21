@@ -108,8 +108,9 @@ message MeasurementSample {
   LongMeasurement repetition_count = 29;
   LongMeasurement repetition_count_total = 30;
   DoubleMeasurement pressure_hpa = 31;
+  LongMeasurement swimming_lap_count_total = 32;
 
-  reserved 32 to 49;
+  reserved 33 to 49;
   reserved "oxygen_saturation_percent", "skin_temperature_celsius";
 }
 

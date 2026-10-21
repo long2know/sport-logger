@@ -59,6 +59,7 @@ Samples retain wall-clock time, optional monotonic time and boot ID, optional se
 duration, and explicit delta versus cumulative fields. Fractional floors remain `double`. Message
 presence—not numeric zero—represents availability. Position message presence preserves valid
 `0,0`; altitude, accuracy, speed, bearing, and heart rate have independent presence.
+Swimming lap delta and `SWIMMING_LAP_COUNT_TOTAL` cumulative values are distinct fields/metrics.
 
 ## Stable identifiers
 
@@ -89,6 +90,9 @@ The compiled integration boundary is `WatchActivityRepository`:
 startSession(StartRequest)
 writeSample(sessionId, leaseToken, MeasurementSample)
 transition(sessionId, leaseToken, lifecycle fields...)
+reserveCompletion(sessionId, leaseToken, revision, transferId, updatedAt)
+samples(sessionId)
+finishSessionFromPersistedSamples(sessionId, leaseToken, finalMetadata, completedAt)
 finishSession(sessionId, leaseToken, ActivityRecord, transferId, completedAt)
 discardSession(sessionId, leaseToken, TombstoneRecord, createdAt)
 readyOutbox(limit)
@@ -107,6 +111,16 @@ ownership. Process-start recovery reclaims interrupted `SENDING` rows and return
 `READY`/`RETRYABLE`/`AWAITING_COMMIT_ACK` rows for exact-byte resend. Only a protobuf ACK whose
 transfer/session/revision/hash matches the immutable outbox can mark it `COMMITTED`; duplicate exact
 ACKs are harmless. Tombstone outbox and ACK handling use the same persisted semantics.
+
+The preferred STOP sequence durably calls `reserveCompletion`, appends the final platform sample,
+then calls `finishSessionFromPersistedSamples`. The repository rebuilds the final activity from
+ordered exact sample rows; it does not depend on an in-memory list. A replacement process can read
+the reserved transfer UUID/revision from `SessionSnapshot`, call `samples`, and recover the same
+outbox through `outboxForSessionRevision`.
+
+`startSession` is replay-safe across the insert/observer crash window. Repeating the same session
+UUID, lease, and immutable start metadata returns the existing current snapshot; any conflicting
+replay is rejected.
 
 Trinity owns adapting the existing controller/journal to persist the UUID and call this API. This
 change does not alter `PersistentRecording`, recording services, `SqlLogger`, or legacy models.
@@ -163,6 +177,14 @@ tombstoning; delete-unsupported is explicit.
 
 Neo owns transport, ACK delivery, connector networking, and scheduling. Switch owns replacing the
 legacy phone adapter with these read methods after integration.
+
+Phone-origin tombstones expose `tombstoneOutbox`, pending/reclaim/transition methods, and exact
+commit-ACK acceptance. Both repositories also expose `acceptTombstoneTransfer`: incoming bytes are
+validated, deterministically ordered by delete revision/origin/transfer UUID, written with an exact
+receipt/ACK in one transaction, and applied only through their covered session revision. Activity
+outboxes covered on the watch are suppressed; phone heads covered by a winning tombstone are hidden.
+Exact duplicate transfers repeat the stored ACK. Issue #6 therefore transports tombstones in both
+directions rather than implementing a watch-only delete path.
 
 ## Health Connect owned-record ledger
 
