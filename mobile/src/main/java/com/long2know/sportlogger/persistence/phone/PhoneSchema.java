@@ -715,6 +715,27 @@ interface PhoneDao {
             long leaseExpiresAtUtcMs,
             long updatedAtUtcMs);
 
+    @Query("UPDATE connector_ledgers SET state = 'UNKNOWN_DELIVERY', "
+            + "lease_token = 0, lease_owner = NULL, lease_expires_at_utc_ms = NULL, "
+            + "retry_not_before_utc_ms = NULL, "
+            + "last_failure_code = 'PROCESS_RESTART_AMBIGUOUS', "
+            + "last_failure_message = 'Recovered expired claimed delivery after process restart', "
+            + "updated_at_utc_ms = :nowUtcMs "
+            + "WHERE session_id = :sessionId AND session_revision = :revision "
+            + "AND connector_id = :connectorId "
+            + "AND normalized_instance_url = :instanceUrl "
+            + "AND connection_identity = :connectionIdentity "
+            + "AND state = 'PENDING' AND lease_token != 0 "
+            + "AND lease_expires_at_utc_ms IS NOT NULL "
+            + "AND lease_expires_at_utc_ms <= :nowUtcMs")
+    int recoverExpiredConnectorClaimAsUnknown(
+            String sessionId,
+            long revision,
+            String connectorId,
+            String instanceUrl,
+            String connectionIdentity,
+            long nowUtcMs);
+
     @Query("SELECT remote_id FROM connector_remote_ids WHERE session_id = :sessionId "
             + "AND session_revision = :revision AND connector_id = :connectorId "
             + "AND normalized_instance_url = :instanceUrl "
