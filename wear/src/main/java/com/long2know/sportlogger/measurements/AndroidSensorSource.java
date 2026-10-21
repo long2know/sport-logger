@@ -1,6 +1,5 @@
 package com.long2know.sportlogger.measurements;
 
-import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
@@ -13,6 +12,7 @@ import android.os.HandlerThread;
 
 import androidx.core.content.ContextCompat;
 
+import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
 import com.long2know.utilities.models.SharedData;
 
 public final class AndroidSensorSource implements ResourceOwner.Source {
@@ -82,7 +82,9 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
         int registered = 0;
         boolean permissionDenied = false;
 
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.BODY_SENSORS)
+        String heartRatePermission =
+                RecordingPermissionPolicy.activeHeartRatePermission(Build.VERSION.SDK_INT);
+        if (ContextCompat.checkSelfPermission(context, heartRatePermission)
                 == PackageManager.PERMISSION_GRANTED) {
             registered += register(
                     "heart-rate",
@@ -102,7 +104,9 @@ public final class AndroidSensorSource implements ResourceOwner.Source {
         }
 
         boolean hasActivityPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-                || ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION)
+                || ContextCompat.checkSelfPermission(
+                        context,
+                        RecordingPermissionPolicy.ACTIVITY_RECOGNITION)
                 == PackageManager.PERMISSION_GRANTED;
         if (hasActivityPermission) {
             int stepRegistrations = register(

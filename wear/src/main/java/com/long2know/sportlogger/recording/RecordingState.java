@@ -5,6 +5,7 @@ public enum RecordingState {
     STARTING,
     RECORDING,
     PAUSED,
+    INTERRUPTED,
     STOPPING,
     DISCARDING,
     EXPORT_PENDING,

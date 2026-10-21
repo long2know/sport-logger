@@ -19,8 +19,12 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
     private static final String KEY_ACTIVITY_ID = "activity_id";
     private static final String KEY_STARTED_AT = "started_at";
     private static final String KEY_ACTIVE_SINCE = "active_since";
+    private static final String KEY_ACTIVE_SINCE_ELAPSED = "active_since_elapsed";
+    private static final String KEY_ELAPSED_SINCE = "elapsed_since_elapsed";
     private static final String KEY_ACCUMULATED = "accumulated";
+    private static final String KEY_ACCUMULATED_ELAPSED = "accumulated_elapsed";
     private static final String KEY_ENDED_AT = "ended_at";
+    private static final String KEY_BOOT_COUNT = "boot_count";
     private static final String KEY_ERROR_CODE = "error_code";
     private static final String KEY_ERROR_MESSAGE = "error_message";
 
@@ -100,8 +104,16 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
                     activityId,
                     preferences.getLong(KEY_STARTED_AT, 0L),
                     preferences.getLong(KEY_ACTIVE_SINCE, 0L),
+                    preferences.getLong(KEY_ACTIVE_SINCE_ELAPSED, 0L),
+                    preferences.getLong(
+                            KEY_ELAPSED_SINCE,
+                            preferences.getLong(KEY_ACTIVE_SINCE_ELAPSED, 0L)),
                     preferences.getLong(KEY_ACCUMULATED, 0L),
+                    preferences.getLong(
+                            KEY_ACCUMULATED_ELAPSED,
+                            preferences.getLong(KEY_ACCUMULATED, 0L)),
                     preferences.getLong(KEY_ENDED_AT, 0L),
+                    preferences.getInt(KEY_BOOT_COUNT, -1),
                     recordingError);
         }
     }
@@ -118,8 +130,18 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
                     .putInt(KEY_ACTIVITY_ID, recording.getActivityId())
                     .putLong(KEY_STARTED_AT, recording.getStartedAtMillis())
                     .putLong(KEY_ACTIVE_SINCE, recording.getActiveSinceMillis())
+                    .putLong(
+                            KEY_ACTIVE_SINCE_ELAPSED,
+                            recording.getActiveSinceElapsedRealtimeMillis())
+                    .putLong(
+                            KEY_ELAPSED_SINCE,
+                            recording.getElapsedSinceElapsedRealtimeMillis())
                     .putLong(KEY_ACCUMULATED, recording.getAccumulatedMillis())
-                    .putLong(KEY_ENDED_AT, recording.getEndedAtMillis());
+                    .putLong(
+                            KEY_ACCUMULATED_ELAPSED,
+                            recording.getAccumulatedElapsedMillis())
+                    .putLong(KEY_ENDED_AT, recording.getEndedAtMillis())
+                    .putInt(KEY_BOOT_COUNT, recording.getBootCount());
             RecordingError error = recording.getError();
             if (error == null) {
                 editor.remove(KEY_ERROR_CODE).remove(KEY_ERROR_MESSAGE);

@@ -39,7 +39,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class WatchSyncRunnerTest {
     private static final String NODE_ID = "phone-node";
     private static final String SESSION_ID = "d0a1b802-6eb7-41bd-bb31-8d1956625264";

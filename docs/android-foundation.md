@@ -12,12 +12,19 @@ The supported baseline is the existing three-module Groovy build:
 | Android SDK / build tools | compile SDK 36 / build tools 36.0.0 |
 | Kotlin | Built-in Kotlin is disabled per module; modules remain Java with Groovy Gradle scripts |
 | Mobile | min SDK 26 / target SDK 36 |
-| Wear | min SDK 26 / target SDK 35 |
+| Wear | min SDK 30 / target SDK 35 |
 | Utilities | min SDK 23 |
 | Java source and bytecode | 17 |
 
 Dependencies resolve from Google Maven and Maven Central. AndroidX is enabled, Jetifier is
 disabled, and no `jcenter()` or `com.android.support.*` dependency remains. AGP 9's public DSL is
+
+The Wear app requires Wear OS 3 / API 30 or newer because the verified
+`androidx.health:health-services-client:1.1.0` AAR declares min SDK 30. The app does not use
+`tools:overrideLibrary` to claim unsupported Wear OS 2 compatibility. Raw sensor and location
+fallbacks remain available when Health Services or an individual metric is unavailable on a
+supported OS; they are not a promise of support for pre-API-30 watches. Raising the app minimum
+does not delete or rewrite the existing legacy watch database or serialized activity payloads. AGP 9's public DSL is
 used without `android.newDsl=false` or another compatibility opt-out.
 
 AGP 9.3.1 was not retained because the official 9.3 release notes record a JDK 17 lint crash that
