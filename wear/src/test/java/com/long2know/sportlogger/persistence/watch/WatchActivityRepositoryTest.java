@@ -34,7 +34,10 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -115,6 +118,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
 
@@ -141,6 +145,18 @@ public class WatchActivityRepositoryTest {
         assertEquals(
                 WatchActivityRepository.LifecycleState.RECORDING,
                 repository.session(SESSION_ID).join().getState());
+    }
+
+    @Test
+    public void unsupportedActivityTypeIsRejectedBeforeSessionCreation() {
+        assertFutureCode(
+                "ACTIVITY_TYPE_REQUIRED",
+                () -> repository.startSession(
+                                WatchActivityRepository.StartRequest
+                                        .builder(SESSION_ID, LEASE, 1_000L)
+                                        .build())
+                        .join());
+        assertTrue(database.watchDao().laps(SESSION_ID).isEmpty());
     }
 
     @Test
@@ -177,6 +193,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.writeSample(
@@ -209,6 +226,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
 
@@ -237,6 +255,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         WatchActivityRepository.OutboxItem outbox = repository.finishSession(
@@ -294,6 +313,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.finishSession(
@@ -324,6 +344,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(discardSession, 99L, 3_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.discardSession(
@@ -369,6 +390,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.writeSample(SESSION_ID, LEASE, finalSample).join();
@@ -411,6 +433,7 @@ public class WatchActivityRepositoryTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.finishSession(
@@ -447,6 +470,222 @@ public class WatchActivityRepositoryTest {
                 "TOMBSTONED",
                 repository.outbox(TRANSFER_ID).join().getState());
         assertTrue(repository.pendingOutbox(10).join().isEmpty());
+    }
+
+    @Test
+    public void manualLapsAreOrderedIdempotentRecoverableAndInjectedAtFinish() {
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_CYCLING)
+                                .build())
+                .join();
+
+        WatchActivityRepository.LapBoundaryResult first =
+                repository.recordManualLap(
+                                SESSION_ID,
+                                LEASE,
+                                1_500L,
+                                500L,
+                                400L)
+                        .join();
+        WatchActivityRepository.LapBoundaryResult replay =
+                repository.recordManualLap(
+                                SESSION_ID,
+                                LEASE,
+                                1_500L,
+                                500L,
+                                400L)
+                        .join();
+
+        assertTrue(first.isCreated());
+        assertFalse(replay.isCreated());
+        assertEquals(first.getClosedLap().getLapId(), replay.getClosedLap().getLapId());
+        assertEquals(first.getOpenedLap().getLapId(), replay.getOpenedLap().getLapId());
+        WatchActivityRepository.SessionSnapshot lapSnapshot =
+                repository.session(SESSION_ID).join();
+        assertEquals(ActivityType.ACTIVITY_TYPE_CYCLING, lapSnapshot.getActivityType());
+        assertEquals(2, lapSnapshot.getCurrentLapIndex());
+        assertEquals(Long.valueOf(500L), lapSnapshot.getLastLapElapsedDurationMs());
+        assertEquals(Long.valueOf(400L), lapSnapshot.getLastLapActiveDurationMs());
+
+        repository.transition(
+                        SESSION_ID,
+                        LEASE,
+                        WatchActivityRepository.LifecycleState.PAUSED,
+                        "boot-a",
+                        null,
+                        700L,
+                        null,
+                        null,
+                        1_800L)
+                .join();
+        assertFutureCode(
+                "LAP_STATE_INVALID",
+                () -> repository.recordManualLap(
+                                SESSION_ID,
+                                LEASE,
+                                1_800L,
+                                800L,
+                                700L)
+                        .join());
+        assertEquals(2, repository.laps(SESSION_ID).join().size());
+
+        WatchActivityRepository.LapSnapshot finalLap =
+                repository.closeFinalLap(
+                                SESSION_ID,
+                                LEASE,
+                                2_000L,
+                                1_000L,
+                                700L)
+                        .join();
+        WatchActivityRepository.LapSnapshot repeatedFinal =
+                repository.closeFinalLap(
+                                SESSION_ID,
+                                LEASE,
+                                2_000L,
+                                1_000L,
+                                700L)
+                        .join();
+        assertEquals(finalLap.getLapId(), repeatedFinal.getLapId());
+        repository.reserveCompletion(
+                        SESSION_ID,
+                        LEASE,
+                        1L,
+                        TRANSFER_ID,
+                        2_000L)
+                .join();
+        WatchActivityRepository.CompletionResult completed =
+                repository.finishSessionFromPersistedSamples(
+                                SESSION_ID,
+                                LEASE,
+                                activity(1L, sample(1L, 1_500L, 47D, -122D, 145D))
+                                        .toBuilder()
+                                        .clearSamples()
+                                        .setActiveDurationMs(700L)
+                                        .build(),
+                                2_100L)
+                        .join();
+        ActivityRecord persisted = CanonicalPayload.parse(
+                completed.getSession().getPayload()).getActivity();
+        assertEquals(ActivityType.ACTIVITY_TYPE_CYCLING, persisted.getActivityType());
+        assertEquals(2, persisted.getLapsCount());
+        assertEquals(500L, persisted.getLaps(0).getElapsedDurationMs());
+        assertEquals(400L, persisted.getLaps(0).getActiveDurationMs());
+        assertEquals(500L, persisted.getLaps(1).getElapsedDurationMs());
+        assertEquals(300L, persisted.getLaps(1).getActiveDurationMs());
+
+        WatchActivityRepository replacement =
+                new WatchActivityRepository(database, Runnable::run);
+        List<WatchActivityRepository.LapSnapshot> recovered =
+                replacement.laps(SESSION_ID).join();
+        assertEquals(2, recovered.size());
+        assertEquals(finalLap.getLapId(), recovered.get(1).getLapId());
+    }
+
+    @Test
+    public void discardRemovesOpenAndCompletedLapsAtomically() {
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                                .build())
+                .join();
+        repository.recordManualLap(
+                        SESSION_ID,
+                        LEASE,
+                        1_500L,
+                        500L,
+                        400L)
+                .join();
+
+        repository.discardSession(
+                        SESSION_ID,
+                        LEASE,
+                        CanonicalTransfers.tombstone(
+                                TRANSFER_ID,
+                                SESSION_ID,
+                                1L,
+                                0L,
+                                TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH,
+                                1_600L),
+                        1_600L)
+                .join();
+
+        assertTrue(repository.laps(SESSION_ID).join().isEmpty());
+        assertEquals(
+                WatchActivityRepository.LifecycleState.DISCARDED,
+                repository.session(SESSION_ID).join().getState());
+    }
+
+    @Test
+    public void latestCompletedIncludesCommittedOutboxAndPersistedActivityType() {
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_HIKING)
+                                .build())
+                .join();
+        WatchActivityRepository.CompletionResult result =
+                repository.finishSession(
+                                SESSION_ID,
+                                LEASE,
+                                activity(1L, sample(1L, 1_500L, 47D, -122D, 145D)),
+                                TRANSFER_ID,
+                                2_100L)
+                        .join();
+        ActivityTransferFile transfer =
+                CanonicalTransfers.parseActivityTransfer(
+                        result.getOutbox().getPayload()).getTransfer();
+        repository.acceptCommitAck(
+                        CanonicalTransfers.commitAck(
+                                        transfer,
+                                        1L,
+                                        AckResult.ACK_RESULT_ACCEPTED,
+                                        null,
+                                        null)
+                                .toByteArray(),
+                        2_200L)
+                .join();
+
+        WatchActivityRepository.CompletedActivity latest =
+                repository.latestCompleted().join();
+
+        assertNotNull(latest);
+        assertEquals(SESSION_ID, latest.getActivity().getSessionId());
+        assertEquals(ActivityType.ACTIVITY_TYPE_HIKING,
+                latest.getActivity().getActivityType());
+        assertEquals(1, latest.getActivity().getLapsCount());
+        assertEquals(WatchActivityRepository.OUTBOX_COMMITTED,
+                latest.getOutbox().getState());
+        assertEquals(1, repository.recentCompleted(10).join().size());
+    }
+
+    @Test
+    public void lapAndCompletionChangesNotifyRepositoryObserver() throws Exception {
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(SESSION_ID, LEASE, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                                .build())
+                .join();
+        CountDownLatch invalidated = new CountDownLatch(1);
+        AutoCloseable observer =
+                repository.observeChanges(Runnable::run, invalidated::countDown);
+        try {
+            repository.recordManualLap(
+                            SESSION_ID,
+                            LEASE,
+                            1_500L,
+                            500L,
+                            400L)
+                    .join();
+            database.getInvalidationTracker().refreshAsync();
+
+            assertTrue(invalidated.await(2, TimeUnit.SECONDS));
+        } finally {
+            observer.close();
+        }
     }
 
     private static ActivityRecord activity(long revision, MeasurementSample sample) {
