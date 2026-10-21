@@ -241,6 +241,7 @@ class MainActivityComposeTest {
         compose.onNodeWithTag("endurain_publish_$connectionIdentity")
             .performTouchInput { click() }
         val queuedDelivery = waitForEndurainDelivery()
+        waitForNoticeConsumed("Endurain upload is queued")
         compose.onNodeWithTag("status_screen").performScrollToNode(
             hasText(context.getString(R.string.endurain_remote_mutations_unsupported)),
         )
@@ -259,6 +260,7 @@ class MainActivityComposeTest {
         )
         compose.onNodeWithText(context.getString(R.string.endurain_reconcile))
             .performClick()
+        waitForTag("endurain_remote_ids")
         checkNotNull(scenario).onActivity { activity ->
             val reconcile = checkNotNull(
                 ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
@@ -268,7 +270,6 @@ class MainActivityComposeTest {
             )
             assertEquals(unknownDelivery.key, reconcile.deliveryKey)
         }
-        waitForTag("endurain_remote_ids")
         compose.onNodeWithTag("endurain_remote_ids")
             .performTextReplacement("41,bad,-2")
         compose.onNodeWithTag("endurain_reconcile_save").performClick()
@@ -295,6 +296,7 @@ class MainActivityComposeTest {
         val reconciledDelivery = waitForEndurainDelivery {
             it.key == queuedDelivery.key && it.remoteIds == listOf(41L, 42L)
         }
+        waitForNoticeConsumed()
 
         val remoteEditTag = "endurain_remote_edit_${reconciledDelivery.artifactId}"
         compose.onNodeWithTag("status_screen").performScrollToNode(
@@ -302,6 +304,7 @@ class MainActivityComposeTest {
         )
         compose.onNodeWithTag(remoteEditTag).performClick()
         waitForText("Endurain remote activity editing is not implemented")
+        waitForNoticeConsumed()
 
         val remoteDeleteTag = "endurain_remote_delete_${reconciledDelivery.artifactId}"
         compose.onNodeWithTag("status_screen").performScrollToNode(
@@ -311,6 +314,7 @@ class MainActivityComposeTest {
         val retainedDelivery = waitForEndurainDelivery {
             it.key == queuedDelivery.key && it.isDeleteUnsupportedRecorded
         }
+        waitForNoticeConsumed()
         val retainedStatusTag =
             "endurain_remote_delete_recorded_${retainedDelivery.artifactId}"
         compose.onNodeWithTag("status_screen").performScrollToNode(
@@ -363,6 +367,35 @@ class MainActivityComposeTest {
                 compose.onNodeWithTag(tag).fetchSemanticsNode()
             }.isSuccess
         }
+    }
+
+    private fun waitForNoticeConsumed(snackbarText: String? = null) {
+        val deadline = SystemClock.uptimeMillis() + 12_000L
+        var notice: String? = null
+        var snackbarNodeCount = 0
+        while (SystemClock.uptimeMillis() < deadline) {
+            checkNotNull(scenario).onActivity { activity ->
+                notice = ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                    .state
+                    .value
+                    .notice
+            }
+            snackbarNodeCount = snackbarText?.let {
+                compose.onAllNodesWithText(it, substring = true)
+                    .fetchSemanticsNodes()
+                    .size
+            } ?: 0
+            if (notice == null && snackbarNodeCount == 0) {
+                compose.waitForIdle()
+                return
+            }
+            compose.mainClock.advanceTimeBy(1_000L)
+            compose.waitForIdle()
+        }
+        throw AssertionError(
+            "Timed out waiting for notice consumption: notice=$notice, " +
+                "snackbarNodes=$snackbarNodeCount",
+        )
     }
 
     private fun persistLegacy(activity: SportActivity) {
