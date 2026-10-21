@@ -64,11 +64,22 @@ The later ledger/UI must require manual confirmation or an explicit duplicate-ri
 The transport has separate connect, read, write, and whole-call deadlines. The default values are
 15 seconds, 30 seconds, 30 seconds, and 75 seconds. The compatibility constructor uses its read
 timeout as the write timeout and derives a bounded whole-call timeout from connect plus two read
-windows. Deadline cancellation closes the tracked raw TCP socket rather than waiting for a blocked
-TLS writer to release an `SSLSocket` monitor. Expiry before request-body transmission is typed as a
-retryable pre-transmission timeout; expiry after writing starts is unknown delivery. Deadline tasks
-are cancelled and removed after every call, and the single daemon scheduler is allowed to time out
-when idle.
+windows. OkHttp's write timeout is explicitly set to the configured write bound; it does not retain
+OkHttp's independent 10-second default. The multipart body is flushed before the write phase is
+marked complete. If OkHttp and the raw-socket watchdog race, classification uses the first
+applicable write or whole-call bound so a blocked write remains
+`POST_TRANSMISSION_WRITE_TIMEOUT`, while an earlier whole-call bound remains
+`POST_TRANSMISSION_TIMEOUT`.
+
+Endurain calls deliberately advertise only HTTP/1.1. There is no current product requirement for
+HTTP/2, and a raw TCP close cannot safely cancel one HTTP/2 stream without aborting unrelated
+multiplexed streams. Each invocation therefore receives its own zero-idle connection pool and
+socket tracker, also sends `Connection: close`, and closes only its call-owned raw sockets.
+Deadline cancellation can terminate a blocked TLS write or dripped response without depending on
+an `SSLSocket` monitor and without cancelling another call. Expiry before request-body transmission
+is typed as a retryable pre-transmission timeout; expiry after writing starts is unknown delivery.
+Deadline tasks are cancelled and removed after every call, and the single daemon scheduler is
+allowed to time out when idle.
 
 Response bodies are size-bounded and strictly decoded as UTF-8 JSON. Results expose typed reasons,
 status codes, retry delay, and scoped IDs only; untrusted server bodies are never returned or logged.
@@ -91,9 +102,10 @@ surrogate halves remain invalid JSON.
 - Private-CA enrollment and pin rotation are not implemented. There is no trust-all manager or
   hostname-verifier bypass.
 
-The JVM fixture creates an ephemeral CA and localhost certificate with JDK `keytool`, trusts only
-that CA through a test-only socket factory/trust manager, retains the default hostname verifier,
-and removes the generated key material after the test class.
+The JVM fixtures create an ephemeral CA and localhost certificate with JDK `keytool`, trust only
+that CA through a test-only socket factory/trust manager, retain the default hostname verifier, and
+remove the generated key material after the tests. The matching OkHttp 4.12.0 MockWebServer test
+dependency supplies an ALPN-capable server that offers both HTTP/2 and HTTP/1.1.
 
 ## Credential protection and restore decision
 
@@ -133,8 +145,13 @@ JVM tests execute the real HTTPS code path and cover:
 - wrong-scope authentication and invalid-TCX rejection;
 - body-accepted late 429 with advisory `Retry-After` and no automatic retry;
 - failure/whole-call expiry before transmission, a stalled request-body reader that reaches the
-  write deadline, a response dripped beneath the read-timeout interval that reaches the whole-call
-  deadline, and dropped response after transmission;
+  write deadline, an earlier whole-call bound during the same blocked-write condition, a response
+  dripped beneath the read-timeout interval that reaches the whole-call deadline, and dropped
+  response after transmission;
+- actual ALPN negotiation remains HTTP/1.1 when the server offers HTTP/2 first, the configured
+  OkHttp write timeout is not the library default, and two same-origin concurrent calls retain
+  separate absolute deadlines: the slow call is bounded and classified while the later call
+  succeeds on its unaffected connection;
 - host/scheme redirects without credential forwarding;
 - TLS trust and hostname verification;
 - 5xx, malformed/empty/oversized 201 responses, integer range, UTF-8, supplementary Unicode,
@@ -149,3 +166,5 @@ On 2026-10-21, the reserved API 36 phone lane executed the targeted
 separately constructed stores sharing one alias/reset boundary. Only synthetic aliases and files
 were used. The existing emulator was left running; no wipe, global adb action, or additional AVD
 was used. This is Android platform evidence, not external Endurain account/device acceptance.
+The ALPN/deadline proof is likewise local synthetic TLS evidence; no live Endurain account or
+external instance was used.
