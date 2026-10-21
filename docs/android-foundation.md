@@ -72,6 +72,23 @@ certificate properties, and uploads debug, sideload, and unsigned-release APKs.
 For device pairing, signing compatibility, and non-destructive upgrade instructions, see
 the [installation guide](installing.md).
 
+### Phone sideload device checkpoint
+
+On October 21, 2026, immutable integration head
+`6cba705594efc07b3b522d9d8365c0f068618133` passed an actual API 36 phone user-variant
+checkpoint:
+
+- normal `adb install -r`;
+- non-debuggable installed APK with zero Health Connect reads, eight production writes,
+  no debug consent activity, and the expected matching public certificate;
+- 7/7 existing `MainActivityComposeTest` cases against the sideload app;
+- 1/1 focused real-main-UI Health Connect publish and owned-delete flow with provider IDs,
+  persisted `UPSERTED` → `DELETED` receipts, and an empty granted-read set.
+
+The focused instrumentation probe was temporary and removed after capture. Production
+sources and manifests remained unchanged. This checkpoint proves the phone sideload path;
+the replacement watch UI and the final combined pair retain their separate acceptance gates.
+
 ## Canonical and legacy recording boundaries
 
 The current canonical contracts, Room repositories, and commit acknowledgements are

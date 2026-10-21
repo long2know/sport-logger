@@ -28,6 +28,22 @@ Use a phone/watch combination supported by the watch manufacturer's companion ap
 the watch with the phone through that companion before testing SportLogger synchronization.
 The app's minimum SDK does not override the companion's requirements.
 
+## Validated phone sideload boundary
+
+On October 21, 2026, the actual non-debuggable phone sideload APK from immutable integration
+head `6cba705594efc07b3b522d9d8365c0f068618133` installed normally with `adb install -r` on
+API 36. Its installed public manifest had zero Health Connect `READ_*` permissions, all eight
+production `WRITE_*` permissions, and no debug consent activity.
+
+The existing main Compose device suite passed 7/7 against that sideload app. A separate
+focused main-UI check passed 1/1 while clicking Health Connect publish and owned-delete
+actions against the real provider: provider IDs were returned, persisted receipts advanced
+from `UPSERTED` to `DELETED`, and the granted read-permission set stayed empty. The temporary
+test-only probe was removed afterward; no production source or permission change was needed.
+
+This proves the phone user variant, not only a debug harness. It does not approve the current
+watch Compose revision or replace the external Play/signing and physical-device gates.
+
 Watch-to-phone transfer uses Google Play services. Both apps must have the same package
 name and signing certificate; SportLogger intentionally uses `com.long2know.sportlogger`
 on both devices. Install both APKs from one build, not unrelated CI runs or signing keys.

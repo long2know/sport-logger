@@ -11,8 +11,9 @@
 > historical design and sequencing record. The current implementation now includes the
 > JDK 17/API 36 build tuple, canonical protobuf and Room storage, capability-aware watch
 > recording backend, durable transfer/commit acknowledgement, the approved Compose phone
-> surface, TCX save/share, Health Connect publication, and the Endurain TCX workflow. A
-> watch Compose integration exists, but its current revision is not ship-approved; final
+> surface and its actual non-debuggable sideload validation, TCX save/share, Health Connect
+> publication, and the Endurain TCX workflow. A watch Compose integration exists, but its
+> current revision is not ship-approved; final
 > optional-permission degradation, live-value presence, unavailable active-duration, and
 > ambient-minute behavior remain under independent correction. Later sections that describe
 > implemented items as future work preserve the original plan rather than current product

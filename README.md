@@ -16,14 +16,15 @@ live missing-versus-zero presentation are still under correction.
 [Get started](#get-started) | [Build and install](#build-and-install) |
 [Project layout](#project-layout) | [Roadmap](#roadmap) | [Contributing](#contributing)
 
-> **Current acceptance status:** the phone companion UI is approved with API 36 device and
-> host-test evidence, and the canonical watch recording/storage/sync backend remains approved.
-> The current watch Compose revision is **not ship-approved**; an independent replacement must
-> correct degraded optional-permission handling, live measurement presence, unavailable active
-> duration presentation, and ambient minute timing. The non-debuggable `sideload` packaging is
-> unchanged, but the final distributable pair must use the corrected watch UI. Production/Play
-> signing and declarations, physical sensors and battery, square-watch hardware, and an actual
-> paired-device commit acknowledgement remain separate release gates.
+> **Current acceptance status:** the phone companion UI and actual non-debuggable phone
+> `sideload` user variant are approved with API 36 device and host-test evidence, and the
+> canonical watch recording/storage/sync backend remains approved. The current watch Compose
+> revision is **not ship-approved**; an independent replacement must correct degraded
+> optional-permission handling, live measurement presence, unavailable active duration
+> presentation, and ambient minute timing. The `sideload` packaging is unchanged, but the final
+> distributable pair must use the corrected watch UI. Production/Play signing and declarations,
+> physical sensors and battery, square-watch hardware, and an actual paired-device commit
+> acknowledgement remain separate release gates.
 
 ## Features
 
@@ -35,7 +36,7 @@ live missing-versus-zero presentation are still under correction.
 | Durable transfer | Canonical protobuf records, Room storage, and an outbox expose queued, transferring, acknowledged, and retryable states. Saved or queued on the watch is not labeled synced until the phone commit acknowledgement is accepted. |
 | Phone companion | Material 3 Compose history, activity detail, phone-owned title/notes, measurement availability, bounded route preview, laps, 12-week trends, storage/recovery status, and phone-to-watch deletion retry state. |
 | TCX portability | Stream a selected canonical activity to a user-chosen document through Android's Storage Access Framework, or share only the generated TCX file. Export warnings identify missing required values; measured data is not fabricated. |
-| Health Connect | User-initiated, optional publication supports partial permission grants and explicit publish, update, retry, and app-owned delete behavior. Local deletion does not silently delete Health Connect data. Production phone manifests request the eight required `WRITE_*` permissions; verification-only `READ_*` permissions remain debug-only. |
+| Health Connect | User-initiated, optional publication supports partial permission grants and explicit publish, update, retry, and app-owned delete behavior. Local deletion does not silently delete Health Connect data. Production phone manifests request the eight required `WRITE_*` permissions; verification-only `READ_*` permissions remain debug-only. An actual phone sideload run exercised main-UI publish and owned delete with no read grant. |
 | Endurain | Configure an HTTPS endpoint and scoped API key, prepare and queue canonical TCX, retry eligible failures, repair artifacts, reconcile unknown delivery with retained positive remote IDs, or explicitly confirm a duplicate-risk retry. Remote edit and delete are truthfully unsupported in API-key TCX mode. |
 | Legacy recovery | Existing watch data and the immutable phone legacy inbox remain available for idempotent migration and recovery; corrupt or partial inputs are surfaced without rewriting their source payloads. |
 
@@ -48,6 +49,26 @@ accepted.
 | Persisted phone history | Phone activity detail and bounded route preview |
 |---|---|
 | <img alt="Synthetic Material 3 persisted activity history" src="https://github.com/user-attachments/assets/7efd99bc-f1c0-4a30-953f-fff78e3ae998" width="360"> | <img alt="Synthetic activity detail with recorded metrics and bounded route preview" src="https://github.com/user-attachments/assets/47be4f4e-bec6-4a05-badd-3b945f7d5300" width="360"> |
+
+### Actual phone sideload acceptance
+
+The immutable integration build at
+`6cba705594efc07b3b522d9d8365c0f068618133` was exercised as the real phone user variant
+on API 36:
+
+- normal `adb install -r` succeeded;
+- the installed APK was non-debuggable, declared zero Health Connect `READ_*` permissions,
+  retained all eight production `WRITE_*` permissions, excluded the debug consent activity,
+  and used the matching development certificate;
+- the existing `MainActivityComposeTest` suite passed **7/7** against the sideload app;
+- a focused **1/1** main-UI test clicked publish and owned-delete actions against the real
+  Health Connect provider, received provider IDs, and persisted operation/record receipts from
+  `UPSERTED` through `DELETED`;
+- the granted read-permission set remained empty, with no permission loop, debug consent
+  activity, fake provider, or shell permission grant.
+
+The focused test-only probe was removed after evidence capture; production sources remained
+unchanged.
 
 ## Use SportLogger
 
