@@ -6,6 +6,11 @@ existing Gradle debug signing configuration so Android can install it. That cert
 is a development identity for manual installation, not a production or Play signing
 identity.
 
+The packaging guidance is complete, but the current watch Compose UI revision is not
+ship-approved. Build the final user-facing pair only after the independently corrected
+watch head is integrated and validated. No signing or packaging change is required for
+that UI replacement.
+
 The debug APKs remain QA artifacts. In particular, the phone debug APK intentionally
 includes verification-only Health Connect `READ_*` permissions and a debug consent-test
 activity. The phone sideload APK excludes those additions while keeping the production
@@ -124,11 +129,11 @@ manifest override to force Health Services onto an unsupported watch.
 
 ## First use and transfer state
 
-Open SportLogger on both devices. On the watch, choose an activity and review its
-capability and permission readiness before starting. Grant only the permissions needed
-for the measurements and optional integrations you choose. Location is not required for
-an indoor workout; missing location, sensor capability, off-body state, and denied
-permissions are different states.
+Open SportLogger on both devices. Grant only the permissions needed for the measurements
+and optional integrations you choose. The approved recording backend treats location as
+optional for indoor workouts, but final watch instructions for degraded optional-permission
+handling, live missing-value presentation, unavailable active duration, and ambient
+updates are intentionally held until the corrected UI head is approved.
 
 Record a short disposable workout before relying on a new installation. Pause, resume,
 save a manual lap, and finish it, then review the canonical watch summary and the phone
@@ -155,4 +160,5 @@ battery life, or successful pairing with a particular watch model.
 Release signing, Play declarations, and physical-device acceptance are separate from
 building and manually installing these development APKs. API 36 emulator evidence does
 not prove physical heart-rate or GNSS accuracy, battery life, square-watch hardware,
-live paired-device acknowledgement, or third-party production service acceptance.
+live paired-device acknowledgement, third-party production service acceptance, or final
+approval of the current unapproved watch Compose revision.
