@@ -1,4 +1,5 @@
 apply plugin: 'com.android.library'
+apply plugin: 'com.google.protobuf'
 
 android {
     namespace = 'com.long2know.utilities'
@@ -31,10 +32,26 @@ android {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
+    api 'com.google.protobuf:protobuf-javalite:4.36.2'
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test:runner:1.7.0'
     androidTestImplementation 'androidx.test.ext:junit:1.3.0'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
+}
+
+protobuf {
+    protoc {
+        artifact = 'com.google.protobuf:protoc:4.36.2'
+    }
+    generateProtoTasks {
+        all().configureEach { task ->
+            task.builtins {
+                java {
+                    option 'lite'
+                }
+            }
+        }
+    }
 }
 
 tasks.named('preBuild').configure {

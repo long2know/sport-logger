@@ -1,0 +1,924 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "ed525945c7b03bde8cb28114eba64d86",
+    "entities": [
+      {
+        "tableName": "phone_session_heads",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `accepted_revision` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, `transfer_state` TEXT NOT NULL, `last_transfer_id` TEXT, `import_health` TEXT NOT NULL, `import_error_code` TEXT, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedRevision",
+            "columnName": "accepted_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transferState",
+            "columnName": "transfer_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTransferId",
+            "columnName": "last_transfer_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "importHealth",
+            "columnName": "import_health",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importErrorCode",
+            "columnName": "import_error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_session_heads_deleted_updated_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "deleted",
+              "updated_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_session_heads_deleted_updated_at_utc_ms` ON `${TABLE_NAME}` (`deleted`, `updated_at_utc_ms`)"
+          },
+          {
+            "name": "index_phone_session_heads_accepted_revision",
+            "unique": false,
+            "columnNames": [
+              "accepted_revision"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_session_heads_accepted_revision` ON `${TABLE_NAME}` (`accepted_revision`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_activity_revisions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `revision` INTEGER NOT NULL, `activity_type` INTEGER NOT NULL, `start_time_utc_ms` INTEGER NOT NULL, `end_time_utc_ms` INTEGER NOT NULL, `elapsed_duration_ms` INTEGER NOT NULL, `active_duration_ms` INTEGER, `distance_m` REAL, `calories_kcal` REAL, `steps` INTEGER, `sample_count` INTEGER NOT NULL, `route_point_count` INTEGER NOT NULL, `heart_rate_sample_count` INTEGER NOT NULL, `time_zone_id` TEXT, `utc_offset_minutes` INTEGER, `source_kind` INTEGER NOT NULL, `source_provider` TEXT, `source_manufacturer` TEXT, `source_model` TEXT, `source_device_id` TEXT, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `accepted_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `revision`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activityType",
+            "columnName": "activity_type",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startTimeUtcMs",
+            "columnName": "start_time_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endTimeUtcMs",
+            "columnName": "end_time_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedDurationMs",
+            "columnName": "elapsed_duration_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeDurationMs",
+            "columnName": "active_duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "distanceM",
+            "columnName": "distance_m",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "caloriesKcal",
+            "columnName": "calories_kcal",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routePointCount",
+            "columnName": "route_point_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateSampleCount",
+            "columnName": "heart_rate_sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeZoneId",
+            "columnName": "time_zone_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "utcOffsetMinutes",
+            "columnName": "utc_offset_minutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sourceKind",
+            "columnName": "source_kind",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceProvider",
+            "columnName": "source_provider",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceManufacturer",
+            "columnName": "source_manufacturer",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceModel",
+            "columnName": "source_model",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceDeviceId",
+            "columnName": "source_device_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedAtUtcMs",
+            "columnName": "accepted_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "revision"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_activity_revisions_start_time_utc_ms_session_id",
+            "unique": false,
+            "columnNames": [
+              "start_time_utc_ms",
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_activity_revisions_start_time_utc_ms_session_id` ON `${TABLE_NAME}` (`start_time_utc_ms`, `session_id`)"
+          },
+          {
+            "name": "index_phone_activity_revisions_payload_sha256",
+            "unique": false,
+            "columnNames": [
+              "payload_sha256"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_activity_revisions_payload_sha256` ON `${TABLE_NAME}` (`payload_sha256`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_points",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `revision` INTEGER NOT NULL, `sequence` INTEGER NOT NULL, `timestamp_utc_ms` INTEGER NOT NULL, `has_location` INTEGER NOT NULL, `has_heart_rate` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, PRIMARY KEY(`session_id`, `revision`, `sequence`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampUtcMs",
+            "columnName": "timestamp_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasLocation",
+            "columnName": "has_location",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasHeartRate",
+            "columnName": "has_heart_rate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "revision",
+            "sequence"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_points_session_id_revision_sequence",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "revision",
+              "sequence"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_points_session_id_revision_sequence` ON `${TABLE_NAME}` (`session_id`, `revision`, `sequence`)"
+          },
+          {
+            "name": "index_phone_points_session_id_revision_timestamp_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "revision",
+              "timestamp_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_points_session_id_revision_timestamp_utc_ms` ON `${TABLE_NAME}` (`session_id`, `revision`, `timestamp_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_metadata",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `title` TEXT, `notes` TEXT, `tags_text` TEXT NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tagsText",
+            "columnName": "tags_text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        }
+      },
+      {
+        "tableName": "phone_inbox_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `incoming_revision` INTEGER NOT NULL, `accepted_revision` INTEGER NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `result` TEXT NOT NULL, `committed_at_utc_ms` INTEGER NOT NULL, `ack_payload` BLOB NOT NULL, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "incomingRevision",
+            "columnName": "incoming_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedRevision",
+            "columnName": "accepted_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadLength",
+            "columnName": "payload_length",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "result",
+            "columnName": "result",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ackPayload",
+            "columnName": "ack_payload",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_inbox_receipts_session_id_accepted_revision",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "accepted_revision"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_inbox_receipts_session_id_accepted_revision` ON `${TABLE_NAME}` (`session_id`, `accepted_revision`)"
+          },
+          {
+            "name": "index_phone_inbox_receipts_payload_sha256",
+            "unique": false,
+            "columnNames": [
+              "payload_sha256"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_inbox_receipts_payload_sha256` ON `${TABLE_NAME}` (`payload_sha256`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_tombstones",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `transfer_id` TEXT NOT NULL, `deleted_at_utc_ms` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, PRIMARY KEY(`session_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAtUtcMs",
+            "columnName": "deleted_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_tombstones_transfer_id",
+            "unique": false,
+            "columnNames": [
+              "transfer_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstones_transfer_id` ON `${TABLE_NAME}` (`transfer_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_tombstone_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadLength",
+            "columnName": "payload_length",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAttemptAtUtcMs",
+            "columnName": "last_attempt_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attemptCount",
+            "columnName": "attempt_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastFailureCode",
+            "columnName": "last_failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFailureMessage",
+            "columnName": "last_failure_message",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_tombstone_outbox_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_outbox_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          },
+          {
+            "name": "index_phone_tombstone_outbox_state_created_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "created_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_tombstone_outbox_state_created_at_utc_ms` ON `${TABLE_NAME}` (`state`, `created_at_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "connector_ledgers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `connector_id` TEXT NOT NULL, `normalized_instance_url` TEXT NOT NULL, `connection_identity` TEXT NOT NULL, `credential_reference` TEXT NOT NULL, `artifact_length` INTEGER NOT NULL, `artifact_sha256` TEXT NOT NULL, `state` TEXT NOT NULL, `lease_token` INTEGER NOT NULL, `lease_owner` TEXT, `lease_expires_at_utc_ms` INTEGER, `retry_not_before_utc_ms` INTEGER, `last_failure_code` TEXT, `last_failure_message` TEXT, `delete_unsupported` INTEGER NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `session_revision`, `connector_id`, `normalized_instance_url`, `connection_identity`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectorId",
+            "columnName": "connector_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedInstanceUrl",
+            "columnName": "normalized_instance_url",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectionIdentity",
+            "columnName": "connection_identity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "credentialReference",
+            "columnName": "credential_reference",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "artifactLength",
+            "columnName": "artifact_length",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "artifactSha256",
+            "columnName": "artifact_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseToken",
+            "columnName": "lease_token",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseOwner",
+            "columnName": "lease_owner",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "leaseExpiresAtUtcMs",
+            "columnName": "lease_expires_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "retryNotBeforeUtcMs",
+            "columnName": "retry_not_before_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastFailureCode",
+            "columnName": "last_failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFailureMessage",
+            "columnName": "last_failure_message",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deleteUnsupported",
+            "columnName": "delete_unsupported",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "session_revision",
+            "connector_id",
+            "normalized_instance_url",
+            "connection_identity"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_connector_ledgers_state_retry_not_before_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "retry_not_before_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_connector_ledgers_state_retry_not_before_utc_ms` ON `${TABLE_NAME}` (`state`, `retry_not_before_utc_ms`)"
+          },
+          {
+            "name": "index_connector_ledgers_session_id_session_revision",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "session_revision"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_connector_ledgers_session_id_session_revision` ON `${TABLE_NAME}` (`session_id`, `session_revision`)"
+          }
+        ]
+      },
+      {
+        "tableName": "connector_remote_ids",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `connector_id` TEXT NOT NULL, `normalized_instance_url` TEXT NOT NULL, `connection_identity` TEXT NOT NULL, `remote_id` INTEGER NOT NULL, `recorded_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`, `session_revision`, `connector_id`, `normalized_instance_url`, `connection_identity`, `remote_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectorId",
+            "columnName": "connector_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedInstanceUrl",
+            "columnName": "normalized_instance_url",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "connectionIdentity",
+            "columnName": "connection_identity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "remoteId",
+            "columnName": "remote_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordedAtUtcMs",
+            "columnName": "recorded_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "session_revision",
+            "connector_id",
+            "normalized_instance_url",
+            "connection_identity",
+            "remote_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_connector_remote_ids_session_id_session_revision_connector_id_normalized_instance_url_connection_identity",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "session_revision",
+              "connector_id",
+              "normalized_instance_url",
+              "connection_identity"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_connector_remote_ids_session_id_session_revision_connector_id_normalized_instance_url_connection_identity` ON `${TABLE_NAME}` (`session_id`, `session_revision`, `connector_id`, `normalized_instance_url`, `connection_identity`)"
+          }
+        ]
+      },
+      {
+        "tableName": "phone_legacy_backfill_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source_file_key` TEXT NOT NULL, `source_sha256` TEXT NOT NULL, `session_id` TEXT, `status` TEXT NOT NULL, `error_code` TEXT, `completed_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`source_file_key`))",
+        "fields": [
+          {
+            "fieldPath": "sourceFileKey",
+            "columnName": "source_file_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceSha256",
+            "columnName": "source_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "completedAtUtcMs",
+            "columnName": "completed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "source_file_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_phone_legacy_backfill_receipts_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_phone_legacy_backfill_receipts_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ed525945c7b03bde8cb28114eba64d86')"
+    ]
+  }
+}

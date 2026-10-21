@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package sportlogger.compatibility;
+
+option java_multiple_files = true;
+option optimize_for = LITE_RUNTIME;
+
+message OldActivityFile {
+  uint32 schema_version = 1;
+  OldActivityRecord activity = 2;
+}
+
+message OldActivityRecord {
+  string session_id = 1;
+  uint64 watch_revision = 2;
+  int32 activity_type = 3;
+  int64 start_time_utc_ms = 4;
+  int64 end_time_utc_ms = 5;
+  int64 elapsed_duration_ms = 6;
+  OldSourceMetadata source = 12;
+}
+
+message OldSourceMetadata {
+  int32 kind = 1;
+  uint32 app_contract_version = 6;
+}
+
+message FutureActivityFile {
+  uint32 schema_version = 1;
+  FutureActivityRecord activity = 2;
+  string future_note = 100;
+}
+
+message FutureActivityRecord {
+  string session_id = 1;
+  uint64 watch_revision = 2;
+  int32 activity_type = 3;
+  int64 start_time_utc_ms = 4;
+  int64 end_time_utc_ms = 5;
+  int64 elapsed_duration_ms = 6;
+  FutureSourceMetadata source = 12;
+}
+
+message FutureSourceMetadata {
+  int32 kind = 1;
+  uint32 app_contract_version = 6;
+}
