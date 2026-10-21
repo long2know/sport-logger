@@ -1,0 +1,874 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "7c1fe9283a65021d4fed42cf55cb6dc8",
+    "entities": [
+      {
+        "tableName": "watch_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `watch_revision` INTEGER NOT NULL, `state` TEXT NOT NULL, `activity_type` INTEGER NOT NULL, `started_at_utc_ms` INTEGER NOT NULL, `ended_at_utc_ms` INTEGER, `elapsed_duration_ms` INTEGER, `active_duration_ms` INTEGER, `time_zone_id` TEXT, `utc_offset_minutes` INTEGER, `boot_id` TEXT, `monotonic_anchor_ms` INTEGER, `active_since_monotonic_ms` INTEGER, `accumulated_active_ms` INTEGER NOT NULL, `lease_token` INTEGER NOT NULL, `sample_count` INTEGER NOT NULL, `route_point_count` INTEGER NOT NULL, `heart_rate_sample_count` INTEGER NOT NULL, `payload` BLOB, `payload_sha256` TEXT, `legacy_source_key` TEXT, `legacy_activity_id` INTEGER, `last_error_code` TEXT, `last_error_message` TEXT, `created_at_utc_ms` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "watchRevision",
+            "columnName": "watch_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activityType",
+            "columnName": "activity_type",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtUtcMs",
+            "columnName": "started_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAtUtcMs",
+            "columnName": "ended_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "elapsedDurationMs",
+            "columnName": "elapsed_duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "activeDurationMs",
+            "columnName": "active_duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "timeZoneId",
+            "columnName": "time_zone_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "utcOffsetMinutes",
+            "columnName": "utc_offset_minutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "bootId",
+            "columnName": "boot_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "monotonicAnchorMs",
+            "columnName": "monotonic_anchor_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "activeSinceMonotonicMs",
+            "columnName": "active_since_monotonic_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "accumulatedActiveMs",
+            "columnName": "accumulated_active_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseToken",
+            "columnName": "lease_token",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routePointCount",
+            "columnName": "route_point_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "heartRateSampleCount",
+            "columnName": "heart_rate_sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB"
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "legacySourceKey",
+            "columnName": "legacy_source_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "legacyActivityId",
+            "columnName": "legacy_activity_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastErrorCode",
+            "columnName": "last_error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastErrorMessage",
+            "columnName": "last_error_message",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtcMs",
+            "columnName": "updated_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_sessions_legacy_source_key_legacy_activity_id",
+            "unique": true,
+            "columnNames": [
+              "legacy_source_key",
+              "legacy_activity_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_watch_sessions_legacy_source_key_legacy_activity_id` ON `${TABLE_NAME}` (`legacy_source_key`, `legacy_activity_id`)"
+          },
+          {
+            "name": "index_watch_sessions_state_updated_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "updated_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_sessions_state_updated_at_utc_ms` ON `${TABLE_NAME}` (`state`, `updated_at_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "watch_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `timestamp_utc_ms` INTEGER NOT NULL, `monotonic_time_ms` INTEGER, `session_active_duration_ms` INTEGER, `has_location` INTEGER NOT NULL, `has_heart_rate` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, PRIMARY KEY(`session_id`, `sequence`), FOREIGN KEY(`session_id`) REFERENCES `watch_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sequence",
+            "columnName": "sequence",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampUtcMs",
+            "columnName": "timestamp_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "monotonicTimeMs",
+            "columnName": "monotonic_time_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sessionActiveDurationMs",
+            "columnName": "session_active_duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "hasLocation",
+            "columnName": "has_location",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasHeartRate",
+            "columnName": "has_heart_rate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id",
+            "sequence"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_samples_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_samples_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          },
+          {
+            "name": "index_watch_samples_session_id_timestamp_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "session_id",
+              "timestamp_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_samples_session_id_timestamp_utc_ms` ON `${TABLE_NAME}` (`session_id`, `timestamp_utc_ms`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "watch_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "session_id"
+            ],
+            "referencedColumns": [
+              "session_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "watch_activity_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `session_revision` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`), FOREIGN KEY(`session_id`) REFERENCES `watch_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRevision",
+            "columnName": "session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadLength",
+            "columnName": "payload_length",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAttemptAtUtcMs",
+            "columnName": "last_attempt_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attemptCount",
+            "columnName": "attempt_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastFailureCode",
+            "columnName": "last_failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFailureMessage",
+            "columnName": "last_failure_message",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_activity_outbox_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_activity_outbox_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          },
+          {
+            "name": "index_watch_activity_outbox_session_id_session_revision",
+            "unique": true,
+            "columnNames": [
+              "session_id",
+              "session_revision"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_watch_activity_outbox_session_id_session_revision` ON `${TABLE_NAME}` (`session_id`, `session_revision`)"
+          },
+          {
+            "name": "index_watch_activity_outbox_state_created_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "created_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_activity_outbox_state_created_at_utc_ms` ON `${TABLE_NAME}` (`state`, `created_at_utc_ms`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "watch_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "session_id"
+            ],
+            "referencedColumns": [
+              "session_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "watch_migration_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`receipt_id` TEXT NOT NULL, `source_key` TEXT NOT NULL, `source_identity` TEXT NOT NULL, `source_sha256` TEXT NOT NULL, `source_size` INTEGER NOT NULL, `status` TEXT NOT NULL, `source_activity_count` INTEGER NOT NULL, `source_sample_count` INTEGER NOT NULL, `imported_activity_count` INTEGER NOT NULL, `imported_sample_count` INTEGER NOT NULL, `orphan_count` INTEGER NOT NULL, `quarantine_count` INTEGER NOT NULL, `min_timestamp_utc_ms` INTEGER, `max_timestamp_utc_ms` INTEGER, `canonical_sha256` TEXT NOT NULL, `completed_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`receipt_id`))",
+        "fields": [
+          {
+            "fieldPath": "receiptId",
+            "columnName": "receipt_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceKey",
+            "columnName": "source_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceIdentity",
+            "columnName": "source_identity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceSha256",
+            "columnName": "source_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceSize",
+            "columnName": "source_size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceActivityCount",
+            "columnName": "source_activity_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceSampleCount",
+            "columnName": "source_sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedActivityCount",
+            "columnName": "imported_activity_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedSampleCount",
+            "columnName": "imported_sample_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orphanCount",
+            "columnName": "orphan_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quarantineCount",
+            "columnName": "quarantine_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minTimestampUtcMs",
+            "columnName": "min_timestamp_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "maxTimestampUtcMs",
+            "columnName": "max_timestamp_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "canonicalSha256",
+            "columnName": "canonical_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAtUtcMs",
+            "columnName": "completed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "receipt_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_migration_receipts_source_key",
+            "unique": false,
+            "columnNames": [
+              "source_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_migration_receipts_source_key` ON `${TABLE_NAME}` (`source_key`)"
+          },
+          {
+            "name": "index_watch_migration_receipts_source_key_source_sha256",
+            "unique": true,
+            "columnNames": [
+              "source_key",
+              "source_sha256"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_watch_migration_receipts_source_key_source_sha256` ON `${TABLE_NAME}` (`source_key`, `source_sha256`)"
+          }
+        ]
+      },
+      {
+        "tableName": "watch_migration_quarantine",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source_key` TEXT NOT NULL, `source_table` TEXT NOT NULL, `source_row_id` INTEGER, `code` TEXT NOT NULL, `detail` TEXT NOT NULL, `raw_value` TEXT, `raw_sha256` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceKey",
+            "columnName": "source_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceTable",
+            "columnName": "source_table",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceRowId",
+            "columnName": "source_row_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "code",
+            "columnName": "code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawValue",
+            "columnName": "raw_value",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rawSha256",
+            "columnName": "raw_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_migration_quarantine_source_key_source_table_source_row_id_code",
+            "unique": true,
+            "columnNames": [
+              "source_key",
+              "source_table",
+              "source_row_id",
+              "code"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_watch_migration_quarantine_source_key_source_table_source_row_id_code` ON `${TABLE_NAME}` (`source_key`, `source_table`, `source_row_id`, `code`)"
+          }
+        ]
+      },
+      {
+        "tableName": "watch_tombstones",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `transfer_id` TEXT NOT NULL, `deleted_at_utc_ms` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, PRIMARY KEY(`session_id`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAtUtcMs",
+            "columnName": "deleted_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_tombstones_transfer_id",
+            "unique": false,
+            "columnNames": [
+              "transfer_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_tombstones_transfer_id` ON `${TABLE_NAME}` (`transfer_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "watch_tombstone_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload` BLOB NOT NULL, `payload_sha256` TEXT NOT NULL, `payload_length` INTEGER NOT NULL, `state` TEXT NOT NULL, `created_at_utc_ms` INTEGER NOT NULL, `last_attempt_at_utc_ms` INTEGER, `attempt_count` INTEGER NOT NULL, `last_failure_code` TEXT, `last_failure_message` TEXT, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadLength",
+            "columnName": "payload_length",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtUtcMs",
+            "columnName": "created_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAttemptAtUtcMs",
+            "columnName": "last_attempt_at_utc_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attemptCount",
+            "columnName": "attempt_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastFailureCode",
+            "columnName": "last_failure_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFailureMessage",
+            "columnName": "last_failure_message",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_tombstone_outbox_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_tombstone_outbox_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          },
+          {
+            "name": "index_watch_tombstone_outbox_state_created_at_utc_ms",
+            "unique": false,
+            "columnNames": [
+              "state",
+              "created_at_utc_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_tombstone_outbox_state_created_at_utc_ms` ON `${TABLE_NAME}` (`state`, `created_at_utc_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "watch_tombstone_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`transfer_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `delete_revision` INTEGER NOT NULL, `covered_session_revision` INTEGER NOT NULL, `origin` INTEGER NOT NULL, `payload_sha256` TEXT NOT NULL, `committed_at_utc_ms` INTEGER NOT NULL, `ack_payload` BLOB NOT NULL, PRIMARY KEY(`transfer_id`))",
+        "fields": [
+          {
+            "fieldPath": "transferId",
+            "columnName": "transfer_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteRevision",
+            "columnName": "delete_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coveredSessionRevision",
+            "columnName": "covered_session_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadSha256",
+            "columnName": "payload_sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtUtcMs",
+            "columnName": "committed_at_utc_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ackPayload",
+            "columnName": "ack_payload",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "transfer_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watch_tombstone_receipts_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watch_tombstone_receipts_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7c1fe9283a65021d4fed42cf55cb6dc8')"
+    ]
+  }
+}
