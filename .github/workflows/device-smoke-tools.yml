@@ -1,0 +1,28 @@
+name: Device Smoke Tools
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/device-smoke-tools.yml'
+      - 'tools/device-smoke/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/device-smoke-tools.yml'
+      - 'tools/device-smoke/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Test bounded owned-device orchestration
+        run: |
+          python3 -m unittest discover -s tools/device-smoke -p 'test_*.py' -v
+          python3 tools/device-smoke/pair_emulators.py --help
