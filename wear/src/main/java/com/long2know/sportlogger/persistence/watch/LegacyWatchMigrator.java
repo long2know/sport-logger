@@ -1,5 +1,6 @@
 package com.long2know.sportlogger.persistence.watch;
 
+import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
@@ -24,6 +25,7 @@ import com.long2know.utilities.contract.proto.PositionMeasurement;
 import com.long2know.utilities.contract.proto.Quality;
 import com.long2know.utilities.contract.proto.SourceKind;
 import com.long2know.utilities.contract.proto.SourceMetadata;
+import com.long2know.utilities.data_access.SqlLogger;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -73,6 +75,25 @@ public final class LegacyWatchMigrator {
 
     public LegacyWatchMigrator(WatchActivityRepository repository) {
         this.repository = repository;
+    }
+
+    public static File defaultLegacyDatabase(Context context) {
+        return context.getApplicationContext().getDatabasePath(SqlLogger.DATABASE_NAME);
+    }
+
+    public static String defaultSourceIdentity(Context context) {
+        Context application = context.getApplicationContext();
+        return application.getPackageName()
+                + ":"
+                + defaultLegacyDatabase(application).getAbsolutePath();
+    }
+
+    public MigrationResult migrateDefault(Context context, long completedAtUtcMs)
+            throws IOException {
+        return migrate(
+                defaultLegacyDatabase(context),
+                defaultSourceIdentity(context),
+                completedAtUtcMs);
     }
 
     public MigrationResult migrate(
