@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.KeyEvent
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -29,7 +30,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.long2know.sportlogger.persistence.phone.PhoneDatabase
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.sportlogger.publishing.endurain.EndurainDeliveryKey
 import com.long2know.sportlogger.publishing.endurain.factory.EndurainPublishingFactory
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainDeliveryStatus
 import com.long2know.sportlogger.transfer.PhoneActivityStore
 import com.long2know.utilities.models.SportActivity
 import com.long2know.utilities.models.SportTrackPoint
@@ -212,7 +215,7 @@ class MainActivityComposeTest {
     }
 
     @Test
-    fun endurainSettingsPersistCredentialAndQueueCanonicalTcxPublish() {
+    fun endurainRecoveryActionsPersistOwnershipAndValidateEveryRemoteId() {
         persistLegacy(activity("Synthetic Endurain activity", 1_700_000_500_000L, 750.0))
         launch()
         waitForText("Synthetic Endurain activity")
@@ -237,12 +240,92 @@ class MainActivityComposeTest {
         compose.waitForIdle()
         compose.onNodeWithTag("endurain_publish_$connectionIdentity")
             .performTouchInput { click() }
-        waitForEndurainDelivery()
+        val queuedDelivery = waitForEndurainDelivery()
         compose.onNodeWithTag("status_screen").performScrollToNode(
             hasText(context.getString(R.string.endurain_remote_mutations_unsupported)),
         )
         compose.onNodeWithText(context.getString(R.string.endurain_remote_mutations_unsupported))
             .assertIsDisplayed()
+
+        forceEndurainUnknownDelivery(queuedDelivery.key)
+        scenario?.recreate()
+        waitForTag("status_screen")
+        val unknownDelivery = waitForEndurainDelivery {
+            it.key == queuedDelivery.key &&
+                it.state == EndurainDeliveryStatus.State.UNKNOWN_DELIVERY
+        }
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasText(context.getString(R.string.endurain_reconcile)),
+        )
+        compose.onNodeWithText(context.getString(R.string.endurain_reconcile))
+            .performClick()
+        compose.onNodeWithTag("endurain_remote_ids")
+            .performTextReplacement("41,bad,-2")
+        compose.onNodeWithTag("endurain_reconcile_save").performClick()
+
+        val validationError =
+            "Each remote ID must be a comma-separated positive integer " +
+                "between 1 and ${Long.MAX_VALUE}."
+        waitForText(validationError)
+        compose.onNodeWithTag("endurain_remote_ids").assertIsDisplayed()
+        PhoneActivityRepository.open(context).use { repository ->
+            val persisted = checkNotNull(
+                repository.connectorDelivery(unknownDelivery.key.toRepositoryKey()),
+            )
+            assertEquals(
+                PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY,
+                persisted.state,
+            )
+            assertTrue(persisted.remoteIds.isEmpty())
+        }
+
+        compose.onNodeWithTag("endurain_remote_ids")
+            .performTextReplacement("41,42")
+        compose.onNodeWithTag("endurain_reconcile_save").performClick()
+        val reconciledDelivery = waitForEndurainDelivery {
+            it.key == queuedDelivery.key && it.remoteIds == listOf(41L, 42L)
+        }
+
+        val remoteEditTag = "endurain_remote_edit_${reconciledDelivery.artifactId}"
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasTestTag(remoteEditTag),
+        )
+        compose.onNodeWithTag(remoteEditTag).performClick()
+        waitForText("Endurain remote activity editing is not implemented")
+
+        val remoteDeleteTag = "endurain_remote_delete_${reconciledDelivery.artifactId}"
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasTestTag(remoteDeleteTag),
+        )
+        compose.onNodeWithTag(remoteDeleteTag).performClick()
+        val retainedDelivery = waitForEndurainDelivery {
+            it.key == queuedDelivery.key && it.isDeleteUnsupportedRecorded
+        }
+        val retainedStatusTag =
+            "endurain_remote_delete_recorded_${retainedDelivery.artifactId}"
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasTestTag(retainedStatusTag),
+        )
+        compose.onNodeWithTag(retainedStatusTag).assertIsDisplayed()
+        PhoneActivityRepository.open(context).use { repository ->
+            val persisted = checkNotNull(
+                repository.connectorDelivery(retainedDelivery.key.toRepositoryKey()),
+            )
+            assertEquals(listOf(41L, 42L), persisted.remoteIds)
+            assertTrue(persisted.isDeleteUnsupported)
+        }
+
+        scenario?.recreate()
+        waitForTag("status_screen")
+        waitForEndurainDelivery {
+            it.key == queuedDelivery.key &&
+                it.remoteIds == listOf(41L, 42L) &&
+                it.isDeleteUnsupportedRecorded
+        }
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasTestTag(retainedStatusTag),
+        )
+        compose.onNodeWithTag(retainedStatusTag).assertIsDisplayed()
         capture("compose-endurain.png")
     }
 
@@ -347,31 +430,84 @@ class MainActivityComposeTest {
         throw AssertionError("Timed out waiting for Endurain credential state: $diagnostic")
     }
 
-    private fun waitForEndurainDelivery() {
+    private fun waitForEndurainDelivery(
+        predicate: (EndurainDeliveryStatus) -> Boolean = { true },
+    ): EndurainDeliveryStatus {
         val deadline = SystemClock.uptimeMillis() + 12_000L
         var diagnostic = "controller snapshot unavailable"
         while (SystemClock.uptimeMillis() < deadline) {
-            var present = false
+            var matching: EndurainDeliveryStatus? = null
             scenario?.onActivity { activity ->
                 val state = ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
                     .state
                     .value
+                val deliveries = state.endurain.snapshot?.deliveries.orEmpty()
                 diagnostic = buildString {
                     append("deliveries=")
-                    append(state.endurain.snapshot?.deliveries?.size)
+                    append(
+                        deliveries.map {
+                            "${it.state}:${it.remoteIds}:${it.isDeleteUnsupportedRecorded}"
+                        },
+                    )
                     append(", error=")
                     append(state.endurain.error)
                     append(", notice=")
                     append(state.notice)
                 }
-                present = state.endurain.snapshot?.deliveries?.isNotEmpty() == true
+                matching = deliveries.firstOrNull(predicate)
             }
-            if (present) {
-                return
+            if (matching != null) {
+                return matching!!
             }
             SystemClock.sleep(100L)
         }
         throw AssertionError("Timed out waiting for Endurain delivery: $diagnostic")
+    }
+
+    private fun forceEndurainUnknownDelivery(key: EndurainDeliveryKey) {
+        val nowUtcMs = System.currentTimeMillis()
+        PhoneActivityRepository.open(context).use { repository ->
+            val repositoryKey = key.toRepositoryKey()
+            repeat(20) { attempt ->
+                val delivery = checkNotNull(repository.connectorDelivery(repositoryKey))
+                assertTrue(delivery.remoteIds.isEmpty())
+                if (
+                    delivery.state == PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY ||
+                    delivery.state == PhoneActivityRepository.ConnectorState.DUPLICATE_REVIEW
+                ) {
+                    return
+                }
+                val leaseToken = 9_001L + attempt
+                if (repository.claimConnectorDelivery(
+                    repositoryKey,
+                    delivery.state,
+                    leaseToken,
+                    "instrumented-reconciliation",
+                    nowUtcMs + 60_000L,
+                    nowUtcMs,
+                )) {
+                    repository.transitionConnectorDelivery(
+                        repositoryKey,
+                        leaseToken,
+                        delivery.state,
+                        PhoneActivityRepository.ConnectorState.UNKNOWN_DELIVERY,
+                        null,
+                        "SYNTHETIC_UNKNOWN_DELIVERY",
+                        "Synthetic ambiguous delivery for reconciliation UI coverage",
+                        nowUtcMs,
+                    )
+                    return
+                }
+                if (repository.recoverExpiredConnectorClaimAsUnknown(
+                    repositoryKey,
+                    nowUtcMs + 16L * 60L * 1_000L,
+                )) {
+                    return
+                }
+                SystemClock.sleep(100L)
+            }
+        }
+        throw AssertionError("Could not establish an unknown Endurain delivery for reconciliation")
     }
 
     private fun assertTcx(file: File) {

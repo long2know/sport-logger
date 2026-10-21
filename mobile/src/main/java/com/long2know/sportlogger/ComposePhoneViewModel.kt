@@ -826,6 +826,14 @@ class ComposePhoneViewModel(
         runEndurainAction { it.repairPreparedArtifact(key).get() }
     }
 
+    fun endurainRemoteEdit(key: EndurainDeliveryKey) {
+        runEndurainAction { it.requestRemoteEdit(key).get() }
+    }
+
+    fun endurainRemoteDelete(key: EndurainDeliveryKey) {
+        runEndurainAction { it.requestRemoteDelete(key).get() }
+    }
+
     fun openEndurainReconcile(key: EndurainDeliveryKey) {
         _state.update {
             it.copy(
@@ -854,16 +862,13 @@ class ComposePhoneViewModel(
 
     fun reconcileEndurainRemoteIds() {
         val reconcile = _state.value.endurainReconcile ?: return
-        val ids = reconcile.remoteIds
-            .split(',')
-            .mapNotNull { it.trim().takeIf(String::isNotEmpty)?.toLongOrNull() }
-            .filter { it > 0L }
-            .distinct()
-        if (ids.isEmpty()) {
+        val ids = runCatching {
+            parseEndurainRemoteIds(reconcile.remoteIds)
+        }.getOrElse { error ->
             _state.update {
                 it.copy(
                     endurainReconcile = reconcile.copy(
-                        error = "Enter at least one positive remote ID.",
+                        error = error.message,
                     ),
                 )
             }
@@ -1864,6 +1869,28 @@ class ComposePhoneViewModel(
     companion object {
         const val MAX_TITLE_CHARACTERS = PhoneActivityRepository.MAX_TITLE_LENGTH
         const val MAX_NOTES_CHARACTERS = PhoneActivityRepository.MAX_NOTES_LENGTH
+
+        internal fun parseEndurainRemoteIds(value: String): List<Long> {
+            val tokens = value
+                .split(',')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+            if (tokens.isEmpty()) {
+                throw IllegalArgumentException("Enter at least one positive remote ID.")
+            }
+            val remoteIds = LinkedHashSet<Long>(tokens.size)
+            for (token in tokens) {
+                val remoteId = token.toLongOrNull()
+                if (remoteId == null || remoteId <= 0L) {
+                    throw IllegalArgumentException(
+                        "Each remote ID must be a comma-separated positive integer " +
+                            "between 1 and ${Long.MAX_VALUE}.",
+                    )
+                }
+                remoteIds += remoteId
+            }
+            return remoteIds.toList()
+        }
 
         private const val HISTORY_PAGE_SIZE = 50
         private const val TREND_ACTIVITY_LIMIT = 5_000

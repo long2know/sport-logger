@@ -43,6 +43,9 @@ states that the phone and paired watch are affected. Health Connect and Endurain
 silently deleted; each provider requires its own explicit action and owned-record receipt.
 
 Health Connect controls use the real provider availability, permission launcher, durable operation
-results, and explicit publish/update/delete/retry capabilities. Endurain remains visibly
-not configured with no action until its separately reviewed publisher exposes a compiled UI
-binding; the phone does not present a success-shaped placeholder button.
+results, and explicit publish/update/delete/retry capabilities. Endurain uses its typed publishing
+controller for queue, retry, reconciliation, and explicit remote edit/delete requests. Remote
+mutation remains unsupported in API-key TCX mode: edit reports that limitation, while a delete
+request durably records that remote ownership remains in the recovery ledger and never reports a
+remote deletion. Reconciliation validates every supplied nonblank remote ID as a positive integer
+before recording the complete list atomically.
