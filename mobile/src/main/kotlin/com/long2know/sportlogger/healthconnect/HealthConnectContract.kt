@@ -145,8 +145,14 @@ data class HealthConnectOperationResult(
     val canRetry: Boolean
         get() =
             operationId != null &&
-                (state == HealthConnectOperationState.PARTIAL ||
-                    state == HealthConnectOperationState.RETRYABLE_FAILURE)
+                (state == HealthConnectOperationState.RETRYABLE_FAILURE ||
+                    (state == HealthConnectOperationState.PARTIAL &&
+                        (failure?.retryable == true ||
+                            missingPermissions.isNotEmpty() ||
+                            receipts.any {
+                                it.state == HealthConnectRecordState.FAILED_RETRYABLE ||
+                                    it.state == HealthConnectRecordState.DELETE_PENDING
+                            })))
 }
 
 data class HealthConnectSessionStatus(
@@ -162,7 +168,10 @@ data class HealthConnectSessionStatus(
         get() = availability.canResolveWithProviderInstall
 
     val canRequestPermissions: Boolean
-        get() = availability.isAvailable && permissions.missing.isNotEmpty()
+        get() =
+            availability.isAvailable &&
+                permissions.grant != HealthConnectPermissionGrant.UNAVAILABLE &&
+                permissions.missing.isNotEmpty()
 
     val canPublish: Boolean
         get() = availability.isAvailable && permissions.hasExerciseSessionWrite
@@ -218,4 +227,3 @@ interface HealthConnectProvider : AutoCloseable {
         listener: Runnable,
     ): AutoCloseable
 }
-
