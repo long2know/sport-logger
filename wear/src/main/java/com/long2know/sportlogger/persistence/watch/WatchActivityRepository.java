@@ -15,6 +15,7 @@ import com.long2know.utilities.contract.proto.ActivityTransferFile;
 import com.long2know.utilities.contract.proto.ActivityType;
 import com.long2know.utilities.contract.proto.AckResult;
 import com.long2know.utilities.contract.proto.CommitAck;
+import com.long2know.utilities.contract.proto.Lap;
 import com.long2know.utilities.contract.proto.MeasurementSample;
 import com.long2know.utilities.contract.proto.TombstoneRecord;
 
@@ -35,37 +36,51 @@ public final class WatchActivityRepository implements AutoCloseable {
     public static final String OUTBOX_AWAITING_COMMIT_ACK = "AWAITING_COMMIT_ACK";
     public static final String OUTBOX_COMMITTED = "COMMITTED";
     public static final String OUTBOX_RETRYABLE = "RETRYABLE";
+    public static final String LAP_OPEN = "OPEN";
+    public static final String LAP_CLOSED = "CLOSED";
 
     private final WatchDatabase database;
     private final WatchDao dao;
     private final Executor writeExecutor;
-    private final boolean ownsDatabase;
+    private final WatchDatabase.ProcessLease processLease;
     private final ExecutorService ownedExecutor;
 
     public WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor) {
-        this(database, writeExecutor, false);
+        this(database, writeExecutor, null);
     }
 
     private WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor,
-            boolean ownsDatabase) {
+            WatchDatabase.ProcessLease processLease) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.watchDao();
         this.writeExecutor = Objects.requireNonNull(writeExecutor);
-        this.ownsDatabase = ownsDatabase;
-        this.ownedExecutor = ownsDatabase && writeExecutor instanceof ExecutorService
+        this.processLease = processLease;
+        this.ownedExecutor = processLease != null
+                && writeExecutor instanceof ExecutorService
                 ? (ExecutorService) writeExecutor
                 : null;
     }
 
     public static WatchActivityRepository open(Context context) {
-        return new WatchActivityRepository(
-                WatchDatabase.open(context),
-                Executors.newSingleThreadExecutor(),
-                true);
+        ExecutorService writeExecutor = Executors.newSingleThreadExecutor();
+        WatchDatabase.ProcessLease processLease = null;
+        try {
+            processLease = WatchDatabase.acquireProcessLease(context);
+            return new WatchActivityRepository(
+                    processLease.database(),
+                    writeExecutor,
+                    processLease);
+        } catch (RuntimeException | Error error) {
+            writeExecutor.shutdown();
+            if (processLease != null) {
+                processLease.close();
+            }
+            throw error;
+        }
     }
 
     public CompletableFuture<SessionSnapshot> startSession(StartRequest request) {
@@ -77,6 +92,7 @@ public final class WatchActivityRepository implements AutoCloseable {
                         "LEASE_REQUIRED",
                         "A non-zero recording lease is required");
             }
+            validateActivityType(request.activityType);
             WatchSessionEntity existing = dao.session(request.sessionId);
             if (existing != null) {
                 if (sameStart(existing, request)) {
@@ -104,6 +120,12 @@ public final class WatchActivityRepository implements AutoCloseable {
             session.createdAtUtcMs = request.startedAtUtcMs;
             session.updatedAtUtcMs = request.startedAtUtcMs;
             dao.insertSession(session);
+            dao.insertLap(openingLap(
+                    request.sessionId,
+                    1,
+                    request.startedAtUtcMs,
+                    request.initialElapsedDurationMs,
+                    request.accumulatedActiveMs));
             return snapshot(session);
         }), writeExecutor);
     }
@@ -165,16 +187,23 @@ public final class WatchActivityRepository implements AutoCloseable {
             ActivityRecord activity,
             String transferId,
             long completedAtUtcMs) {
-        return CompletableFuture.supplyAsync(() ->
-                database.runInTransaction(() -> finishInternal(
-                        sessionId,
-                        leaseToken,
-                        activity,
-                        transferId,
-                        completedAtUtcMs,
-                        false,
-                        null,
-                        null)), writeExecutor);
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            WatchSessionEntity session = requireWritableSession(sessionId, leaseToken);
+            ActivityRecord completed = completedActivity(
+                    session,
+                    activity,
+                    activity.getSamplesList(),
+                    completedAtUtcMs);
+            return finishInternal(
+                    sessionId,
+                    leaseToken,
+                    completed,
+                    transferId,
+                    completedAtUtcMs,
+                    false,
+                    null,
+                    null);
+        }), writeExecutor);
     }
 
     public CompletableFuture<SessionSnapshot> session(String sessionId) {
@@ -214,6 +243,33 @@ public final class WatchActivityRepository implements AutoCloseable {
             }
             return Collections.unmodifiableList(items);
         }, writeExecutor);
+    }
+
+    public CompletableFuture<List<CompletedActivity>> recentCompleted(int limit) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            validateLimit(limit);
+            List<CompletedActivity> completed = new ArrayList<>();
+            for (WatchSessionEntity session : dao.recentCompletedSessions(limit)) {
+                WatchOutboxEntity outbox =
+                        dao.outboxForRevision(session.sessionId, session.watchRevision);
+                if (outbox == null || session.payload == null) {
+                    throw new CanonicalContractException(
+                            "COMPLETED_PRESENTATION_INCOMPLETE",
+                            "Completed session has no matching canonical payload/outbox");
+                }
+                CanonicalPayload payload = CanonicalPayload.parse(session.payload);
+                completed.add(new CompletedActivity(
+                        payload.getActivity(),
+                        payload.getExactBytes(),
+                        outbox(outbox)));
+            }
+            return Collections.unmodifiableList(completed);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<CompletedActivity> latestCompleted() {
+        return recentCompleted(1).thenApply(
+                completed -> completed.isEmpty() ? null : completed.get(0));
     }
 
     public CompletableFuture<List<OutboxItem>> reclaimPendingOutbox(
@@ -300,12 +356,14 @@ public final class WatchActivityRepository implements AutoCloseable {
                         "COMPLETION_NOT_RESERVED",
                         "Completion identity must be durably reserved before finalization");
             }
-            ActivityRecord activity = finalMetadata.toBuilder()
-                    .setSessionId(sessionId)
-                    .setWatchRevision(session.completionRevision)
-                    .clearSamples()
-                    .addAllSamples(samplesInternal(sessionId))
-                    .build();
+            ActivityRecord activity = completedActivity(
+                    session,
+                    finalMetadata.toBuilder()
+                            .setSessionId(sessionId)
+                            .setWatchRevision(session.completionRevision)
+                            .build(),
+                    samplesInternal(sessionId),
+                    completedAtUtcMs);
             return finishInternal(
                     sessionId,
                     leaseToken,
@@ -324,6 +382,92 @@ public final class WatchActivityRepository implements AutoCloseable {
                         samplesInternal(CanonicalIds.requireUuid(
                                 sessionId,
                                 "Session identifier")))), writeExecutor);
+    }
+
+    public CompletableFuture<LapBoundaryResult> recordManualLap(
+            String sessionId,
+            long leaseToken,
+            long boundaryUtcMs,
+            long boundaryElapsedDurationMs,
+            long boundaryActiveDurationMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            WatchSessionEntity session = requireWritableSession(sessionId, leaseToken);
+            if (!LifecycleState.RECORDING.name().equals(session.state)) {
+                throw new CanonicalContractException(
+                        "LAP_STATE_INVALID",
+                        "Manual laps are accepted only while actively recording");
+            }
+            WatchLapEntity latest = latestLapOrCreate(session);
+            if (latest.lapIndex > 1
+                    && latest.startTimeUtcMs == boundaryUtcMs
+                    && latest.startElapsedDurationMs == boundaryElapsedDurationMs
+                    && latest.startActiveDurationMs == boundaryActiveDurationMs) {
+                WatchLapEntity previous =
+                        dao.lap(sessionId, latest.lapIndex - 1);
+                if (previous != null
+                        && LAP_CLOSED.equals(previous.state)
+                        && Objects.equals(previous.endTimeUtcMs, boundaryUtcMs)
+                        && Objects.equals(
+                        previous.endElapsedDurationMs,
+                        boundaryElapsedDurationMs)
+                        && Objects.equals(
+                        previous.endActiveDurationMs,
+                        boundaryActiveDurationMs)) {
+                    return new LapBoundaryResult(
+                            lapSnapshot(previous),
+                            lapSnapshot(latest),
+                            false);
+                }
+            }
+            closeLap(
+                    latest,
+                    boundaryUtcMs,
+                    boundaryElapsedDurationMs,
+                    boundaryActiveDurationMs);
+            WatchLapEntity next = openingLap(
+                    sessionId,
+                    latest.lapIndex + 1,
+                    boundaryUtcMs,
+                    boundaryElapsedDurationMs,
+                    boundaryActiveDurationMs);
+            dao.insertLap(next);
+            return new LapBoundaryResult(
+                    lapSnapshot(latest),
+                    lapSnapshot(next),
+                    true);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<LapSnapshot> closeFinalLap(
+            String sessionId,
+            long leaseToken,
+            long boundaryUtcMs,
+            long boundaryElapsedDurationMs,
+            long boundaryActiveDurationMs) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            WatchSessionEntity session = requireWritableSession(sessionId, leaseToken);
+            return lapSnapshot(closeFinalLapInternal(
+                    session,
+                    boundaryUtcMs,
+                    boundaryElapsedDurationMs,
+                    boundaryActiveDurationMs));
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<List<LapSnapshot>> laps(String sessionId) {
+        return CompletableFuture.supplyAsync(() ->
+                Collections.unmodifiableList(lapSnapshots(
+                        CanonicalIds.requireUuid(
+                                sessionId,
+                                "Session identifier"))), writeExecutor);
+    }
+
+    public CompletableFuture<LapSnapshot> currentLap(String sessionId) {
+        return CompletableFuture.supplyAsync(() -> {
+            CanonicalIds.requireUuid(sessionId, "Session identifier");
+            WatchLapEntity latest = dao.latestLap(sessionId);
+            return latest == null ? null : lapSnapshot(latest);
+        }, writeExecutor);
     }
 
     public CompletableFuture<OutboxItem> transitionOutbox(
@@ -580,9 +724,15 @@ public final class WatchActivityRepository implements AutoCloseable {
     }
 
     public AutoCloseable observeOutbox(Executor executor, Runnable listener) {
+        return observeChanges(executor, listener);
+    }
+
+    public AutoCloseable observeChanges(Executor executor, Runnable listener) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(listener);
         InvalidationTracker.Observer observer = new InvalidationTracker.Observer(
+                "watch_sessions",
+                "watch_laps",
                 "watch_activity_outbox",
                 "watch_tombstone_outbox") {
             @Override
@@ -628,6 +778,7 @@ public final class WatchActivityRepository implements AutoCloseable {
             outbox.state = OUTBOX_READY;
             outbox.createdAtUtcMs = createdAtUtcMs;
             dao.insertTombstoneOutbox(outbox);
+            dao.deleteLaps(sessionId);
             session.state = LifecycleState.DISCARDED.name();
             session.leaseToken = 0L;
             session.updatedAtUtcMs = createdAtUtcMs;
@@ -885,6 +1036,217 @@ public final class WatchActivityRepository implements AutoCloseable {
         return true;
     }
 
+    private ActivityRecord completedActivity(
+            WatchSessionEntity session,
+            ActivityRecord metadata,
+            List<MeasurementSample> samples,
+            long completedAtUtcMs) {
+        ActivityType activityType = ActivityType.forNumber(session.activityType);
+        validateActivityType(activityType);
+        long activeDuration = metadata.hasActiveDurationMs()
+                ? metadata.getActiveDurationMs()
+                : session.accumulatedActiveMs;
+        closeFinalLapInternal(
+                session,
+                metadata.getEndTimeUtcMs(),
+                metadata.getElapsedDurationMs(),
+                activeDuration);
+        ActivityRecord.Builder completed = metadata.toBuilder()
+                .setSessionId(session.sessionId)
+                .setActivityType(activityType)
+                .clearSamples()
+                .addAllSamples(samples)
+                .clearLaps();
+        for (WatchLapEntity lap : dao.laps(session.sessionId)) {
+            if (!LAP_CLOSED.equals(lap.state)) {
+                throw new CanonicalContractException(
+                        "FINAL_LAP_OPEN",
+                        "Completed activity still has an open lap");
+            }
+            completed.addLaps(lapProto(lap));
+        }
+        session.updatedAtUtcMs = completedAtUtcMs;
+        return completed.build();
+    }
+
+    private WatchSessionEntity requireWritableSession(
+            String sessionId,
+            long leaseToken) {
+        WatchSessionEntity session = requireSession(
+                CanonicalIds.requireUuid(sessionId, "Session identifier"));
+        if (session.leaseToken != requireLease(leaseToken)) {
+            throw new CanonicalContractException(
+                    "SESSION_FENCE_REJECTED",
+                    "Session write was rejected by its recording lease");
+        }
+        return session;
+    }
+
+    private WatchLapEntity latestLapOrCreate(WatchSessionEntity session) {
+        WatchLapEntity latest = dao.latestLap(session.sessionId);
+        if (latest != null) {
+            return latest;
+        }
+        WatchLapEntity initial = openingLap(
+                session.sessionId,
+                1,
+                session.startedAtUtcMs,
+                0L,
+                0L);
+        dao.insertLap(initial);
+        return initial;
+    }
+
+    private WatchLapEntity closeFinalLapInternal(
+            WatchSessionEntity session,
+            long boundaryUtcMs,
+            long boundaryElapsedDurationMs,
+            long boundaryActiveDurationMs) {
+        if (!LifecycleState.RECORDING.name().equals(session.state)
+                && !LifecycleState.PAUSED.name().equals(session.state)
+                && !LifecycleState.ENDING.name().equals(session.state)) {
+            throw new CanonicalContractException(
+                    "LAP_STATE_INVALID",
+                    "Final lap can close only for recording, paused, or ending sessions");
+        }
+        WatchLapEntity latest = latestLapOrCreate(session);
+        if (LAP_CLOSED.equals(latest.state)) {
+            if (Objects.equals(latest.endTimeUtcMs, boundaryUtcMs)
+                    && Objects.equals(
+                    latest.endElapsedDurationMs,
+                    boundaryElapsedDurationMs)
+                    && Objects.equals(
+                    latest.endActiveDurationMs,
+                    boundaryActiveDurationMs)) {
+                return latest;
+            }
+            throw new CanonicalContractException(
+                    "FINAL_LAP_CONFLICT",
+                    "Final lap already closed at a different boundary");
+        }
+        closeLap(
+                latest,
+                boundaryUtcMs,
+                boundaryElapsedDurationMs,
+                boundaryActiveDurationMs);
+        return latest;
+    }
+
+    private void closeLap(
+            WatchLapEntity lap,
+            long boundaryUtcMs,
+            long boundaryElapsedDurationMs,
+            long boundaryActiveDurationMs) {
+        if (!LAP_OPEN.equals(lap.state)) {
+            throw new CanonicalContractException(
+                    "LAP_ALREADY_CLOSED",
+                    "Lap is not open");
+        }
+        if (boundaryUtcMs < lap.startTimeUtcMs
+                || boundaryElapsedDurationMs < lap.startElapsedDurationMs
+                || boundaryActiveDurationMs < lap.startActiveDurationMs
+                || boundaryActiveDurationMs - lap.startActiveDurationMs
+                > boundaryElapsedDurationMs - lap.startElapsedDurationMs) {
+            throw new CanonicalContractException(
+                    "LAP_BOUNDARY_INVALID",
+                    "Lap boundary precedes its start or active duration exceeds elapsed");
+        }
+        lap.state = LAP_CLOSED;
+        lap.endTimeUtcMs = boundaryUtcMs;
+        lap.endElapsedDurationMs = boundaryElapsedDurationMs;
+        lap.endActiveDurationMs = boundaryActiveDurationMs;
+        lap.updatedAtUtcMs = boundaryUtcMs;
+        if (dao.updateLap(lap) != 1) {
+            throw new CanonicalContractException(
+                    "LAP_UPDATE_FAILED",
+                    "Lap boundary did not update exactly one row");
+        }
+    }
+
+    private static WatchLapEntity openingLap(
+            String sessionId,
+            int lapIndex,
+            long startTimeUtcMs,
+            long startElapsedDurationMs,
+            long startActiveDurationMs) {
+        if (lapIndex <= 0
+                || startTimeUtcMs <= 0L
+                || startElapsedDurationMs < 0L
+                || startActiveDurationMs < 0L
+                || startActiveDurationMs > startElapsedDurationMs) {
+            throw new CanonicalContractException(
+                    "LAP_START_INVALID",
+                    "Lap start identity and timing are invalid");
+        }
+        WatchLapEntity lap = new WatchLapEntity();
+        lap.sessionId = sessionId;
+        lap.lapIndex = lapIndex;
+        lap.lapId = CanonicalIds.newTransferId();
+        lap.state = LAP_OPEN;
+        lap.startTimeUtcMs = startTimeUtcMs;
+        lap.startElapsedDurationMs = startElapsedDurationMs;
+        lap.startActiveDurationMs = startActiveDurationMs;
+        lap.createdAtUtcMs = startTimeUtcMs;
+        lap.updatedAtUtcMs = startTimeUtcMs;
+        return lap;
+    }
+
+    private List<LapSnapshot> lapSnapshots(String sessionId) {
+        List<LapSnapshot> snapshots = new ArrayList<>();
+        for (WatchLapEntity lap : dao.laps(sessionId)) {
+            snapshots.add(lapSnapshot(lap));
+        }
+        return snapshots;
+    }
+
+    private static LapSnapshot lapSnapshot(WatchLapEntity lap) {
+        return new LapSnapshot(
+                lap.sessionId,
+                lap.lapIndex,
+                lap.lapId,
+                lap.state,
+                lap.startTimeUtcMs,
+                lap.endTimeUtcMs,
+                lap.startElapsedDurationMs,
+                lap.endElapsedDurationMs,
+                lap.startActiveDurationMs,
+                lap.endActiveDurationMs);
+    }
+
+    private static Lap lapProto(WatchLapEntity lap) {
+        Lap.Builder builder = Lap.newBuilder()
+                .setLapId(lap.lapId)
+                .setIndex(lap.lapIndex)
+                .setStartTimeUtcMs(lap.startTimeUtcMs)
+                .setEndTimeUtcMs(requireLapEnd(lap.endTimeUtcMs))
+                .setElapsedDurationMs(
+                        requireLapEnd(lap.endElapsedDurationMs)
+                                - lap.startElapsedDurationMs);
+        long activeDuration = requireLapEnd(lap.endActiveDurationMs)
+                - lap.startActiveDurationMs;
+        builder.setActiveDurationMs(activeDuration);
+        return builder.build();
+    }
+
+    private static long requireLapEnd(Long value) {
+        if (value == null) {
+            throw new CanonicalContractException(
+                    "FINAL_LAP_OPEN",
+                    "Closed lap is missing an end boundary");
+        }
+        return value;
+    }
+
+    private static void validateActivityType(ActivityType activityType) {
+        if (activityType == null
+                || activityType == ActivityType.ACTIVITY_TYPE_UNSPECIFIED
+                || activityType == ActivityType.UNRECOGNIZED) {
+            throw new CanonicalContractException(
+                    "ACTIVITY_TYPE_REQUIRED",
+                    "A supported activity type is required before recording starts");
+        }
+    }
+
     private WatchSessionEntity requireSession(String sessionId) {
         WatchSessionEntity session = dao.session(sessionId);
         if (session == null) {
@@ -895,9 +1257,10 @@ public final class WatchActivityRepository implements AutoCloseable {
         return session;
     }
 
-    private static boolean sameStart(
+    private boolean sameStart(
             WatchSessionEntity session,
             StartRequest request) {
+        WatchLapEntity initialLap = dao.lap(session.sessionId, 1);
         return session.sessionId.equals(request.sessionId)
                 && session.leaseToken == request.leaseToken
                 && session.activityType == request.activityType.getNumber()
@@ -907,7 +1270,12 @@ public final class WatchActivityRepository implements AutoCloseable {
                 && Objects.equals(session.bootId, request.bootId)
                 && Objects.equals(session.monotonicAnchorMs, request.monotonicAnchorMs)
                 && Objects.equals(session.legacySourceKey, request.legacySourceKey)
-                && Objects.equals(session.legacyActivityId, request.legacyActivityId);
+                && Objects.equals(session.legacyActivityId, request.legacyActivityId)
+                && initialLap != null
+                && initialLap.startElapsedDurationMs
+                == request.initialElapsedDurationMs
+                && initialLap.startActiveDurationMs
+                == request.accumulatedActiveMs;
     }
 
     private static long requireLease(long leaseToken) {
@@ -919,11 +1287,25 @@ public final class WatchActivityRepository implements AutoCloseable {
         return leaseToken;
     }
 
-    private static SessionSnapshot snapshot(WatchSessionEntity entity) {
+    private SessionSnapshot snapshot(WatchSessionEntity entity) {
+        ActivityType activityType = ActivityType.forNumber(entity.activityType);
+        if (activityType == null) {
+            activityType = ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
+        }
+        WatchLapEntity latestLap = dao.latestLap(entity.sessionId);
+        WatchLapEntity lastCompletedLap = null;
+        if (latestLap != null) {
+            lastCompletedLap = LAP_CLOSED.equals(latestLap.state)
+                    ? latestLap
+                    : latestLap.lapIndex > 1
+                    ? dao.lap(entity.sessionId, latestLap.lapIndex - 1)
+                    : null;
+        }
         return new SessionSnapshot(
                 entity.sessionId,
                 entity.watchRevision,
                 LifecycleState.valueOf(entity.state),
+                activityType,
                 entity.leaseToken,
                 entity.startedAtUtcMs,
                 entity.endedAtUtcMs,
@@ -931,6 +1313,15 @@ public final class WatchActivityRepository implements AutoCloseable {
                 entity.bootId,
                 entity.completionTransferId,
                 entity.completionRevision,
+                latestLap == null ? 0 : latestLap.lapIndex,
+                lastCompletedLap == null || lastCompletedLap.endElapsedDurationMs == null
+                        ? null
+                        : lastCompletedLap.endElapsedDurationMs
+                        - lastCompletedLap.startElapsedDurationMs,
+                lastCompletedLap == null || lastCompletedLap.endActiveDurationMs == null
+                        ? null
+                        : lastCompletedLap.endActiveDurationMs
+                        - lastCompletedLap.startActiveDurationMs,
                 entity.sampleCount,
                 entity.routePointCount,
                 entity.heartRateSampleCount,
@@ -1083,8 +1474,8 @@ public final class WatchActivityRepository implements AutoCloseable {
         if (ownedExecutor != null) {
             ownedExecutor.shutdown();
         }
-        if (ownsDatabase) {
-            database.close();
+        if (processLease != null) {
+            processLease.close();
         }
     }
 
@@ -1107,6 +1498,7 @@ public final class WatchActivityRepository implements AutoCloseable {
         private final Integer utcOffsetMinutes;
         private final String bootId;
         private final Long monotonicAnchorMs;
+        private final long initialElapsedDurationMs;
         private final long accumulatedActiveMs;
         private final String legacySourceKey;
         private final Long legacyActivityId;
@@ -1120,6 +1512,7 @@ public final class WatchActivityRepository implements AutoCloseable {
             utcOffsetMinutes = builder.utcOffsetMinutes;
             bootId = builder.bootId;
             monotonicAnchorMs = builder.monotonicAnchorMs;
+            initialElapsedDurationMs = builder.initialElapsedDurationMs;
             accumulatedActiveMs = builder.accumulatedActiveMs;
             legacySourceKey = builder.legacySourceKey;
             legacyActivityId = builder.legacyActivityId;
@@ -1138,6 +1531,7 @@ public final class WatchActivityRepository implements AutoCloseable {
             private Integer utcOffsetMinutes;
             private String bootId;
             private Long monotonicAnchorMs;
+            private long initialElapsedDurationMs;
             private long accumulatedActiveMs;
             private String legacySourceKey;
             private Long legacyActivityId;
@@ -1170,6 +1564,11 @@ public final class WatchActivityRepository implements AutoCloseable {
                 return this;
             }
 
+            public Builder initialElapsedDurationMs(long value) {
+                initialElapsedDurationMs = value;
+                return this;
+            }
+
             public Builder legacyIdentity(String sourceKey, long activityId) {
                 legacySourceKey = sourceKey;
                 legacyActivityId = activityId;
@@ -1182,10 +1581,141 @@ public final class WatchActivityRepository implements AutoCloseable {
         }
     }
 
+    public static final class LapSnapshot {
+        private final String sessionId;
+        private final int lapIndex;
+        private final String lapId;
+        private final String state;
+        private final long startTimeUtcMs;
+        private final Long endTimeUtcMs;
+        private final long startElapsedDurationMs;
+        private final Long endElapsedDurationMs;
+        private final long startActiveDurationMs;
+        private final Long endActiveDurationMs;
+
+        private LapSnapshot(
+                String sessionId,
+                int lapIndex,
+                String lapId,
+                String state,
+                long startTimeUtcMs,
+                Long endTimeUtcMs,
+                long startElapsedDurationMs,
+                Long endElapsedDurationMs,
+                long startActiveDurationMs,
+                Long endActiveDurationMs) {
+            this.sessionId = sessionId;
+            this.lapIndex = lapIndex;
+            this.lapId = lapId;
+            this.state = state;
+            this.startTimeUtcMs = startTimeUtcMs;
+            this.endTimeUtcMs = endTimeUtcMs;
+            this.startElapsedDurationMs = startElapsedDurationMs;
+            this.endElapsedDurationMs = endElapsedDurationMs;
+            this.startActiveDurationMs = startActiveDurationMs;
+            this.endActiveDurationMs = endActiveDurationMs;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public int getLapIndex() {
+            return lapIndex;
+        }
+
+        public String getLapId() {
+            return lapId;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public long getStartTimeUtcMs() {
+            return startTimeUtcMs;
+        }
+
+        public Long getEndTimeUtcMs() {
+            return endTimeUtcMs;
+        }
+
+        public long getStartElapsedDurationMs() {
+            return startElapsedDurationMs;
+        }
+
+        public Long getEndElapsedDurationMs() {
+            return endElapsedDurationMs;
+        }
+
+        public long getStartActiveDurationMs() {
+            return startActiveDurationMs;
+        }
+
+        public Long getEndActiveDurationMs() {
+            return endActiveDurationMs;
+        }
+    }
+
+    public static final class LapBoundaryResult {
+        private final LapSnapshot closedLap;
+        private final LapSnapshot openedLap;
+        private final boolean created;
+
+        private LapBoundaryResult(
+                LapSnapshot closedLap,
+                LapSnapshot openedLap,
+                boolean created) {
+            this.closedLap = closedLap;
+            this.openedLap = openedLap;
+            this.created = created;
+        }
+
+        public LapSnapshot getClosedLap() {
+            return closedLap;
+        }
+
+        public LapSnapshot getOpenedLap() {
+            return openedLap;
+        }
+
+        public boolean isCreated() {
+            return created;
+        }
+    }
+
+    public static final class CompletedActivity {
+        private final ActivityRecord activity;
+        private final byte[] exactPayload;
+        private final OutboxItem outbox;
+
+        private CompletedActivity(
+                ActivityRecord activity,
+                byte[] exactPayload,
+                OutboxItem outbox) {
+            this.activity = activity;
+            this.exactPayload = exactPayload;
+            this.outbox = outbox;
+        }
+
+        public ActivityRecord getActivity() {
+            return activity;
+        }
+
+        public byte[] getExactPayload() {
+            return exactPayload.clone();
+        }
+
+        public OutboxItem getOutbox() {
+            return outbox;
+        }
+    }
+
     public static final class SessionSnapshot {
         private final String sessionId;
         private final long watchRevision;
         private final LifecycleState state;
+        private final ActivityType activityType;
         private final long leaseToken;
         private final long startedAtUtcMs;
         private final Long endedAtUtcMs;
@@ -1193,6 +1723,9 @@ public final class WatchActivityRepository implements AutoCloseable {
         private final String bootId;
         private final String completionTransferId;
         private final Long completionRevision;
+        private final int currentLapIndex;
+        private final Long lastLapElapsedDurationMs;
+        private final Long lastLapActiveDurationMs;
         private final long sampleCount;
         private final long routePointCount;
         private final long heartRateSampleCount;
@@ -1203,6 +1736,7 @@ public final class WatchActivityRepository implements AutoCloseable {
                 String sessionId,
                 long watchRevision,
                 LifecycleState state,
+                ActivityType activityType,
                 long leaseToken,
                 long startedAtUtcMs,
                 Long endedAtUtcMs,
@@ -1210,6 +1744,9 @@ public final class WatchActivityRepository implements AutoCloseable {
                 String bootId,
                 String completionTransferId,
                 Long completionRevision,
+                int currentLapIndex,
+                Long lastLapElapsedDurationMs,
+                Long lastLapActiveDurationMs,
                 long sampleCount,
                 long routePointCount,
                 long heartRateSampleCount,
@@ -1218,6 +1755,7 @@ public final class WatchActivityRepository implements AutoCloseable {
             this.sessionId = sessionId;
             this.watchRevision = watchRevision;
             this.state = state;
+            this.activityType = activityType;
             this.leaseToken = leaseToken;
             this.startedAtUtcMs = startedAtUtcMs;
             this.endedAtUtcMs = endedAtUtcMs;
@@ -1225,6 +1763,9 @@ public final class WatchActivityRepository implements AutoCloseable {
             this.bootId = bootId;
             this.completionTransferId = completionTransferId;
             this.completionRevision = completionRevision;
+            this.currentLapIndex = currentLapIndex;
+            this.lastLapElapsedDurationMs = lastLapElapsedDurationMs;
+            this.lastLapActiveDurationMs = lastLapActiveDurationMs;
             this.sampleCount = sampleCount;
             this.routePointCount = routePointCount;
             this.heartRateSampleCount = heartRateSampleCount;
@@ -1242,6 +1783,10 @@ public final class WatchActivityRepository implements AutoCloseable {
 
         public LifecycleState getState() {
             return state;
+        }
+
+        public ActivityType getActivityType() {
+            return activityType;
         }
 
         public long getLeaseToken() {
@@ -1270,6 +1815,18 @@ public final class WatchActivityRepository implements AutoCloseable {
 
         public Long getCompletionRevision() {
             return completionRevision;
+        }
+
+        public int getCurrentLapIndex() {
+            return currentLapIndex;
+        }
+
+        public Long getLastLapElapsedDurationMs() {
+            return lastLapElapsedDurationMs;
+        }
+
+        public Long getLastLapActiveDurationMs() {
+            return lastLapActiveDurationMs;
         }
 
         public long getSampleCount() {

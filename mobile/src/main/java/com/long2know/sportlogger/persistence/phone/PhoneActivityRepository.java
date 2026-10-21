@@ -49,36 +49,43 @@ public final class PhoneActivityRepository implements AutoCloseable {
 
     private final PhoneDatabase database;
     private final PhoneDao dao;
-    private final boolean ownsDatabase;
+    private final PhoneDatabase.ProcessLease processLease;
     private final DeleteFaultInjector deleteFaultInjector;
 
     public PhoneActivityRepository(PhoneDatabase database) {
-        this(database, false, tombstone -> {
+        this(database, null, tombstone -> {
         });
     }
 
     PhoneActivityRepository(
             PhoneDatabase database,
             DeleteFaultInjector deleteFaultInjector) {
-        this(database, false, deleteFaultInjector);
+        this(database, null, deleteFaultInjector);
     }
 
     private PhoneActivityRepository(
             PhoneDatabase database,
-            boolean ownsDatabase,
+            PhoneDatabase.ProcessLease processLease,
             DeleteFaultInjector deleteFaultInjector) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.phoneDao();
-        this.ownsDatabase = ownsDatabase;
+        this.processLease = processLease;
         this.deleteFaultInjector = Objects.requireNonNull(deleteFaultInjector);
     }
 
     public static PhoneActivityRepository open(Context context) {
-        return new PhoneActivityRepository(
-                PhoneDatabase.open(context),
-                true,
-                tombstone -> {
-                });
+        PhoneDatabase.ProcessLease processLease =
+                PhoneDatabase.acquireProcessLease(context);
+        try {
+            return new PhoneActivityRepository(
+                    processLease.database(),
+                    processLease,
+                    tombstone -> {
+                    });
+        } catch (RuntimeException | Error error) {
+            processLease.close();
+            throw error;
+        }
     }
 
     public AcceptResult acceptActivityTransfer(byte[] transferBytes, long committedAtUtcMs) {
@@ -219,7 +226,9 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 "phone_metadata",
                 "phone_tombstones",
                 "phone_tombstone_outbox",
-                "phone_tombstone_receipts") {
+                "phone_tombstone_receipts",
+                "connector_ledgers",
+                "connector_remote_ids") {
             @Override
             public void onInvalidated(Set<String> tables) {
                 executor.execute(listener);
@@ -1304,8 +1313,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
 
     @Override
     public void close() {
-        if (ownsDatabase) {
-            database.close();
+        if (processLease != null) {
+            processLease.close();
         }
     }
 
