@@ -14,6 +14,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class RecordingController {
+    private static final String LEGACY_PAUSED_LATE_SAMPLE_ERROR =
+            "Canonical sample persistence failed: "
+                    + "Samples can only be appended while recording or ending";
+
     private enum ExportResult {
         QUEUED,
         ACKNOWLEDGED,
@@ -314,6 +318,14 @@ public final class RecordingController {
                     failure(RecordingError.Code.RECOVERY, "Recording recovery state is unreadable", error));
             publish(current);
             return;
+        }
+
+        if (isLegacyPausedLateSampleError(current.getError())) {
+            PersistentRecording recovered = current.withError(null);
+            if (!persist(recovered)) {
+                return;
+            }
+            current = recovered;
         }
 
         if ((current.getState() == RecordingState.RECORDING
@@ -1198,6 +1210,13 @@ public final class RecordingController {
         return message == null || message.trim().isEmpty()
                 ? error == null ? "Unknown error" : error.getClass().getSimpleName()
                 : message;
+    }
+
+    private static boolean isLegacyPausedLateSampleError(
+            RecordingError error) {
+        return error != null
+                && error.getCode() == RecordingError.Code.STORAGE
+                && LEGACY_PAUSED_LATE_SAMPLE_ERROR.equals(error.getMessage());
     }
 
     private static void cancel(ScheduledFuture<?> future) {

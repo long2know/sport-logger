@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 
 import com.long2know.sportlogger.acquisition.ExerciseMetric;
 import com.long2know.sportlogger.acquisition.MeasurementCapability;
+import com.long2know.sportlogger.acquisition.MeasurementProvenance;
 import com.long2know.sportlogger.acquisition.MeasurementSample;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
 import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
@@ -16,6 +17,7 @@ import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.sync.WatchSyncFinishHook;
+import com.long2know.utilities.contract.CanonicalContractException;
 import com.long2know.utilities.contract.CanonicalIds;
 import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.ActiveInterval;
@@ -66,6 +68,7 @@ public final class CanonicalRecordingSession
     private String transitionedSessionId;
     private RecordingState transitionedState;
     private boolean acceptingSamples;
+    private boolean acceptingCompletionSamples;
     private boolean closed;
     private AutoCloseable completedObserver;
     private Executor completedExecutor;
@@ -130,6 +133,12 @@ public final class CanonicalRecordingSession
         }
         latestSnapshot = Objects.requireNonNull(snapshot);
         RecordingState state = snapshot.getState();
+        if (state != RecordingState.RECORDING) {
+            acceptingSamples = false;
+        }
+        if (state != RecordingState.STOPPING) {
+            acceptingCompletionSamples = false;
+        }
         if (snapshot.getActivityId() > 0
                 && (state == RecordingState.RECORDING
                 || state == RecordingState.PAUSED
@@ -143,6 +152,7 @@ public final class CanonicalRecordingSession
                 session = journal.recordSnapshot(session.sessionId, snapshot);
                 if (state == RecordingState.RECORDING) {
                     acceptingSamples = true;
+                    acceptingCompletionSamples = false;
                 }
                 submitTransitionIfNeeded(session, snapshot);
             } catch (RuntimeException error) {
@@ -152,6 +162,7 @@ public final class CanonicalRecordingSession
                 || state == RecordingState.EXPORT_QUEUED
                 || state == RecordingState.IDLE) {
             acceptingSamples = false;
+            acceptingCompletionSamples = false;
             CanonicalSessionJournal.State session = journal.read();
             if (session != null && session.terminal) {
                 try {
@@ -168,7 +179,12 @@ public final class CanonicalRecordingSession
     }
 
     public synchronized void onAcceptedSample(MeasurementSample<?> sample) {
-        if (closed || !acceptingSamples || !measurementMapper.supports(sample.getMetric())) {
+        boolean recordingSample = acceptingSamples;
+        boolean completionSample = acceptingCompletionSamples
+                && sample.getProvenance() == MeasurementProvenance.HEALTH_SERVICES;
+        if (closed
+                || (!recordingSample && !completionSample)
+                || !measurementMapper.supports(sample.getMetric())) {
             return;
         }
         CanonicalSessionJournal.State session = journal.read();
@@ -210,7 +226,11 @@ public final class CanonicalRecordingSession
                             canonical)
                     .whenComplete((ignored, error) -> {
                         if (error != null) {
-                            fatal("Canonical sample persistence failed", unwrap(error));
+                            Throwable failure = unwrap(error);
+                            if (!recordingSample
+                                    || !isLatePausedSampleRejection(failure)) {
+                                fatal("Canonical sample persistence failed", failure);
+                            }
                         }
                     });
         } catch (RuntimeException error) {
@@ -286,6 +306,8 @@ public final class CanonicalRecordingSession
             RecordingSnapshot finalSnapshot,
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
+        acceptingSamples = false;
+        acceptingCompletionSamples = false;
         if (closed) {
             callback.onFailure(new IllegalStateException(
                     "Canonical recording session is closed"));
@@ -350,6 +372,7 @@ public final class CanonicalRecordingSession
                             repositorySession.getCompletionTransferId())
                             && Long.valueOf(revision).equals(
                             repositorySession.getCompletionRevision())) {
+                        allowCompletionSamples();
                         callback.onComplete();
                         return;
                     }
@@ -361,6 +384,7 @@ public final class CanonicalRecordingSession
                                     System.currentTimeMillis())
                             .whenComplete((ignored, reserveError) -> {
                                 if (reserveError == null) {
+                                    allowCompletionSamples();
                                     callback.onComplete();
                                 } else {
                                     callback.onFailure(unwrap(reserveError));
@@ -374,6 +398,7 @@ public final class CanonicalRecordingSession
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
         acceptingSamples = false;
+        acceptingCompletionSamples = false;
         latestSnapshot = Objects.requireNonNull(finalSnapshot);
         CanonicalSessionJournal.State session = journal.read();
         if (closed || session == null) {
@@ -443,6 +468,7 @@ public final class CanonicalRecordingSession
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
         acceptingSamples = false;
+        acceptingCompletionSamples = false;
         latestSnapshot = Objects.requireNonNull(finalSnapshot);
         CanonicalSessionJournal.State session = journal.read();
         if (closed || session == null) {
@@ -819,6 +845,12 @@ public final class CanonicalRecordingSession
         }
     }
 
+    private synchronized void allowCompletionSamples() {
+        if (!closed && latestSnapshot.getState() == RecordingState.STOPPING) {
+            acceptingCompletionSamples = true;
+        }
+    }
+
     private static String bootId(int bootCount) {
         return bootCount < 0 ? null : "android-boot-count-" + bootCount;
     }
@@ -829,6 +861,12 @@ public final class CanonicalRecordingSession
             current = current.getCause();
         }
         return current;
+    }
+
+    private static boolean isLatePausedSampleRejection(Throwable error) {
+        return error instanceof CanonicalContractException
+                && "SESSION_NOT_WRITABLE".equals(
+                ((CanonicalContractException) error).getCode());
     }
 
     private static long saturatedAdd(long left, long right) {

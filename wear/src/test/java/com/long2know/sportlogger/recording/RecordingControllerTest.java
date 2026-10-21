@@ -292,6 +292,50 @@ public class RecordingControllerTest {
     }
 
     @Test
+    public void recoveryClearsLegacyPausedLateSampleErrorBeforeResume()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        journal.state = new PersistentRecording(
+                RecordingState.INTERRUPTED,
+                1,
+                ActivityType.ACTIVITY_TYPE_RUNNING,
+                RecordingAuthority.CANONICAL,
+                1_000L,
+                0L,
+                0L,
+                0L,
+                500L,
+                700L,
+                0L,
+                -1,
+                new RecordingError(
+                        RecordingError.Code.STORAGE,
+                        "Canonical sample persistence failed: "
+                                + "Samples can only be appended while recording or ending"));
+        FakeStore store = new FakeStore();
+        store.addActivity(1, 1_000L);
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = canonicalController(
+                journal,
+                store,
+                new FakeLapRecorder(),
+                worker(),
+                new MutableClock(2_000L),
+                snapshots);
+
+        controller.recover();
+        RecordingSnapshot recovered =
+                snapshots.awaitState(RecordingState.INTERRUPTED);
+        assertEquals(null, recovered.getError());
+
+        controller.resume();
+        RecordingSnapshot resumed =
+                snapshots.awaitState(RecordingState.RECORDING);
+        assertEquals(null, resumed.getError());
+        controller.closeAsync();
+    }
+
+    @Test
     public void selectedActivityTypeIsDurableAndAuthoritativeAfterRecovery()
             throws Exception {
         InMemoryJournal journal = new InMemoryJournal();
