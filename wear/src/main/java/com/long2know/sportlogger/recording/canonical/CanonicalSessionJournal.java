@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.long2know.sportlogger.recording.RecordingSnapshot;
+import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
 import com.long2know.utilities.contract.CanonicalIds;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,12 +20,14 @@ final class CanonicalSessionJournal {
     private static final String KEY_SESSION_ID = "session_id";
     private static final String KEY_LEASE = "lease";
     private static final String KEY_ACTIVITY_ID = "activity_id";
+    private static final String KEY_ACTIVITY_TYPE = "activity_type";
     private static final String KEY_STARTED_AT = "started_at";
     private static final String KEY_TIME_ZONE = "time_zone";
     private static final String KEY_UTC_OFFSET = "utc_offset";
     private static final String KEY_BOOT_ID = "boot_id";
     private static final String KEY_MONOTONIC_ANCHOR = "monotonic_anchor";
     private static final String KEY_ACCUMULATED_AT_START = "accumulated_at_start";
+    private static final String KEY_ELAPSED_AT_START = "elapsed_at_start";
     private static final String KEY_NEXT_SEQUENCE = "next_sequence";
     private static final String KEY_LIFECYCLE = "lifecycle";
     private static final String KEY_OPEN_INTERVAL_ELAPSED = "open_interval_elapsed";
@@ -48,6 +52,10 @@ final class CanonicalSessionJournal {
             State existing = readLocked();
             if (existing != null) {
                 if (existing.activityId == snapshot.getActivityId()) {
+                    if (existing.activityType != snapshot.getActivityType()) {
+                        throw new IllegalStateException(
+                                "Canonical activity type conflicts with recovery state");
+                    }
                     return existing;
                 }
                 if (!existing.terminal) {
@@ -73,6 +81,7 @@ final class CanonicalSessionJournal {
                     .putString(KEY_SESSION_ID, CanonicalIds.newSessionId())
                     .putLong(KEY_LEASE, leaseCounter)
                     .putInt(KEY_ACTIVITY_ID, snapshot.getActivityId())
+                    .putString(KEY_ACTIVITY_TYPE, snapshot.getActivityType().name())
                     .putLong(KEY_STARTED_AT, startedAt)
                     .putString(KEY_TIME_ZONE, timeZone.getID())
                     .putInt(
@@ -83,6 +92,9 @@ final class CanonicalSessionJournal {
                             KEY_MONOTONIC_ANCHOR,
                             snapshot.getElapsedSinceElapsedRealtimeMillis())
                     .putLong(KEY_ACCUMULATED_AT_START, snapshot.getDurationMillis())
+                    .putLong(
+                            KEY_ELAPSED_AT_START,
+                            snapshot.getElapsedDurationMillis())
                     .putLong(KEY_NEXT_SEQUENCE, 1L)
                     .putString(KEY_LIFECYCLE, snapshot.getState().name())
                     .putString(KEY_INTERVALS, intervals)
@@ -242,6 +254,7 @@ final class CanonicalSessionJournal {
                 sessionId,
                 preferences.getLong(KEY_LEASE, 0L),
                 preferences.getInt(KEY_ACTIVITY_ID, 0),
+                readActivityType(),
                 preferences.getLong(KEY_STARTED_AT, 0L),
                 preferences.getString(KEY_TIME_ZONE, null),
                 preferences.getInt(KEY_UTC_OFFSET, 0),
@@ -250,6 +263,7 @@ final class CanonicalSessionJournal {
                         ? preferences.getLong(KEY_MONOTONIC_ANCHOR, 0L)
                         : null,
                 preferences.getLong(KEY_ACCUMULATED_AT_START, 0L),
+                preferences.getLong(KEY_ELAPSED_AT_START, 0L),
                 preferences.getLong(KEY_NEXT_SEQUENCE, 1L),
                 preferences.getString(KEY_LIFECYCLE, "RECORDING"),
                 preferences.contains(KEY_OPEN_INTERVAL_ELAPSED)
@@ -287,12 +301,14 @@ final class CanonicalSessionJournal {
                 KEY_SESSION_ID,
                 KEY_LEASE,
                 KEY_ACTIVITY_ID,
+                KEY_ACTIVITY_TYPE,
                 KEY_STARTED_AT,
                 KEY_TIME_ZONE,
                 KEY_UTC_OFFSET,
                 KEY_BOOT_ID,
                 KEY_MONOTONIC_ANCHOR,
                 KEY_ACCUMULATED_AT_START,
+                KEY_ELAPSED_AT_START,
                 KEY_NEXT_SEQUENCE,
                 KEY_LIFECYCLE,
                 KEY_OPEN_INTERVAL_ELAPSED,
@@ -312,6 +328,20 @@ final class CanonicalSessionJournal {
         if (!editor.commit()) {
             throw new IllegalStateException(message);
         }
+    }
+
+    private ActivityType readActivityType() {
+        ActivityType activityType;
+        try {
+            activityType = ActivityType.valueOf(preferences.getString(
+                    KEY_ACTIVITY_TYPE,
+                    ActivityType.ACTIVITY_TYPE_RUNNING.name()));
+        } catch (RuntimeException error) {
+            throw new IllegalStateException(
+                    "Canonical activity type is corrupt",
+                    error);
+        }
+        return RecordingActivityTypePolicy.requireSupported(activityType);
     }
 
     private static String encodeIntervals(List<Interval> intervals) {
@@ -357,12 +387,14 @@ final class CanonicalSessionJournal {
         final String sessionId;
         final long leaseToken;
         final int activityId;
+        final ActivityType activityType;
         final long startedAtUtcMs;
         final String timeZoneId;
         final int utcOffsetMinutes;
         final String bootId;
         final Long monotonicAnchorMs;
         final long accumulatedActiveAtStartMs;
+        final long elapsedAtStartMs;
         final long nextSequence;
         final String lifecycle;
         final Long openIntervalElapsed;
@@ -378,12 +410,14 @@ final class CanonicalSessionJournal {
                 String sessionId,
                 long leaseToken,
                 int activityId,
+                ActivityType activityType,
                 long startedAtUtcMs,
                 String timeZoneId,
                 int utcOffsetMinutes,
                 String bootId,
                 Long monotonicAnchorMs,
                 long accumulatedActiveAtStartMs,
+                long elapsedAtStartMs,
                 long nextSequence,
                 String lifecycle,
                 Long openIntervalElapsed,
@@ -397,12 +431,14 @@ final class CanonicalSessionJournal {
             this.sessionId = sessionId;
             this.leaseToken = leaseToken;
             this.activityId = activityId;
+            this.activityType = activityType;
             this.startedAtUtcMs = startedAtUtcMs;
             this.timeZoneId = timeZoneId;
             this.utcOffsetMinutes = utcOffsetMinutes;
             this.bootId = bootId;
             this.monotonicAnchorMs = monotonicAnchorMs;
             this.accumulatedActiveAtStartMs = accumulatedActiveAtStartMs;
+            this.elapsedAtStartMs = elapsedAtStartMs;
             this.nextSequence = nextSequence;
             this.lifecycle = lifecycle;
             this.openIntervalElapsed = openIntervalElapsed;

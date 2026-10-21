@@ -3,21 +3,26 @@ package com.long2know.sportlogger.recording.canonical;
 import android.content.Context;
 import android.os.SystemClock;
 
+import androidx.annotation.Nullable;
+
 import com.long2know.sportlogger.acquisition.ExerciseMetric;
 import com.long2know.sportlogger.acquisition.MeasurementCapability;
+import com.long2know.sportlogger.acquisition.MeasurementProvenance;
 import com.long2know.sportlogger.acquisition.MeasurementSample;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingError;
+import com.long2know.sportlogger.recording.RecordingLapRecorder;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.sync.WatchSyncFinishHook;
+import com.long2know.utilities.contract.CanonicalContractException;
 import com.long2know.utilities.contract.CanonicalIds;
 import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.ActiveInterval;
 import com.long2know.utilities.contract.proto.ActivityRecord;
 import com.long2know.utilities.contract.proto.ActivitySummary;
-import com.long2know.utilities.contract.proto.ActivityType;
 import com.long2know.utilities.contract.proto.DoubleMeasurement;
 import com.long2know.utilities.contract.proto.LongMeasurement;
 import com.long2know.utilities.contract.proto.MeasurementStatus;
@@ -27,15 +32,25 @@ import com.long2know.utilities.contract.proto.TombstoneOrigin;
 import com.long2know.utilities.contract.proto.TombstoneRecord;
 
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
-public final class CanonicalRecordingSession implements AutoCloseable {
+public final class CanonicalRecordingSession
+        implements AutoCloseable, RecordingLapRecorder {
     public interface Listener {
         void onFatalError(String message, Throwable error);
+    }
+
+    public interface CompletedListener {
+        void onChanged(@Nullable CompletedRecordingSnapshot snapshot);
+
+        void onFailure(Throwable error);
     }
 
     private final Context context;
@@ -53,7 +68,11 @@ public final class CanonicalRecordingSession implements AutoCloseable {
     private String transitionedSessionId;
     private RecordingState transitionedState;
     private boolean acceptingSamples;
+    private boolean acceptingCompletionSamples;
     private boolean closed;
+    private AutoCloseable completedObserver;
+    private Executor completedExecutor;
+    private CompletedListener completedListener;
 
     public CanonicalRecordingSession(Context context, Listener listener) {
         this(
@@ -82,12 +101,44 @@ public final class CanonicalRecordingSession implements AutoCloseable {
         capabilities = Collections.unmodifiableMap(copy);
     }
 
+    public synchronized void observeLatestCompleted(
+            Executor executor,
+            CompletedListener listener) {
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(listener);
+        closeCompletedObserver();
+        completedExecutor = executor;
+        completedListener = listener;
+        completedObserver = repository.observeChanges(
+                executor,
+                this::refreshLatestCompleted);
+        refreshLatestCompleted();
+    }
+
+    public CompletableFuture<List<CompletedRecordingSnapshot>> recentCompleted(
+            int limit) {
+        return repository.recentCompleted(limit).thenApply(completed -> {
+            List<CompletedRecordingSnapshot> snapshots =
+                    new ArrayList<>(completed.size());
+            for (WatchActivityRepository.CompletedActivity activity : completed) {
+                snapshots.add(completedSnapshot(activity));
+            }
+            return Collections.unmodifiableList(snapshots);
+        });
+    }
+
     public synchronized void onRecordingSnapshot(RecordingSnapshot snapshot) {
         if (closed) {
             return;
         }
         latestSnapshot = Objects.requireNonNull(snapshot);
         RecordingState state = snapshot.getState();
+        if (state != RecordingState.RECORDING) {
+            acceptingSamples = false;
+        }
+        if (state != RecordingState.STOPPING) {
+            acceptingCompletionSamples = false;
+        }
         if (snapshot.getActivityId() > 0
                 && (state == RecordingState.RECORDING
                 || state == RecordingState.PAUSED
@@ -101,6 +152,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                 session = journal.recordSnapshot(session.sessionId, snapshot);
                 if (state == RecordingState.RECORDING) {
                     acceptingSamples = true;
+                    acceptingCompletionSamples = false;
                 }
                 submitTransitionIfNeeded(session, snapshot);
             } catch (RuntimeException error) {
@@ -110,6 +162,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                 || state == RecordingState.EXPORT_QUEUED
                 || state == RecordingState.IDLE) {
             acceptingSamples = false;
+            acceptingCompletionSamples = false;
             CanonicalSessionJournal.State session = journal.read();
             if (session != null && session.terminal) {
                 try {
@@ -126,7 +179,12 @@ public final class CanonicalRecordingSession implements AutoCloseable {
     }
 
     public synchronized void onAcceptedSample(MeasurementSample<?> sample) {
-        if (closed || !acceptingSamples || !measurementMapper.supports(sample.getMetric())) {
+        boolean recordingSample = acceptingSamples;
+        boolean completionSample = acceptingCompletionSamples
+                && sample.getProvenance() == MeasurementProvenance.HEALTH_SERVICES;
+        if (closed
+                || (!recordingSample && !completionSample)
+                || !measurementMapper.supports(sample.getMetric())) {
             return;
         }
         CanonicalSessionJournal.State session = journal.read();
@@ -168,7 +226,11 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                             canonical)
                     .whenComplete((ignored, error) -> {
                         if (error != null) {
-                            fatal("Canonical sample persistence failed", unwrap(error));
+                            Throwable failure = unwrap(error);
+                            if (!recordingSample
+                                    || !isLatePausedSampleRejection(failure)) {
+                                fatal("Canonical sample persistence failed", failure);
+                            }
                         }
                     });
         } catch (RuntimeException error) {
@@ -176,10 +238,76 @@ public final class CanonicalRecordingSession implements AutoCloseable {
         }
     }
 
+    @Override
+    public synchronized void recordManualLap(
+            RecordingLapRecorder.Boundary boundary,
+            RecordingLapRecorder.Callback callback) {
+        Objects.requireNonNull(boundary);
+        Objects.requireNonNull(callback);
+        CanonicalSessionJournal.State session = journal.read();
+        if (closed
+                || session == null
+                || session.terminal
+                || session.activityId != boundary.getActivityId()) {
+            callback.onFailure(new IllegalStateException(
+                    "Canonical manual lap has no active session"));
+            return;
+        }
+        repository.recordManualLap(
+                        session.sessionId,
+                        session.leaseToken,
+                        boundary.getWallTimeUtcMillis(),
+                        boundary.getElapsedDurationMillis(),
+                        boundary.getActiveDurationMillis())
+                .whenComplete((result, error) -> {
+                    if (error != null) {
+                        callback.onFailure(unwrap(error));
+                        return;
+                    }
+                    WatchActivityRepository.LapSnapshot closedLap =
+                            result.getClosedLap();
+                    callback.onPersisted(new RecordingLapRecorder.LapState(
+                            result.getOpenedLap().getLapIndex(),
+                            closedLap.getEndElapsedDurationMs()
+                                    - closedLap.getStartElapsedDurationMs(),
+                            closedLap.getEndActiveDurationMs()
+                                    - closedLap.getStartActiveDurationMs()));
+                });
+    }
+
+    @Override
+    public synchronized void recover(
+            int activityId,
+            RecordingLapRecorder.Callback callback) {
+        Objects.requireNonNull(callback);
+        CanonicalSessionJournal.State session = journal.read();
+        if (closed
+                || session == null
+                || session.terminal
+                || session.activityId != activityId) {
+            callback.onFailure(new IllegalStateException(
+                    "Canonical lap recovery has no active session"));
+            return;
+        }
+        repository.session(session.sessionId)
+                .whenComplete((snapshot, error) -> {
+                    if (error != null) {
+                        callback.onFailure(unwrap(error));
+                        return;
+                    }
+                    callback.onPersisted(new RecordingLapRecorder.LapState(
+                            snapshot.getCurrentLapIndex(),
+                            snapshot.getLastLapElapsedDurationMs(),
+                            snapshot.getLastLapActiveDurationMs()));
+                });
+    }
+
     public synchronized void reserveCompletion(
             RecordingSnapshot finalSnapshot,
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
+        acceptingSamples = false;
+        acceptingCompletionSamples = false;
         if (closed) {
             callback.onFailure(new IllegalStateException(
                     "Canonical recording session is closed"));
@@ -244,6 +372,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                             repositorySession.getCompletionTransferId())
                             && Long.valueOf(revision).equals(
                             repositorySession.getCompletionRevision())) {
+                        allowCompletionSamples();
                         callback.onComplete();
                         return;
                     }
@@ -255,6 +384,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                                     System.currentTimeMillis())
                             .whenComplete((ignored, reserveError) -> {
                                 if (reserveError == null) {
+                                    allowCompletionSamples();
                                     callback.onComplete();
                                 } else {
                                     callback.onFailure(unwrap(reserveError));
@@ -268,6 +398,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
         acceptingSamples = false;
+        acceptingCompletionSamples = false;
         latestSnapshot = Objects.requireNonNull(finalSnapshot);
         CanonicalSessionJournal.State session = journal.read();
         if (closed || session == null) {
@@ -325,6 +456,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                                                         hookError);
                                                 WatchSyncFinishHook.requestRetry(context);
                                             }
+                                            refreshLatestCompleted();
                                             callback.onComplete();
                                         });
                             });
@@ -336,6 +468,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
             RecordingSessionTerminator.Callback callback) {
         Objects.requireNonNull(callback);
         acceptingSamples = false;
+        acceptingCompletionSamples = false;
         latestSnapshot = Objects.requireNonNull(finalSnapshot);
         CanonicalSessionJournal.State session = journal.read();
         if (closed || session == null) {
@@ -402,6 +535,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
             return;
         }
         closed = true;
+        closeCompletedObserver();
         repository.close();
     }
 
@@ -415,9 +549,10 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                                 session.sessionId,
                                 session.leaseToken,
                                 session.startedAtUtcMs)
-                        .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                .activityType(session.activityType)
                         .timeZone(session.timeZoneId, session.utcOffsetMinutes)
-                        .accumulatedActiveMs(session.accumulatedActiveAtStartMs);
+                .accumulatedActiveMs(session.accumulatedActiveAtStartMs)
+                .initialElapsedDurationMs(session.elapsedAtStartMs);
         if (session.bootId != null && session.monotonicAnchorMs != null) {
             request.monotonicAnchor(
                     session.bootId,
@@ -488,7 +623,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
         ActivityRecord.Builder activity = ActivityRecord.newBuilder()
                 .setSessionId(session.sessionId)
                 .setWatchRevision(session.completionRevision)
-                .setActivityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                .setActivityType(session.activityType)
                 .setStartTimeUtcMs(session.startedAtUtcMs)
                 .setEndTimeUtcMs(saturatedAdd(session.startedAtUtcMs, elapsed))
                 .setElapsedDurationMs(elapsed)
@@ -651,11 +786,68 @@ public final class CanonicalRecordingSession implements AutoCloseable {
         }
     }
 
+    private void refreshLatestCompleted() {
+        repository.latestCompleted().whenComplete((completed, error) -> {
+            Executor executor;
+            CompletedListener listener;
+            synchronized (this) {
+                if (closed
+                        || completedExecutor == null
+                        || completedListener == null) {
+                    return;
+                }
+                executor = completedExecutor;
+                listener = completedListener;
+            }
+            executor.execute(() -> {
+                if (error != null) {
+                    listener.onFailure(unwrap(error));
+                } else {
+                    listener.onChanged(
+                            completed == null
+                                    ? null
+                                    : completedSnapshot(completed));
+                }
+            });
+        });
+    }
+
+    private static CompletedRecordingSnapshot completedSnapshot(
+            WatchActivityRepository.CompletedActivity completed) {
+        WatchActivityRepository.OutboxItem outbox = completed.getOutbox();
+        return new CompletedRecordingSnapshot(
+                completed.getActivity(),
+                outbox.getTransferId(),
+                outbox.getState(),
+                outbox.getAttemptCount(),
+                outbox.getCommittedAtUtcMs());
+    }
+
+    private void closeCompletedObserver() {
+        AutoCloseable observer = completedObserver;
+        completedObserver = null;
+        completedExecutor = null;
+        completedListener = null;
+        if (observer != null) {
+            try {
+                observer.close();
+            } catch (Exception error) {
+                fatal("Canonical completion observer could not be closed", error);
+            }
+        }
+    }
+
     private void markTerminalBestEffort(String sessionId) {
         try {
             journal.markTerminal(sessionId);
         } catch (RuntimeException error) {
             fatal("Canonical terminal state was not mirrored to recovery state", error);
+        }
+    }
+
+    private synchronized void allowCompletionSamples() {
+        if (!closed && latestSnapshot.getState() == RecordingState.STOPPING) {
+            acceptingCompletionSamples = true;
         }
     }
 
@@ -669,6 +861,12 @@ public final class CanonicalRecordingSession implements AutoCloseable {
             current = current.getCause();
         }
         return current;
+    }
+
+    private static boolean isLatePausedSampleRejection(Throwable error) {
+        return error instanceof CanonicalContractException
+                && "SESSION_NOT_WRITABLE".equals(
+                ((CanonicalContractException) error).getCode());
     }
 
     private static long saturatedAdd(long left, long right) {

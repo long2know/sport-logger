@@ -1,8 +1,10 @@
 package com.long2know.sportlogger.recording;
 
 import com.long2know.utilities.models.SportActivity;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -12,6 +14,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class RecordingController {
+    private static final String LEGACY_PAUSED_LATE_SAMPLE_ERROR =
+            "Canonical sample persistence failed: "
+                    + "Samples can only be appended while recording or ending";
+
     private enum ExportResult {
         QUEUED,
         ACKNOWLEDGED,
@@ -39,9 +45,12 @@ public final class RecordingController {
     }
 
     private final RecordingJournal journal;
-    private final RecordingStore store;
+    private final RecordingStore legacyStore;
+    private final RecordingStore canonicalStore;
     private final RecordingExporter exporter;
     private final RecordingSessionTerminator sessionTerminator;
+    private final RecordingLapRecorder lapRecorder;
+    private final RecordingAuthority newRecordingAuthority;
     private final ScheduledExecutorService worker;
     private final Executor callbackExecutor;
     private final Clock clock;
@@ -57,6 +66,8 @@ public final class RecordingController {
     private ScheduledFuture<?> retryFuture;
     private boolean exportInFlight;
     private boolean terminationInFlight;
+    private boolean lapInFlight;
+    private long lapToken;
     private long exportToken;
     private long terminationToken;
     private int endedSessionActivityId;
@@ -76,8 +87,11 @@ public final class RecordingController {
         this(
                 journal,
                 store,
+                store,
                 exporter,
                 RecordingSessionTerminator.NO_OP,
+                RecordingLapRecorder.UNAVAILABLE,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 worker,
                 callbackExecutor,
                 clock,
@@ -95,10 +109,68 @@ public final class RecordingController {
             Clock clock,
             Listener listener,
             RetryPolicy retryPolicy) {
+        this(
+                journal,
+                store,
+                store,
+                exporter,
+                sessionTerminator,
+                RecordingLapRecorder.UNAVAILABLE,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                worker,
+                callbackExecutor,
+                clock,
+                listener,
+                retryPolicy);
+    }
+
+    public RecordingController(
+            RecordingJournal journal,
+            RecordingStore legacyStore,
+            RecordingStore canonicalStore,
+            RecordingExporter exporter,
+            RecordingSessionTerminator sessionTerminator,
+            RecordingAuthority newRecordingAuthority,
+            ScheduledExecutorService worker,
+            Executor callbackExecutor,
+            Clock clock,
+            Listener listener,
+            RetryPolicy retryPolicy) {
+        this(
+                journal,
+                legacyStore,
+                canonicalStore,
+                exporter,
+                sessionTerminator,
+                RecordingLapRecorder.UNAVAILABLE,
+                newRecordingAuthority,
+                worker,
+                callbackExecutor,
+                clock,
+                listener,
+                retryPolicy);
+    }
+
+    public RecordingController(
+            RecordingJournal journal,
+            RecordingStore legacyStore,
+            RecordingStore canonicalStore,
+            RecordingExporter exporter,
+            RecordingSessionTerminator sessionTerminator,
+            RecordingLapRecorder lapRecorder,
+            RecordingAuthority newRecordingAuthority,
+            ScheduledExecutorService worker,
+            Executor callbackExecutor,
+            Clock clock,
+            Listener listener,
+            RetryPolicy retryPolicy) {
         this.journal = Objects.requireNonNull(journal);
-        this.store = Objects.requireNonNull(store);
+        this.legacyStore = Objects.requireNonNull(legacyStore);
+        this.canonicalStore = Objects.requireNonNull(canonicalStore);
         this.exporter = Objects.requireNonNull(exporter);
         this.sessionTerminator = Objects.requireNonNull(sessionTerminator);
+        this.lapRecorder = Objects.requireNonNull(lapRecorder);
+        this.newRecordingAuthority = Objects.requireNonNull(newRecordingAuthority);
         this.worker = Objects.requireNonNull(worker);
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor);
         this.clock = Objects.requireNonNull(clock);
@@ -111,7 +183,13 @@ public final class RecordingController {
     }
 
     public boolean start() {
-        return submit(this::startInternal);
+        return start(ActivityType.ACTIVITY_TYPE_RUNNING);
+    }
+
+    public boolean start(ActivityType activityType) {
+        ActivityType supported =
+                RecordingActivityTypePolicy.requireSupported(activityType);
+        return submit(() -> startInternal(supported));
     }
 
     public boolean pause() {
@@ -133,6 +211,42 @@ public final class RecordingController {
     public boolean interrupt(RecordingError error) {
         Objects.requireNonNull(error);
         return submit(() -> interruptInternal(error));
+    }
+
+    public CompletableFuture<ManualLapResult> recordManualLap() {
+        CompletableFuture<ManualLapResult> result = new CompletableFuture<>();
+        if (closed.get()) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording controller is closed"));
+            return result;
+        }
+        try {
+            worker.execute(() -> {
+                if (closed.get() || !ensureLease() || !journal.isCurrent(lease)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Recording ownership is unavailable"));
+                    return;
+                }
+                recordManualLapInternal(result);
+            });
+        } catch (RejectedExecutionException error) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording worker is unavailable"));
+        }
+        return result;
+    }
+
+    public boolean restoreLapState(
+            int activityId,
+            RecordingLapRecorder.LapState lapState) {
+        Objects.requireNonNull(lapState);
+        return submit(() -> restoreLapStateInternal(activityId, lapState));
     }
 
     public RecordingSnapshot getSnapshot() {
@@ -204,6 +318,14 @@ public final class RecordingController {
                     failure(RecordingError.Code.RECOVERY, "Recording recovery state is unreadable", error));
             publish(current);
             return;
+        }
+
+        if (isLegacyPausedLateSampleError(current.getError())) {
+            PersistentRecording recovered = current.withError(null);
+            if (!persist(recovered)) {
+                return;
+            }
+            current = recovered;
         }
 
         if ((current.getState() == RecordingState.RECORDING
@@ -282,7 +404,7 @@ public final class RecordingController {
         }
     }
 
-    private void startInternal() {
+    private void startInternal(ActivityType activityType) {
         RecordingState previousState = current.getState();
         boolean replacingQueued = previousState == RecordingState.EXPORT_QUEUED;
         if (previousState != RecordingState.IDLE && !replacingQueued) {
@@ -297,14 +419,28 @@ public final class RecordingController {
             exportToken++;
         }
         terminationInFlight = false;
+        lapInFlight = false;
+        lapToken++;
         terminationToken++;
         endedSessionActivityId = 0;
         finalSampleActivityId = 0;
-        publish(new RecordingSnapshot(RecordingState.STARTING, 0, 0L, null));
+        publish(new RecordingSnapshot(
+                RecordingState.STARTING,
+                0,
+                activityType,
+                0L,
+                0L,
+                0L,
+                0L,
+                0L,
+                -1,
+                null));
         long now = clock.currentTimeMillis();
+        RecordingAuthority authority = newRecordingAuthority;
+        RecordingStore startStore = storeFor(authority);
         int activityId;
         try {
-            activityId = store.createActivity(now);
+            activityId = startStore.createActivity(now);
         } catch (Exception error) {
             publish(new RecordingSnapshot(
                     current.getState(),
@@ -321,6 +457,8 @@ public final class RecordingController {
         PersistentRecording started = new PersistentRecording(
                 RecordingState.RECORDING,
                 activityId,
+                activityType,
+                authority,
                 now,
                 now,
                 elapsedNow,
@@ -332,7 +470,7 @@ public final class RecordingController {
                 null);
         if (!persist(started)) {
             try {
-                store.deleteActivity(activityId);
+                startStore.deleteActivity(activityId);
             } catch (Exception rollbackError) {
                 publish(new RecordingSnapshot(
                         current.getState(),
@@ -508,6 +646,152 @@ public final class RecordingController {
         publish(current);
     }
 
+    private void recordManualLapInternal(
+            CompletableFuture<ManualLapResult> result) {
+        if (current.getState() != RecordingState.RECORDING) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_NOT_RECORDING,
+                    snapshot(current, current.getError()),
+                    "Manual laps require an active recording"));
+            return;
+        }
+        if (current.getAuthority() != RecordingAuthority.CANONICAL) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_LEGACY_AUTHORITY,
+                    snapshot(current, current.getError()),
+                    "Manual laps require canonical recording authority"));
+            return;
+        }
+        if (lapInFlight) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_BUSY,
+                    snapshot(current, current.getError()),
+                    "A manual lap is already being persisted"));
+            return;
+        }
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long activeDuration =
+                current.durationAt(wallNow, elapsedNow, clock.bootCount());
+        long elapsedDuration =
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount());
+        RecordingLapRecorder.Boundary boundary =
+                new RecordingLapRecorder.Boundary(
+                        current.getActivityId(),
+                        endTimestamp(elapsedDuration),
+                        elapsedDuration,
+                        activeDuration);
+        lapInFlight = true;
+        long operationToken = ++lapToken;
+        int activityId = current.getActivityId();
+        try {
+            lapRecorder.recordManualLap(
+                    boundary,
+                    new RecordingLapRecorder.Callback() {
+                        @Override
+                        public void onPersisted(RecordingLapRecorder.LapState lapState) {
+                            handleLapCallback(
+                                    activityId,
+                                    operationToken,
+                                    lapState,
+                                    null,
+                                    result);
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            handleLapCallback(
+                                    activityId,
+                                    operationToken,
+                                    null,
+                                    error,
+                                    result);
+                        }
+                    });
+        } catch (RuntimeException error) {
+            handleLapCallback(
+                    activityId,
+                    operationToken,
+                    null,
+                    error,
+                    result);
+        }
+    }
+
+    private void handleLapCallback(
+            int activityId,
+            long operationToken,
+            RecordingLapRecorder.LapState lapState,
+            Throwable error,
+            CompletableFuture<ManualLapResult> result) {
+        try {
+            worker.execute(() -> {
+                if (operationToken != lapToken || !lapInFlight) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap callback is stale"));
+                    return;
+                }
+                lapInFlight = false;
+                if (closed.get()
+                        || current.getActivityId() != activityId
+                        || !journal.isCurrent(lease)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap callback is stale"));
+                    return;
+                }
+                if (error != null) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot(current, current.getError()),
+                            message(error)));
+                    return;
+                }
+                PersistentRecording updated = current.withLapState(
+                        lapState.getCurrentLapIndex(),
+                        lapState.getLastLapElapsedDurationMillis(),
+                        lapState.getLastLapActiveDurationMillis());
+                if (!persist(updated)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap state was not persisted"));
+                    return;
+                }
+                current = updated;
+                publish(current);
+                result.complete(ManualLapResult.accepted(
+                        snapshot(current, current.getError())));
+            });
+        } catch (RejectedExecutionException rejected) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording worker is unavailable"));
+        }
+    }
+
+    private void restoreLapStateInternal(
+            int activityId,
+            RecordingLapRecorder.LapState lapState) {
+        if (current.getActivityId() != activityId
+                || current.getAuthority() != RecordingAuthority.CANONICAL
+                || current.getState() == RecordingState.IDLE) {
+            return;
+        }
+        PersistentRecording restored = current.withLapState(
+                lapState.getCurrentLapIndex(),
+                lapState.getLastLapElapsedDurationMillis(),
+                lapState.getLastLapActiveDurationMillis());
+        if (persist(restored)) {
+            current = restored;
+            publish(current);
+        }
+    }
+
     private void scheduleSamples() {
         cancel(sampleFuture);
         sampleFuture = worker.scheduleWithFixedDelay(this::writeSample, 0L, 1L, TimeUnit.SECONDS);
@@ -520,7 +804,7 @@ public final class RecordingController {
             return;
         }
         try {
-            store.writeSample(current.getActivityId());
+            storeFor(current.getAuthority()).writeSample(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -550,21 +834,28 @@ public final class RecordingController {
             return;
         }
         try {
+            RecordingStore recordingStore = storeFor(current.getAuthority());
             if (current.getState() == RecordingState.STOPPING) {
                 if (endedSessionActivityId != current.getActivityId()) {
                     requestSessionEnd(true);
                     return;
                 }
                 if (finalSampleActivityId != current.getActivityId()) {
-                    store.writeSample(current.getActivityId());
+                    recordingStore.writeSample(current.getActivityId());
                     finalSampleActivityId = current.getActivityId();
                 }
-                store.finishActivity(current.getActivityId(), current.getEndedAtMillis());
+                recordingStore.finishActivity(
+                        current.getActivityId(),
+                        current.getEndedAtMillis());
                 if (closed.get() || !journal.isCurrent(lease)) {
                     return;
                 }
+                RecordingState completedState =
+                        current.getAuthority() == RecordingAuthority.CANONICAL
+                                ? RecordingState.EXPORT_QUEUED
+                                : RecordingState.EXPORT_PENDING;
                 PersistentRecording exportPending = current.withState(
-                        RecordingState.EXPORT_PENDING,
+                        completedState,
                         0L,
                         0L,
                         0L,
@@ -580,11 +871,32 @@ public final class RecordingController {
                 current = exportPending;
                 publish(current);
             }
+            if (current.getAuthority() == RecordingAuthority.CANONICAL) {
+                if (current.getState() == RecordingState.EXPORT_PENDING) {
+                    PersistentRecording queued = current.withState(
+                            RecordingState.EXPORT_QUEUED,
+                            0L,
+                            0L,
+                            0L,
+                            current.getAccumulatedMillis(),
+                            current.getAccumulatedElapsedMillis(),
+                            current.getEndedAtMillis(),
+                            -1,
+                            current.getError());
+                    if (persist(queued)) {
+                        current = queued;
+                        publish(current);
+                    } else {
+                        scheduleFinalizationRetry();
+                    }
+                }
+                return;
+            }
             if (current.getState() != RecordingState.EXPORT_PENDING
                     && current.getState() != RecordingState.EXPORT_QUEUED) {
                 return;
             }
-            SportActivity activity = store.loadActivity(current.getActivityId());
+            SportActivity activity = recordingStore.loadActivity(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -699,11 +1011,12 @@ public final class RecordingController {
             return;
         }
         try {
+            RecordingStore recordingStore = storeFor(current.getAuthority());
             if (endedSessionActivityId != current.getActivityId()) {
                 requestSessionEnd(false);
                 return;
             }
-            store.deleteActivity(current.getActivityId());
+            recordingStore.deleteActivity(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
@@ -892,6 +1205,20 @@ public final class RecordingController {
         return new RecordingError(code, detail.isEmpty() ? message : message + ": " + detail);
     }
 
+    private static String message(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? error == null ? "Unknown error" : error.getClass().getSimpleName()
+                : message;
+    }
+
+    private static boolean isLegacyPausedLateSampleError(
+            RecordingError error) {
+        return error != null
+                && error.getCode() == RecordingError.Code.STORAGE
+                && LEGACY_PAUSED_LATE_SAMPLE_ERROR.equals(error.getMessage());
+    }
+
     private static void cancel(ScheduledFuture<?> future) {
         if (future != null) {
             future.cancel(false);
@@ -914,13 +1241,24 @@ public final class RecordingController {
         return new RecordingSnapshot(
                 recording.getState(),
                 recording.getActivityId(),
+                recording.getActivityType(),
+                recording.getAuthority(),
                 recording.getStartedAtMillis(),
                 recording.durationAt(wallNow, elapsedNow, currentBootCount),
                 recording.elapsedDurationAt(wallNow, elapsedNow, currentBootCount),
                 recording.getActiveSinceElapsedRealtimeMillis(),
                 recording.getElapsedSinceElapsedRealtimeMillis(),
                 recording.getBootCount(),
-                error);
+                error,
+                recording.getCurrentLapIndex(),
+                recording.getLastLapElapsedDurationMillis(),
+                recording.getLastLapActiveDurationMillis());
+    }
+
+    private RecordingStore storeFor(RecordingAuthority authority) {
+        return authority == RecordingAuthority.CANONICAL
+                ? canonicalStore
+                : legacyStore;
     }
 
     private long endTimestamp(long elapsedDurationMillis) {

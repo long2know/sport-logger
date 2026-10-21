@@ -17,6 +17,7 @@ import com.long2know.sportlogger.acquisition.RouteStatus;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import org.junit.After;
 import org.junit.Test;
@@ -137,6 +138,31 @@ public class HealthServicesExerciseManagerTest {
         assertTrue(client.lastDataTypes.contains(DataType.HEART_RATE_BPM));
         assertFalse(client.lastDataTypes.contains(DataType.LOCATION));
         assertFalse(client.lastGpsEnabled);
+    }
+
+    @Test
+    public void canonicalCyclingSelectionUsesBikingCapabilitiesAndConfig()
+            throws Exception {
+        FakePlatformClient client = new FakePlatformClient(capabilities(
+                ExerciseType.BIKING,
+                DataType.HEART_RATE_BPM,
+                DataType.SPEED));
+        client.status = ExerciseTrackedStatus.NO_EXERCISE_IN_PROGRESS;
+        RecordingListener listener = new RecordingListener();
+        HealthServicesExerciseManager manager = manager(client, listener);
+
+        manager.initializeAsync();
+        listener.awaitState(HealthServicesExerciseSnapshot.State.READY);
+        manager.startOrRecoverAsync(
+                47,
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                false,
+                false);
+        listener.awaitState(HealthServicesExerciseSnapshot.State.ACTIVE);
+
+        assertEquals(ExerciseType.BIKING, client.lastExerciseType);
+        assertTrue(client.lastDataTypes.contains(DataType.HEART_RATE_BPM));
+        assertTrue(client.lastDataTypes.contains(DataType.SPEED));
     }
 
     @Test
@@ -358,6 +384,12 @@ public class HealthServicesExerciseManagerTest {
     }
 
     private static ExerciseCapabilities capabilities(DataType<?, ?>... dataTypes) {
+        return capabilities(ExerciseType.RUNNING, dataTypes);
+    }
+
+    private static ExerciseCapabilities capabilities(
+            ExerciseType exerciseType,
+            DataType<?, ?>... dataTypes) {
         Set<DataType<?, ?>> supported = new HashSet<>();
         Collections.addAll(supported, dataTypes);
         ExerciseTypeCapabilities running = new ExerciseTypeCapabilities(
@@ -366,7 +398,7 @@ public class HealthServicesExerciseManagerTest {
                 Collections.emptyMap(),
                 false);
         Map<ExerciseType, ExerciseTypeCapabilities> byType = new HashMap<>();
-        byType.put(ExerciseType.RUNNING, running);
+        byType.put(exerciseType, running);
         return new ExerciseCapabilities(byType);
     }
 
@@ -431,8 +463,10 @@ public class HealthServicesExerciseManagerTest {
         private int resumeCalls;
         private int flushCalls;
         private int endCalls;
+        private ExerciseType exerciseType = ExerciseType.RUNNING;
         private Set<DataType<?, ?>> lastDataTypes;
         private boolean lastGpsEnabled;
+        private ExerciseType lastExerciseType;
         private Executor callbackExecutor;
         private HealthServicesExerciseManager.PlatformUpdateListener callback;
 
@@ -459,14 +493,17 @@ public class HealthServicesExerciseManagerTest {
         @Override
         public ListenableFuture<ExerciseInfo> getCurrentExerciseInfoAsync() {
             return ImmediateFuture.success(
-                    new ExerciseInfo(status, ExerciseType.RUNNING));
+                    new ExerciseInfo(status, exerciseType));
         }
 
         @Override
         public ListenableFuture<Void> startExerciseAsync(
+                ExerciseType exerciseType,
                 Set<DataType<?, ?>> dataTypes,
                 boolean gpsEnabled) {
             startCalls++;
+            lastExerciseType = exerciseType;
+            this.exerciseType = exerciseType;
             lastDataTypes = new HashSet<>(dataTypes);
             lastGpsEnabled = gpsEnabled;
             status = ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS;
