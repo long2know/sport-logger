@@ -11,10 +11,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.long2know.sportlogger.integration.UnboundPhoneIntegrationStatusGateway
+import com.long2know.sportlogger.healthconnect.HealthConnectProviderFactory
 import com.long2know.sportlogger.phone.CanonicalPhoneDataSource
 import com.long2know.sportlogger.phone.PhoneUiEvent
 import com.long2know.sportlogger.transfer.PhoneSyncEvents
@@ -24,6 +26,7 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ComposePhoneViewModel by viewModels()
+    private lateinit var healthPermissionLauncher: ActivityResultLauncher<Set<String>>
 
     private val createDocument = registerForActivityResult(
         ActivityResultContracts.CreateDocument(TcxWriter.MEDIA_TYPE),
@@ -52,6 +55,13 @@ class MainActivity : ComponentActivity() {
                 CanonicalPhoneDataSource.open(applicationContext)
             },
             integrationGateway = UnboundPhoneIntegrationStatusGateway(),
+            healthConnectProviderFactory = {
+                HealthConnectProviderFactory.create(applicationContext)
+            },
+        )
+        healthPermissionLauncher = registerForActivityResult(
+            viewModel.healthConnectPermissionContract(),
+            viewModel::onHealthConnectPermissionResult,
         )
         setContent {
             SportLoggerPhoneRoute(
@@ -90,6 +100,15 @@ class MainActivity : ComponentActivity() {
         when (event) {
             is PhoneUiEvent.CreateDocument -> createDocument.launch(event.suggestedFileName)
             is PhoneUiEvent.ShareFile -> share(event)
+            is PhoneUiEvent.RequestHealthConnectPermissions ->
+                healthPermissionLauncher.launch(event.permissions)
+            is PhoneUiEvent.ResolveHealthConnectProvider -> {
+                try {
+                    startActivity(event.intent)
+                } catch (_: ActivityNotFoundException) {
+                    viewModel.shareLaunchFailed()
+                }
+            }
         }
     }
 

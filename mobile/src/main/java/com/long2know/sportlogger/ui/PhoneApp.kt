@@ -22,17 +22,16 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -70,6 +69,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -282,7 +282,7 @@ private fun PhoneTopBar(
             if (showBack) {
                 IconButton(onClick = { onBack() }) {
                     Icon(
-                        Icons.Outlined.ArrowBack,
+                        Icons.AutoMirrored.Outlined.ArrowBack,
                         contentDescription = stringResource(R.string.back_content_description),
                     )
                 }
@@ -329,7 +329,7 @@ private fun PhoneNavigationBar(
         NavigationItem(
             selected = destination == PhoneDestination.TRENDS,
             label = stringResource(R.string.nav_trends),
-            icon = Icons.Outlined.ShowChart,
+            icon = Icons.AutoMirrored.Outlined.ShowChart,
             onClick = { onDestination(PhoneDestination.TRENDS) },
         )
         NavigationItem(
@@ -376,7 +376,9 @@ private fun HistoryScreen(
             modifier = modifier,
         )
         else -> LazyColumn(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier
+                .fillMaxSize()
+                .testTag("history_screen"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -438,6 +440,7 @@ private fun ActivitySummaryCard(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("activity_row_${summary.sessionId}")
             .semantics { contentDescription = description },
     ) {
         Column(
@@ -500,18 +503,32 @@ private fun StatusChip(
     text: String,
     warning: Boolean = false,
 ) {
-    AssistChip(
-        onClick = {},
-        enabled = false,
-        label = { Text(text) },
-        leadingIcon = {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = if (warning) {
+            MaterialTheme.colorScheme.errorContainer
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer
+        },
+        contentColor = if (warning) {
+            MaterialTheme.colorScheme.onErrorContainer
+        } else {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
                 imageVector = if (warning) Icons.Outlined.Warning else Icons.Outlined.Info,
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
             )
-        },
-    )
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.labelMedium)
+        }
+    }
 }
 
 @Composable
@@ -556,6 +573,7 @@ private fun ActivityDetailContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .testTag("detail_screen")
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -643,12 +661,14 @@ private fun ActivityDetailContent(
             Button(
                 onClick = onPrepareSave,
                 enabled = !exportBusy,
+                modifier = Modifier.testTag("save_tcx"),
             ) {
                 Text(stringResource(R.string.save_tcx))
             }
             OutlinedButton(
                 onClick = onPrepareShare,
                 enabled = !exportBusy,
+                modifier = Modifier.testTag("share_tcx"),
             ) {
                 Icon(Icons.Outlined.Share, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -816,7 +836,9 @@ private fun TrendsScreen(state: PhoneUiState) {
 @Composable
 private fun TrendsContent(trends: TrendsUi) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("trends_screen"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -922,7 +944,9 @@ private fun StatusScreen(
         return
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("status_screen"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1128,7 +1152,9 @@ private fun MetadataEditorDialog(
                     },
                     singleLine = true,
                     enabled = !editor.saving,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_title"),
                 )
                 OutlinedTextField(
                     value = editor.notes,
@@ -1146,7 +1172,9 @@ private fun MetadataEditorDialog(
                     minLines = 4,
                     maxLines = 10,
                     enabled = !editor.saving,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_notes"),
                 )
                 editor.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
@@ -1157,6 +1185,7 @@ private fun MetadataEditorDialog(
             TextButton(
                 onClick = onSave,
                 enabled = !editor.saving,
+                modifier = Modifier.testTag("edit_save"),
             ) {
                 Text(stringResource(R.string.save))
             }

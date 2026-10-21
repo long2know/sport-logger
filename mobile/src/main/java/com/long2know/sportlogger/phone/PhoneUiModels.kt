@@ -1,5 +1,6 @@
 package com.long2know.sportlogger.phone
 
+import android.content.Intent
 import com.long2know.sportlogger.export.CanonicalTcxExportSource
 import com.long2know.sportlogger.integration.IntegrationSnapshot
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
@@ -69,8 +70,8 @@ data class BackfillUi(
 data class StatusUi(
     val canonicalActivityCount: Long = 0,
     val countCapped: Boolean = false,
-    val committedCount: Int = 0,
-    val partialImportCount: Int = 0,
+    val committedCount: Long = 0,
+    val partialImportCount: Long = 0,
     val availability: List<MeasurementAvailabilityUi> = emptyList(),
     val integrations: IntegrationSnapshot? = null,
     val loading: Boolean = true,
@@ -89,6 +90,16 @@ sealed interface PhoneUiEvent {
         override val id: Long,
         val file: File,
         val fileName: String,
+    ) : PhoneUiEvent
+
+    data class RequestHealthConnectPermissions(
+        override val id: Long,
+        val permissions: Set<String>,
+    ) : PhoneUiEvent
+
+    data class ResolveHealthConnectProvider(
+        override val id: Long,
+        val intent: Intent,
     ) : PhoneUiEvent
 }
 

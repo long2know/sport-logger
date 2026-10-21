@@ -2,12 +2,20 @@ package com.long2know.sportlogger
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.long2know.sportlogger.integration.IntegrationAction
 import com.long2know.sportlogger.integration.IntegrationActionResult
 import com.long2know.sportlogger.integration.PhoneIntegrationStatusGateway
+import com.long2know.sportlogger.healthconnect.HealthConnectOperationKind
+import com.long2know.sportlogger.healthconnect.HealthConnectOperationResult
+import com.long2know.sportlogger.healthconnect.HealthConnectOperationState
+import com.long2know.sportlogger.healthconnect.HealthConnectPermissionGrant
+import com.long2know.sportlogger.healthconnect.HealthConnectPermissions
+import com.long2know.sportlogger.healthconnect.HealthConnectProvider
+import com.long2know.sportlogger.healthconnect.HealthConnectSessionStatus
 import com.long2know.sportlogger.phone.ActivityDetailUi
 import com.long2know.sportlogger.phone.ActivityKey
 import com.long2know.sportlogger.phone.ActivityTypeTrendUi
@@ -67,8 +75,11 @@ class ComposePhoneViewModel(
 
     private var dataSource: CanonicalPhoneDataSource? = null
     private var integrationGateway: PhoneIntegrationStatusGateway? = null
+    private var healthConnectProvider: HealthConnectProvider? = null
+    private var latestHealthConnectStatus: HealthConnectSessionStatus? = null
     private var repositoryObserver: AutoCloseable? = null
     private var integrationObserver: AutoCloseable? = null
+    private var healthConnectObserver: AutoCloseable? = null
     private var initialLoadJob: Job? = null
     private var repositoryRefreshJob: Job? = null
     private var detailJob: Job? = null
@@ -79,12 +90,14 @@ class ComposePhoneViewModel(
     fun initialize(
         dataSourceFactory: () -> CanonicalPhoneDataSource,
         integrationGateway: PhoneIntegrationStatusGateway,
+        healthConnectProviderFactory: () -> HealthConnectProvider,
     ) {
         if (dataSource != null) {
             return
         }
         dataSource = dataSourceFactory()
         this.integrationGateway = integrationGateway
+        healthConnectProvider = healthConnectProviderFactory()
         val callbackExecutor = Executor { command ->
             viewModelScope.launch(Dispatchers.IO) {
                 command.run()
@@ -97,14 +110,50 @@ class ComposePhoneViewModel(
         integrationObserver = integrationGateway.observe {
             refreshStatus()
         }
+        healthConnectObserver = requireHealthConnectProvider().observeCanonicalChanges(
+            callbackExecutor,
+            Runnable { refreshStatus() },
+        )
         loadInitial()
     }
+
+    fun healthConnectPermissionContract(): ActivityResultContract<Set<String>, Set<String>> =
+        requireHealthConnectProvider().permissionRequestContract()
 
     fun refreshFromReceipt() {
         refreshAll(runBackfill = true, refreshing = true)
     }
 
     fun onActivityResumed() {
+        refreshStatus()
+    }
+
+    fun onHealthConnectPermissionResult(grantedPermissions: Set<String>) {
+        val requested = savedStateHandle
+            .get<ArrayList<String>>(HEALTH_PERMISSION_REQUEST_KEY)
+            .orEmpty()
+            .toSet()
+        savedStateHandle.remove<ArrayList<String>>(HEALTH_PERMISSION_REQUEST_KEY)
+        val result = HealthConnectPermissions.interpretRequestResult(
+            requested,
+            grantedPermissions,
+        )
+        _state.update {
+            it.copy(
+                notice = when (result.grant) {
+                    HealthConnectPermissionGrant.GRANTED ->
+                        "Health Connect permissions granted."
+                    HealthConnectPermissionGrant.PARTIAL ->
+                        "Some Health Connect permissions remain unavailable."
+                    HealthConnectPermissionGrant.DENIED ->
+                        "Health Connect permissions were not granted."
+                    HealthConnectPermissionGrant.NOT_REQUIRED ->
+                        "No Health Connect permissions were required."
+                    HealthConnectPermissionGrant.UNAVAILABLE ->
+                        "Health Connect permissions are unavailable."
+                },
+            )
+        }
         refreshStatus()
     }
 
@@ -304,6 +353,10 @@ class ComposePhoneViewModel(
     }
 
     fun performIntegrationAction(action: IntegrationAction) {
+        if (action.id.startsWith(HEALTH_ACTION_PREFIX)) {
+            performHealthConnectAction(action)
+            return
+        }
         val gateway = integrationGateway ?: return
         viewModelScope.launch(Dispatchers.IO) {
             when (val result = runCatching { gateway.perform(action) }.getOrElse {
@@ -316,6 +369,90 @@ class ComposePhoneViewModel(
                     _state.update { it.copy(notice = result.message) }
                 }
             }
+            refreshStatus()
+        }
+    }
+
+    private fun performHealthConnectAction(action: IntegrationAction) {
+        val provider = requireHealthConnectProvider()
+        val status = latestHealthConnectStatus ?: return
+        when (action.id) {
+            HEALTH_RESOLVE_ACTION -> {
+                val resolution = provider.providerResolutionIntent(status.availability)
+                if (resolution == null) {
+                    _state.update {
+                        it.copy(notice = "Health Connect provider resolution is unavailable.")
+                    }
+                } else {
+                    _state.update {
+                        it.copy(
+                            event = PhoneUiEvent.ResolveHealthConnectProvider(
+                                id = eventIds.incrementAndGet(),
+                                intent = resolution,
+                            ),
+                        )
+                    }
+                }
+            }
+            HEALTH_PERMISSION_ACTION -> {
+                val permissions = status.permissions.requestInput
+                if (permissions.isEmpty()) {
+                    _state.update {
+                        it.copy(notice = "No Health Connect permissions are missing.")
+                    }
+                } else {
+                    savedStateHandle[HEALTH_PERMISSION_REQUEST_KEY] =
+                        ArrayList(permissions)
+                    _state.update {
+                        it.copy(
+                            event = PhoneUiEvent.RequestHealthConnectPermissions(
+                                id = eventIds.incrementAndGet(),
+                                permissions = permissions,
+                            ),
+                        )
+                    }
+                }
+            }
+            HEALTH_PUBLISH_ACTION -> runHealthConnectOperation {
+                provider.publish(status.sessionId, status.revision)
+            }
+            HEALTH_UPDATE_ACTION -> runHealthConnectOperation {
+                provider.update(status.sessionId, status.revision)
+            }
+            HEALTH_DELETE_ACTION -> runHealthConnectOperation {
+                provider.delete(status.sessionId, status.revision)
+            }
+            HEALTH_RETRY_ACTION -> {
+                val operationId = status.lastOperation?.operationId
+                if (operationId == null) {
+                    _state.update {
+                        it.copy(notice = "No Health Connect operation is available to retry.")
+                    }
+                } else {
+                    runHealthConnectOperation {
+                        provider.retry(operationId)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun runHealthConnectOperation(
+        operation: suspend () -> HealthConnectOperationResult,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            setHealthConnectWorking()
+            runCatching { operation() }
+                .onSuccess { result ->
+                    _state.update {
+                        it.copy(notice = healthConnectResultMessage(result))
+                    }
+                }
+                .onFailure {
+                    _state.update {
+                        it.copy(notice = "Health Connect operation failed.")
+                    }
+                }
             refreshStatus()
         }
     }
@@ -525,7 +662,7 @@ class ComposePhoneViewModel(
                 emptyList()
             }
             val trends = runCatching { loadTrends() }.getOrNull()
-            val status = runCatching { loadStatus(trends?.activityCount ?: page.size) }
+            val status = runCatching { loadStatus() }
                 .getOrElse {
                     StatusUi(
                         loading = false,
@@ -620,7 +757,7 @@ class ComposePhoneViewModel(
             return
         }
         val trends = runCatching { loadTrends() }.getOrNull()
-        val status = runCatching { loadStatus(trends?.activityCount ?: refreshedHistory.size) }
+        val status = runCatching { loadStatus() }
             .getOrElse {
                 current.status.copy(
                     loading = false,
@@ -784,7 +921,7 @@ class ComposePhoneViewModel(
         _state.update { it.copy(status = it.status.copy(loading = true, error = null)) }
         statusJob = viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                loadStatus(_state.value.trends?.activityCount)
+                loadStatus()
             }.onSuccess { status ->
                 _state.update { it.copy(status = status) }
             }.onFailure {
@@ -800,21 +937,42 @@ class ComposePhoneViewModel(
         }
     }
 
-    private fun loadStatus(knownCount: Int? = null): StatusUi {
+    private suspend fun loadStatus(): StatusUi {
         val count = requireDataSource().summaryCount()
+        val countCapped = count > STATUS_SCAN_LIMIT
         val summaries = loadSummaryRange(minOf(count, STATUS_SCAN_LIMIT.toLong()).toInt())
-        val latestAvailability = summaries.firstOrNull()?.let { summary ->
+        val latestSummary = _state.value.selectedKey?.let { selected ->
+            summaries.firstOrNull {
+                it.sessionId == selected.sessionId && it.revision == selected.revision
+            }
+        } ?: summaries.firstOrNull()
+        val latestAvailability = latestSummary?.let { summary ->
             requireDataSource().detail(summary.sessionId, summary.revision)
         }?.let { availability(it.activity) }.orEmpty()
+        val healthConnect = latestSummary?.let { summary ->
+            runCatching {
+                requireHealthConnectProvider().refreshStatus(
+                    summary.sessionId,
+                    summary.revision,
+                )
+            }.getOrNull()
+        }
+        latestHealthConnectStatus = healthConnect
+        val baseIntegrations = integrationGateway?.snapshot()
         return StatusUi(
             canonicalActivityCount = count,
-            countCapped = false,
-            committedCount = summaries.count { it.transferState == "COMMITTED" },
+            countCapped = countCapped,
+            committedCount = summaries.count { it.transferState == "COMMITTED" }.toLong(),
             partialImportCount = summaries.count {
                 it.importHealth != PhoneActivityRepository.IMPORT_COMPLETE
-            },
+            }.toLong(),
             availability = latestAvailability,
-            integrations = integrationGateway?.snapshot(),
+            integrations = baseIntegrations?.copy(
+                healthConnect = healthConnectConnectorStatus(
+                    status = healthConnect,
+                    hasActivity = latestSummary != null,
+                ),
+            ),
             loading = false,
             error = null,
         )
@@ -919,6 +1077,145 @@ class ComposePhoneViewModel(
     private fun requireDataSource(): CanonicalPhoneDataSource =
         checkNotNull(dataSource) { "ComposePhoneViewModel is not initialized" }
 
+    private fun requireHealthConnectProvider(): HealthConnectProvider =
+        checkNotNull(healthConnectProvider) {
+            "Health Connect provider is not initialized"
+        }
+
+    private fun healthConnectConnectorStatus(
+        status: HealthConnectSessionStatus?,
+        hasActivity: Boolean,
+    ): com.long2know.sportlogger.integration.ConnectorUiStatus {
+        if (!hasActivity) {
+            return com.long2know.sportlogger.integration.ConnectorUiStatus(
+                id = "health-connect",
+                title = "Health Connect",
+                state = com.long2know.sportlogger.integration.ConnectorUiState.NOT_CONFIGURED,
+                detail = "Receive an activity before publishing to Health Connect.",
+                actions = emptyList(),
+            )
+        }
+        if (status == null) {
+            return com.long2know.sportlogger.integration.ConnectorUiStatus(
+                id = "health-connect",
+                title = "Health Connect",
+                state = com.long2know.sportlogger.integration.ConnectorUiState.FAILED,
+                detail = "Health Connect status could not be loaded.",
+                actions = emptyList(),
+            )
+        }
+        val actions = buildList {
+            if (status.canResolveProvider) {
+                add(IntegrationAction(HEALTH_RESOLVE_ACTION, "Install or update provider"))
+            }
+            if (status.canRequestPermissions) {
+                add(IntegrationAction(HEALTH_PERMISSION_ACTION, "Grant permissions"))
+            }
+            if (status.lastOperation == null && status.canPublish) {
+                add(IntegrationAction(HEALTH_PUBLISH_ACTION, "Publish"))
+            } else if (status.canUpdate) {
+                add(IntegrationAction(HEALTH_UPDATE_ACTION, "Update"))
+            }
+            if (status.canDelete) {
+                add(IntegrationAction(HEALTH_DELETE_ACTION, "Delete published records"))
+            }
+            if (status.canRetry) {
+                add(IntegrationAction(HEALTH_RETRY_ACTION, "Retry"))
+            }
+        }
+        val operationState = status.lastOperation?.state
+        val state = when {
+            !status.availability.isAvailable ->
+                com.long2know.sportlogger.integration.ConnectorUiState.UNSUPPORTED
+            status.permissions.missing.isNotEmpty() ->
+                com.long2know.sportlogger.integration.ConnectorUiState.PERMISSION_REQUIRED
+            operationState == HealthConnectOperationState.IN_PROGRESS ->
+                com.long2know.sportlogger.integration.ConnectorUiState.WORKING
+            operationState == HealthConnectOperationState.SUCCEEDED ->
+                com.long2know.sportlogger.integration.ConnectorUiState.CONNECTED
+            operationState == HealthConnectOperationState.PARTIAL ->
+                com.long2know.sportlogger.integration.ConnectorUiState.PARTIAL
+            operationState == HealthConnectOperationState.RETRYABLE_FAILURE ->
+                com.long2know.sportlogger.integration.ConnectorUiState.RETRYABLE_ERROR
+            operationState == HealthConnectOperationState.PERMANENT_FAILURE
+                || operationState == HealthConnectOperationState.BLOCKED ->
+                com.long2know.sportlogger.integration.ConnectorUiState.FAILED
+            else -> com.long2know.sportlogger.integration.ConnectorUiState.AVAILABLE
+        }
+        val detail = buildString {
+            append("Provider: ")
+            append(status.availability.name.lowercase().replace('_', ' '))
+            append(". Permissions: ")
+            append(status.permissions.granted.size)
+            append("/")
+            append(status.permissions.required.size)
+            append(" granted.")
+            if (status.routePresent) {
+                append(" Route data is present.")
+            }
+            status.lastOperation?.let { operation ->
+                append(" Last ")
+                append(operation.kind.name.lowercase())
+                append(": ")
+                append(operation.state.name.lowercase().replace('_', ' '))
+                append(".")
+                if (operation.missingPermissions.isNotEmpty()) {
+                    append(" Missing ")
+                    append(operation.missingPermissions.size)
+                    append(" permission(s).")
+                }
+            }
+        }
+        return com.long2know.sportlogger.integration.ConnectorUiStatus(
+            id = "health-connect",
+            title = "Health Connect",
+            state = state,
+            detail = detail,
+            actions = actions,
+        )
+    }
+
+    private fun setHealthConnectWorking() {
+        _state.update { state ->
+            val integrations = state.status.integrations ?: return@update state
+            state.copy(
+                status = state.status.copy(
+                    integrations = integrations.copy(
+                        healthConnect = integrations.healthConnect.copy(
+                            state = com.long2know.sportlogger.integration.ConnectorUiState.WORKING,
+                            detail = "Health Connect operation is running.",
+                            actions = emptyList(),
+                        ),
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun healthConnectResultMessage(result: HealthConnectOperationResult): String {
+        val operation = when (result.kind) {
+            HealthConnectOperationKind.PUBLISH -> "publish"
+            HealthConnectOperationKind.UPDATE -> "update"
+            HealthConnectOperationKind.DELETE -> "delete"
+        }
+        return when (result.state) {
+            HealthConnectOperationState.SUCCEEDED ->
+                "Health Connect $operation completed."
+            HealthConnectOperationState.PARTIAL ->
+                "Health Connect $operation completed partially; review missing permissions or failed records."
+            HealthConnectOperationState.BLOCKED ->
+                "Health Connect $operation is blocked."
+            HealthConnectOperationState.RETRYABLE_FAILURE ->
+                "Health Connect $operation failed and can be retried."
+            HealthConnectOperationState.PERMANENT_FAILURE ->
+                "Health Connect $operation failed permanently."
+            HealthConnectOperationState.IN_PROGRESS ->
+                "Health Connect $operation is still in progress."
+            HealthConnectOperationState.NOT_STARTED ->
+                "Health Connect $operation did not start."
+        }
+    }
+
     private fun weekStart(timestampUtcMs: Long): Long =
         Instant.ofEpochMilli(timestampUtcMs)
             .atZone(ZoneOffset.UTC)
@@ -932,6 +1229,8 @@ class ComposePhoneViewModel(
         exportJob?.cancel()
         runCatching { repositoryObserver?.close() }
         runCatching { integrationObserver?.close() }
+        runCatching { healthConnectObserver?.close() }
+        runCatching { healthConnectProvider?.close() }
         runCatching { dataSource?.close() }
         super.onCleared()
     }
@@ -942,7 +1241,7 @@ class ComposePhoneViewModel(
 
         private const val HISTORY_PAGE_SIZE = 50
         private const val TREND_ACTIVITY_LIMIT = 5_000
-        private const val STATUS_SCAN_LIMIT = 500
+        private const val STATUS_SCAN_LIMIT = 5_000
         private const val WEEK_BUCKETS = 12
         private const val WEEK_MILLIS = 7L * 24L * 60L * 60L * 1_000L
         private const val HISTORY_LOAD_ERROR =
@@ -956,5 +1255,14 @@ class ComposePhoneViewModel(
         private const val EDIT_NOTES_KEY = "phone.editNotes"
         private const val PENDING_EXPORT_SESSION_KEY = "phone.pendingExportSession"
         private const val PENDING_EXPORT_REVISION_KEY = "phone.pendingExportRevision"
+        private const val HEALTH_PERMISSION_REQUEST_KEY =
+            "phone.healthConnectPermissionRequest"
+        private const val HEALTH_ACTION_PREFIX = "health-connect."
+        private const val HEALTH_RESOLVE_ACTION = "health-connect.resolve"
+        private const val HEALTH_PERMISSION_ACTION = "health-connect.permissions"
+        private const val HEALTH_PUBLISH_ACTION = "health-connect.publish"
+        private const val HEALTH_UPDATE_ACTION = "health-connect.update"
+        private const val HEALTH_DELETE_ACTION = "health-connect.delete"
+        private const val HEALTH_RETRY_ACTION = "health-connect.retry"
     }
 }

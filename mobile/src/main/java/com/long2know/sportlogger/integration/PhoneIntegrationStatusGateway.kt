@@ -30,6 +30,7 @@ enum class ConnectorUiState {
     WORKING,
     CONNECTED,
     PARTIAL,
+    FAILED,
     UNSUPPORTED,
 }
 
