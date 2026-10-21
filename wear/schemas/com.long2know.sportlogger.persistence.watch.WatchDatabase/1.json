@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "8e03cba20c32606ef3ccaeafcd2d29fa",
+    "identityHash": "b23ab4a8f5c9c3b637729db82a8825b9",
     "entities": [
       {
         "tableName": "watch_sessions",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `watch_revision` INTEGER NOT NULL, `state` TEXT NOT NULL, `activity_type` INTEGER NOT NULL, `started_at_utc_ms` INTEGER NOT NULL, `ended_at_utc_ms` INTEGER, `elapsed_duration_ms` INTEGER, `active_duration_ms` INTEGER, `time_zone_id` TEXT, `utc_offset_minutes` INTEGER, `boot_id` TEXT, `monotonic_anchor_ms` INTEGER, `active_since_monotonic_ms` INTEGER, `accumulated_active_ms` INTEGER NOT NULL, `lease_token` INTEGER NOT NULL, `sample_count` INTEGER NOT NULL, `route_point_count` INTEGER NOT NULL, `heart_rate_sample_count` INTEGER NOT NULL, `payload` BLOB, `payload_sha256` TEXT, `legacy_source_key` TEXT, `legacy_activity_id` INTEGER, `last_error_code` TEXT, `last_error_message` TEXT, `created_at_utc_ms` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `watch_revision` INTEGER NOT NULL, `state` TEXT NOT NULL, `activity_type` INTEGER NOT NULL, `started_at_utc_ms` INTEGER NOT NULL, `ended_at_utc_ms` INTEGER, `elapsed_duration_ms` INTEGER, `active_duration_ms` INTEGER, `time_zone_id` TEXT, `utc_offset_minutes` INTEGER, `boot_id` TEXT, `monotonic_anchor_ms` INTEGER, `active_since_monotonic_ms` INTEGER, `accumulated_active_ms` INTEGER NOT NULL, `lease_token` INTEGER NOT NULL, `completion_transfer_id` TEXT, `completion_revision` INTEGER, `sample_count` INTEGER NOT NULL, `route_point_count` INTEGER NOT NULL, `heart_rate_sample_count` INTEGER NOT NULL, `payload` BLOB, `payload_sha256` TEXT, `legacy_source_key` TEXT, `legacy_activity_id` INTEGER, `last_error_code` TEXT, `last_error_message` TEXT, `created_at_utc_ms` INTEGER NOT NULL, `updated_at_utc_ms` INTEGER NOT NULL, PRIMARY KEY(`session_id`))",
         "fields": [
           {
             "fieldPath": "sessionId",
@@ -89,6 +89,16 @@
             "columnName": "lease_token",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "completionTransferId",
+            "columnName": "completion_transfer_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "completionRevision",
+            "columnName": "completion_revision",
+            "affinity": "INTEGER"
           },
           {
             "fieldPath": "sampleCount",
@@ -888,7 +898,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8e03cba20c32606ef3ccaeafcd2d29fa')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b23ab4a8f5c9c3b637729db82a8825b9')"
     ]
   }
 }

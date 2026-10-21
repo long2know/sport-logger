@@ -235,6 +235,36 @@ final class PhoneTombstoneOutboxEntity {
     public String lastFailureCode;
     @ColumnInfo(name = "last_failure_message")
     public String lastFailureMessage;
+    @ColumnInfo(name = "commit_ack_payload", typeAffinity = ColumnInfo.BLOB)
+    public byte[] commitAckPayload;
+    @ColumnInfo(name = "committed_at_utc_ms")
+    public Long committedAtUtcMs;
+}
+
+@Entity(
+        tableName = "phone_tombstone_receipts",
+        indices = @Index("session_id"))
+final class PhoneTombstoneReceiptEntity {
+    @PrimaryKey
+    @NonNull
+    @ColumnInfo(name = "transfer_id")
+    public String transferId;
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "delete_revision")
+    public long deleteRevision;
+    @ColumnInfo(name = "covered_session_revision")
+    public long coveredSessionRevision;
+    public int origin;
+    @NonNull
+    @ColumnInfo(name = "payload_sha256")
+    public String payloadSha256;
+    @ColumnInfo(name = "committed_at_utc_ms")
+    public long committedAtUtcMs;
+    @NonNull
+    @ColumnInfo(name = "ack_payload", typeAffinity = ColumnInfo.BLOB)
+    public byte[] ackPayload;
 }
 
 @Entity(
@@ -629,6 +659,23 @@ interface PhoneDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertTombstoneOutbox(PhoneTombstoneOutboxEntity outbox);
+
+    @Query("SELECT * FROM phone_tombstone_outbox WHERE transfer_id = :transferId")
+    PhoneTombstoneOutboxEntity tombstoneOutbox(String transferId);
+
+    @Update
+    int updateTombstoneOutbox(PhoneTombstoneOutboxEntity outbox);
+
+    @Query("SELECT * FROM phone_tombstone_outbox "
+            + "WHERE state IN ('READY', 'RETRYABLE', 'SENDING', 'AWAITING_COMMIT_ACK') "
+            + "ORDER BY created_at_utc_ms, transfer_id LIMIT :limit")
+    List<PhoneTombstoneOutboxEntity> pendingTombstoneOutbox(int limit);
+
+    @Query("SELECT * FROM phone_tombstone_receipts WHERE transfer_id = :transferId")
+    PhoneTombstoneReceiptEntity tombstoneReceipt(String transferId);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertTombstoneReceipt(PhoneTombstoneReceiptEntity receipt);
 
     @Query("SELECT * FROM connector_ledgers WHERE session_id = :sessionId "
             + "AND session_revision = :revision AND connector_id = :connectorId "

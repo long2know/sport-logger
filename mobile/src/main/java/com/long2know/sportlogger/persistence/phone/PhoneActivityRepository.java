@@ -41,6 +41,11 @@ public final class PhoneActivityRepository implements AutoCloseable {
     public static final int MAX_NOTES_LENGTH = 10_000;
     public static final int MAX_TAG_COUNT = 50;
     public static final int MAX_TAG_LENGTH = 64;
+    public static final String TOMBSTONE_READY = "READY";
+    public static final String TOMBSTONE_SENDING = "SENDING";
+    public static final String TOMBSTONE_AWAITING_COMMIT_ACK = "AWAITING_COMMIT_ACK";
+    public static final String TOMBSTONE_COMMITTED = "COMMITTED";
+    public static final String TOMBSTONE_RETRYABLE = "RETRYABLE";
 
     private final PhoneDatabase database;
     private final PhoneDao dao;
@@ -195,7 +200,10 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 "phone_session_heads",
                 "phone_activity_revisions",
                 "phone_inbox_receipts",
-                "phone_metadata") {
+                "phone_metadata",
+                "phone_tombstones",
+                "phone_tombstone_outbox",
+                "phone_tombstone_receipts") {
             @Override
             public void onInvalidated(Set<String> tables) {
                 executor.execute(listener);
@@ -241,7 +249,7 @@ public final class PhoneActivityRepository implements AutoCloseable {
             outbox.payload = bytes;
             outbox.payloadSha256 = hash;
             outbox.payloadLength = bytes.length;
-            outbox.state = "READY";
+            outbox.state = TOMBSTONE_READY;
             outbox.createdAtUtcMs = deletedAtUtcMs;
             dao.insertTombstoneOutbox(outbox);
 
@@ -259,6 +267,222 @@ public final class PhoneActivityRepository implements AutoCloseable {
             dao.putHead(head);
         });
         return tombstone;
+    }
+
+    public TombstoneOutboxItem tombstoneOutbox(String transferId) {
+        CanonicalIds.requireUuid(transferId, "Transfer identifier");
+        PhoneTombstoneOutboxEntity entity = dao.tombstoneOutbox(transferId);
+        return entity == null ? null : tombstoneOutbox(entity);
+    }
+
+    public List<TombstoneOutboxItem> pendingTombstoneOutbox(int limit) {
+        validateOutboxLimit(limit);
+        List<TombstoneOutboxItem> items = new ArrayList<>();
+        for (PhoneTombstoneOutboxEntity entity : dao.pendingTombstoneOutbox(limit)) {
+            items.add(tombstoneOutbox(entity));
+        }
+        return Collections.unmodifiableList(items);
+    }
+
+    public List<TombstoneOutboxItem> reclaimPendingTombstoneOutbox(
+            int limit,
+            long recoveredAtUtcMs) {
+        validateOutboxLimit(limit);
+        return database.runInTransaction(() -> {
+            List<TombstoneOutboxItem> items = new ArrayList<>();
+            for (PhoneTombstoneOutboxEntity entity : dao.pendingTombstoneOutbox(limit)) {
+                if (TOMBSTONE_SENDING.equals(entity.state)) {
+                    entity.state = TOMBSTONE_RETRYABLE;
+                    entity.lastFailureCode = "PROCESS_RESTART";
+                    entity.lastFailureMessage =
+                            "Recovered tombstone that was sending when the process stopped";
+                    entity.lastAttemptAtUtcMs = recoveredAtUtcMs;
+                    if (dao.updateTombstoneOutbox(entity) != 1) {
+                        throw new CanonicalContractException(
+                                "TOMBSTONE_OUTBOX_UPDATE_FAILED",
+                                "Recovered phone tombstone outbox was not updated");
+                    }
+                }
+                items.add(tombstoneOutbox(entity));
+            }
+            return Collections.unmodifiableList(items);
+        });
+    }
+
+    public TombstoneOutboxItem transitionTombstoneOutbox(
+            String transferId,
+            String expectedState,
+            String nextState,
+            Long attemptedAtUtcMs,
+            String failureCode,
+            String failureMessage) {
+        return database.runInTransaction(() -> {
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            PhoneTombstoneOutboxEntity entity = dao.tombstoneOutbox(transferId);
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_NOT_FOUND",
+                        "Phone tombstone outbox transfer does not exist");
+            }
+            if (!entity.state.equals(expectedState)) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_CAS_REJECTED",
+                        "Phone tombstone transition was rejected by its state");
+            }
+            entity.state = nextState;
+            if (attemptedAtUtcMs != null) {
+                entity.lastAttemptAtUtcMs = attemptedAtUtcMs;
+                entity.attemptCount++;
+            }
+            entity.lastFailureCode = failureCode;
+            entity.lastFailureMessage = failureMessage;
+            if (dao.updateTombstoneOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_UPDATE_FAILED",
+                        "Phone tombstone outbox transition was not persisted");
+            }
+            return tombstoneOutbox(entity);
+        });
+    }
+
+    public TombstoneAckAcceptance acceptTombstoneCommitAck(
+            byte[] acknowledgementBytes,
+            long committedAtUtcMs) {
+        return database.runInTransaction(() -> {
+            CommitAck acknowledgement = parseAck(acknowledgementBytes);
+            PhoneTombstoneOutboxEntity entity =
+                    dao.tombstoneOutbox(acknowledgement.getTransferId());
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_NOT_FOUND",
+                        "Acknowledged phone tombstone transfer does not exist");
+            }
+            if (!entity.sessionId.equals(acknowledgement.getSessionId())
+                    || !acknowledgement.hasDeleteRevision()
+                    || acknowledgement.getDeleteRevision() != entity.deleteRevision
+                    || !acknowledgement.hasTombstoneOrigin()
+                    || acknowledgement.getTombstoneOriginValue() != entity.origin
+                    || !MessageDigest.isEqual(
+                    hexBytes(entity.payloadSha256),
+                    acknowledgement.getPayloadSha256().toByteArray())) {
+                throw new CanonicalContractException(
+                        "ACK_IDENTITY_MISMATCH",
+                        "Phone tombstone acknowledgement does not match immutable outbox");
+            }
+            if (TOMBSTONE_COMMITTED.equals(entity.state)) {
+                if (!MessageDigest.isEqual(entity.commitAckPayload, acknowledgementBytes)) {
+                    throw new CanonicalContractException(
+                            "ACK_CONFLICT",
+                            "Committed phone tombstone stores different acknowledgement bytes");
+                }
+                return new TombstoneAckAcceptance(
+                        tombstoneOutbox(entity),
+                        acknowledgement,
+                        false);
+            }
+            if (acknowledgement.getResult() != AckResult.ACK_RESULT_ACCEPTED
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE) {
+                throw new CanonicalContractException(
+                        "ACK_NOT_TERMINAL",
+                        "Phone tombstone acknowledgement does not confirm watch commit");
+            }
+            entity.state = TOMBSTONE_COMMITTED;
+            entity.commitAckPayload = acknowledgementBytes.clone();
+            entity.committedAtUtcMs = committedAtUtcMs;
+            entity.lastFailureCode = null;
+            entity.lastFailureMessage = null;
+            if (dao.updateTombstoneOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_OUTBOX_UPDATE_FAILED",
+                        "Committed phone tombstone outbox was not updated");
+            }
+            return new TombstoneAckAcceptance(
+                    tombstoneOutbox(entity),
+                    acknowledgement,
+                    true);
+        });
+    }
+
+    public TombstoneReceiveResult acceptTombstoneTransfer(
+            byte[] tombstoneBytes,
+            long committedAtUtcMs) {
+        return database.runInTransaction(() -> {
+            CanonicalTransfers.VerifiedTombstone verified =
+                    CanonicalTransfers.parseTombstone(tombstoneBytes);
+            TombstoneRecord incoming = verified.getTombstone();
+            PhoneTombstoneReceiptEntity existing =
+                    dao.tombstoneReceipt(incoming.getTransferId());
+            if (existing != null) {
+                if (!existing.payloadSha256.equals(verified.getSha256Hex())) {
+                    throw new CanonicalContractException(
+                            "TRANSFER_ID_REUSED",
+                            "Tombstone transfer identifier already stores different bytes");
+                }
+                try {
+                    return new TombstoneReceiveResult(
+                            CommitAck.parseFrom(existing.ackPayload),
+                            existing.ackPayload.clone(),
+                            false);
+                } catch (InvalidProtocolBufferException error) {
+                    throw new CanonicalContractException(
+                            "ACK_PAYLOAD_CORRUPT",
+                            "Stored phone tombstone acknowledgement is corrupt",
+                            error);
+                }
+            }
+            PhoneTombstoneEntity current = dao.tombstone(incoming.getSessionId());
+            boolean wins = current == null || CanonicalTransfers.compareTombstoneOrder(
+                    incoming,
+                    CanonicalTransfers.parseTombstone(current.payload).getTombstone()) > 0;
+            AckResult result = wins
+                    ? AckResult.ACK_RESULT_ACCEPTED
+                    : AckResult.ACK_RESULT_STALE;
+            if (wins) {
+                PhoneTombstoneEntity stored = new PhoneTombstoneEntity();
+                stored.sessionId = incoming.getSessionId();
+                stored.deleteRevision = incoming.getDeleteRevision();
+                stored.coveredSessionRevision = incoming.getCoveredSessionRevision();
+                stored.origin = incoming.getOriginValue();
+                stored.transferId = incoming.getTransferId();
+                stored.deletedAtUtcMs = incoming.getDeletedAtUtcMs();
+                stored.payload = verified.getExactBytes();
+                stored.payloadSha256 = verified.getSha256Hex();
+                dao.putTombstone(stored);
+                PhoneSessionHeadEntity head = dao.head(incoming.getSessionId());
+                if (head == null) {
+                    head = new PhoneSessionHeadEntity();
+                    head.sessionId = incoming.getSessionId();
+                    head.acceptedRevision = incoming.getCoveredSessionRevision();
+                    head.importHealth = IMPORT_COMPLETE;
+                }
+                if (head.acceptedRevision <= incoming.getCoveredSessionRevision()) {
+                    head.deleted = true;
+                    head.transferState = "TOMBSTONED";
+                    head.updatedAtUtcMs = committedAtUtcMs;
+                    dao.putHead(head);
+                }
+            }
+            CommitAck acknowledgement = CanonicalTransfers.tombstoneCommitAck(
+                    verified,
+                    result,
+                    null,
+                    null);
+            byte[] acknowledgementBytes = acknowledgement.toByteArray();
+            PhoneTombstoneReceiptEntity receipt = new PhoneTombstoneReceiptEntity();
+            receipt.transferId = incoming.getTransferId();
+            receipt.sessionId = incoming.getSessionId();
+            receipt.deleteRevision = incoming.getDeleteRevision();
+            receipt.coveredSessionRevision = incoming.getCoveredSessionRevision();
+            receipt.origin = incoming.getOriginValue();
+            receipt.payloadSha256 = verified.getSha256Hex();
+            receipt.committedAtUtcMs = committedAtUtcMs;
+            receipt.ackPayload = acknowledgementBytes;
+            dao.insertTombstoneReceipt(receipt);
+            return new TombstoneReceiveResult(
+                    acknowledgement,
+                    acknowledgementBytes,
+                    true);
+        });
     }
 
     public void prepareConnectorDelivery(
@@ -844,6 +1068,68 @@ public final class PhoneActivityRepository implements AutoCloseable {
         }
     }
 
+    private static CommitAck parseAck(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new CanonicalContractException(
+                    "ACK_REQUIRED",
+                    "Acknowledgement bytes are required");
+        }
+        try {
+            CommitAck acknowledgement = CommitAck.parseFrom(bytes);
+            if (acknowledgement.getSchemaVersion() != CanonicalTransfers.SCHEMA_VERSION) {
+                throw new CanonicalContractException(
+                        "ACK_SCHEMA_UNSUPPORTED",
+                        "Unsupported acknowledgement schema");
+            }
+            CanonicalIds.requireUuid(
+                    acknowledgement.getTransferId(),
+                    "Transfer identifier");
+            CanonicalIds.requireUuid(
+                    acknowledgement.getSessionId(),
+                    "Session identifier");
+            return acknowledgement;
+        } catch (InvalidProtocolBufferException error) {
+            throw new CanonicalContractException(
+                    "ACK_CORRUPT",
+                    "Acknowledgement is not valid protobuf",
+                    error);
+        }
+    }
+
+    private static TombstoneOutboxItem tombstoneOutbox(
+            PhoneTombstoneOutboxEntity entity) {
+        return new TombstoneOutboxItem(
+                entity.transferId,
+                entity.sessionId,
+                entity.deleteRevision,
+                entity.coveredSessionRevision,
+                entity.origin,
+                entity.payload.clone(),
+                entity.payloadSha256,
+                entity.payloadLength,
+                entity.state,
+                entity.attemptCount,
+                entity.commitAckPayload == null ? null : entity.commitAckPayload.clone(),
+                entity.committedAtUtcMs);
+    }
+
+    private static byte[] hexBytes(String value) {
+        byte[] bytes = new byte[value.length() / 2];
+        for (int index = 0; index < value.length(); index += 2) {
+            bytes[index / 2] = (byte) Integer.parseInt(
+                    value.substring(index, index + 2),
+                    16);
+        }
+        return bytes;
+    }
+
+    private static void validateOutboxLimit(int limit) {
+        if (limit < 1 || limit > 1_000) {
+            throw new IllegalArgumentException(
+                    "Tombstone outbox limit must be between 1 and 1000");
+        }
+    }
+
     @Override
     public void close() {
         if (ownsDatabase) {
@@ -857,6 +1143,150 @@ public final class PhoneActivityRepository implements AutoCloseable {
         UNKNOWN_DELIVERY,
         DUPLICATE_REVIEW,
         FAILED
+    }
+
+    public static final class TombstoneOutboxItem {
+        private final String transferId;
+        private final String sessionId;
+        private final long deleteRevision;
+        private final long coveredSessionRevision;
+        private final int origin;
+        private final byte[] payload;
+        private final String payloadSha256;
+        private final long payloadLength;
+        private final String state;
+        private final long attemptCount;
+        private final byte[] commitAckPayload;
+        private final Long committedAtUtcMs;
+
+        private TombstoneOutboxItem(
+                String transferId,
+                String sessionId,
+                long deleteRevision,
+                long coveredSessionRevision,
+                int origin,
+                byte[] payload,
+                String payloadSha256,
+                long payloadLength,
+                String state,
+                long attemptCount,
+                byte[] commitAckPayload,
+                Long committedAtUtcMs) {
+            this.transferId = transferId;
+            this.sessionId = sessionId;
+            this.deleteRevision = deleteRevision;
+            this.coveredSessionRevision = coveredSessionRevision;
+            this.origin = origin;
+            this.payload = payload;
+            this.payloadSha256 = payloadSha256;
+            this.payloadLength = payloadLength;
+            this.state = state;
+            this.attemptCount = attemptCount;
+            this.commitAckPayload = commitAckPayload;
+            this.committedAtUtcMs = committedAtUtcMs;
+        }
+
+        public String getTransferId() {
+            return transferId;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public long getDeleteRevision() {
+            return deleteRevision;
+        }
+
+        public long getCoveredSessionRevision() {
+            return coveredSessionRevision;
+        }
+
+        public int getOrigin() {
+            return origin;
+        }
+
+        public byte[] getPayload() {
+            return payload.clone();
+        }
+
+        public String getPayloadSha256() {
+            return payloadSha256;
+        }
+
+        public long getPayloadLength() {
+            return payloadLength;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public long getAttemptCount() {
+            return attemptCount;
+        }
+
+        public byte[] getCommitAckPayload() {
+            return commitAckPayload == null ? null : commitAckPayload.clone();
+        }
+
+        public Long getCommittedAtUtcMs() {
+            return committedAtUtcMs;
+        }
+    }
+
+    public static final class TombstoneAckAcceptance {
+        private final TombstoneOutboxItem outbox;
+        private final CommitAck acknowledgement;
+        private final boolean committedNow;
+
+        private TombstoneAckAcceptance(
+                TombstoneOutboxItem outbox,
+                CommitAck acknowledgement,
+                boolean committedNow) {
+            this.outbox = outbox;
+            this.acknowledgement = acknowledgement;
+            this.committedNow = committedNow;
+        }
+
+        public TombstoneOutboxItem getOutbox() {
+            return outbox;
+        }
+
+        public CommitAck getAcknowledgement() {
+            return acknowledgement;
+        }
+
+        public boolean isCommittedNow() {
+            return committedNow;
+        }
+    }
+
+    public static final class TombstoneReceiveResult {
+        private final CommitAck acknowledgement;
+        private final byte[] exactAcknowledgementBytes;
+        private final boolean created;
+
+        private TombstoneReceiveResult(
+                CommitAck acknowledgement,
+                byte[] exactAcknowledgementBytes,
+                boolean created) {
+            this.acknowledgement = acknowledgement;
+            this.exactAcknowledgementBytes = exactAcknowledgementBytes;
+            this.created = created;
+        }
+
+        public CommitAck getAcknowledgement() {
+            return acknowledgement;
+        }
+
+        public byte[] getExactAcknowledgementBytes() {
+            return exactAcknowledgementBytes.clone();
+        }
+
+        public boolean isCreated() {
+            return created;
+        }
     }
 
     public static final class AcceptResult {
