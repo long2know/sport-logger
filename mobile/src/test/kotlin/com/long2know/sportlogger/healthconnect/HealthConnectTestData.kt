@@ -82,7 +82,6 @@ internal object HealthConnectTestData {
             .setValue(position)
             .build()
     }
-
     fun sample(
         sequence: Long,
         timestampMs: Long,
@@ -136,4 +135,3 @@ internal object HealthConnectTestData {
             .apply { summary?.let(::setSummary) }
             .build()
 }
-

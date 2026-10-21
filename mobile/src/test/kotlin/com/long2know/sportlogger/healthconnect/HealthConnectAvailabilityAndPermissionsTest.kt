@@ -29,7 +29,6 @@ class HealthConnectAvailabilityAndPermissionsTest {
             )
         }
     }
-
     @Test
     fun api28Through33DistinguishInstallUpdateAndAvailable() {
         for (apiLevel in Build.VERSION_CODES.P..Build.VERSION_CODES.TIRAMISU) {
@@ -183,4 +182,3 @@ class HealthConnectAvailabilityAndPermissionsTest {
         )
     }
 }
-
