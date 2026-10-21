@@ -104,6 +104,8 @@ public class LegacyWatchMigratorTest {
                 CanonicalTransfers.parseActivityTransfer(first.getPayload())
                         .getPayload()
                         .getActivity();
+        assertEquals(90_000L, firstActivity.getElapsedDurationMs());
+        assertFalse(firstActivity.hasActiveDurationMs());
         assertEquals(321.12500000000006D,
                 firstActivity.getSummary().getDistanceM().getValue(),
                 0D);
@@ -125,6 +127,11 @@ public class LegacyWatchMigratorTest {
                         .getSamples(0)
                         .getLocation()
                         .getValue();
+        assertFalse(
+                CanonicalTransfers.parseActivityTransfer(zero.getPayload())
+                        .getPayload()
+                        .getActivity()
+                        .hasActiveDurationMs());
         assertEquals(0D, zeroPosition.getLatitudeDegrees(), 0D);
         assertEquals(0D, zeroPosition.getLongitudeDegrees(), 0D);
     }

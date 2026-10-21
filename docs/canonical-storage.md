@@ -255,6 +255,11 @@ preserves existing phone-owned metadata. Legacy zero-valued fields whose seriali
 prove presence remain absent, except latitude/longitude where the legacy model always carried both
 values and `0,0` must remain valid.
 
+Legacy `ACTIVITY.TIME`, `SportActivity.Time`, and `PACE` have no producer-proven unit/active-time
+contract. Their raw source rows or serialized bytes remain retained, but neither backfill maps them
+to canonical active duration or pace. Legacy elapsed duration is derived only from verified
+start/end instants; positive opaque `TIME` values are not interpreted or quarantined.
+
 Neither migration auto-starts from the repository. After integration, Trinity owns one
 background-dispatcher call to `LegacyWatchMigrator.migrateDefault(context, now)` from the watch
 startup/recovery path. Switch owns one background-dispatcher call to
