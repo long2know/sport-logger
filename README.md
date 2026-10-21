@@ -27,10 +27,10 @@ provenance and quality, so no sample remains different from an actually recorded
 
 ## Download and install
 
-The planned manual prerelease is
+The manual prerelease is available now:
 [`v1.0.0-sideload.1`](https://github.com/long2know/sport-logger/releases/tag/v1.0.0-sideload.1).
-Use that page only after it is published; if the assets are not available yet, use the
-[build-it-yourself path](#build-and-install) below.
+It includes the matching phone/watch APKs, `SHA256SUMS`, and a validation summary.
+You can also use the [build-it-yourself path](#build-and-install) below.
 
 Download these three assets into one directory:
 
