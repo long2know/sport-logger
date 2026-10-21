@@ -7,8 +7,12 @@ import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseRoute
 import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.ExerciseRouteResult
+import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.request.ReadRecordsRequest
+import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.units.Length
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -60,6 +64,16 @@ class HealthConnectProviderInstrumentedTest {
                 required = required,
                 grantedAndroidPermissions = granted,
             )
+        val readProjection =
+            HealthConnectPermissions.readStatus(
+                availability =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        HealthConnectAvailability.AVAILABLE_FRAMEWORK
+                    } else {
+                        HealthConnectAvailability.AVAILABLE_APK
+                    },
+                grantedAndroidPermissions = granted,
+            )
 
         assertEquals(
             HealthConnectWritePermission.EXERCISE_SESSION.androidPermission in granted,
@@ -74,14 +88,20 @@ class HealthConnectProviderInstrumentedTest {
             "health_connect_permissions exerciseWrite=${projection.hasExerciseSessionWrite} " +
                 "routeWrite=${projection.hasPhoneRouteWrite}"
         )
+        println(
+            "health_connect_read_permissions " +
+                "exerciseRead=${readProjection.hasExerciseSessionRead}"
+        )
 
         val contract = PermissionController.createRequestPermissionResultContract()
         val intent =
             contract.createIntent(
                 context,
-                projection.missing
-                    .ifEmpty { required }
-                    .mapTo(linkedSetOf()) { it.androidPermission },
+                (projection.requestInput + readProjection.requestInput)
+                    .ifEmpty {
+                        required.mapTo(linkedSetOf()) { it.androidPermission } +
+                            HealthConnectReadPermission.EXERCISE_SESSION.androidPermission
+                    },
             )
         assertNotNull(intent)
     }
@@ -99,6 +119,8 @@ class HealthConnectProviderInstrumentedTest {
         val exercisePermission =
             HealthPermission.getWritePermission(ExerciseSessionRecord::class)
         val routePermission = HealthPermission.PERMISSION_WRITE_EXERCISE_ROUTE
+        val readPermission =
+            HealthPermission.getReadPermission(ExerciseSessionRecord::class)
         val clientRecordId = "sportlogger-instrumented-${UUID.randomUUID()}"
         val start = Instant.now().minusSeconds(300)
         val end = Instant.now().minusSeconds(60)
@@ -175,19 +197,51 @@ class HealthConnectProviderInstrumentedTest {
             assertTrue(updated.recordIdsList.single().isNotEmpty())
             insertedIds += updated.recordIdsList
 
+            if (readPermission in granted) {
+                val readBack =
+                    client.readRecord(
+                        ExerciseSessionRecord::class,
+                        updated.recordIdsList.single(),
+                    ).record
+                assertEquals(clientRecordId, readBack.metadata.clientRecordId)
+                assertEquals(2L, readBack.metadata.clientRecordVersion)
+                assertEquals(
+                    "SportLogger synthetic Health Connect test updated",
+                    readBack.title,
+                )
+                if (route != null) {
+                    assertTrue(readBack.exerciseRouteResult is ExerciseRouteResult.Data)
+                }
+            } else {
+                println("health_connect_query_gate exerciseRead=false")
+            }
+
             client.deleteRecords(
                 recordType = ExerciseSessionRecord::class,
                 recordIdsList = insertedIds.distinct(),
                 clientRecordIdsList = listOf(clientRecordId),
             )
-            client.deleteRecords(
-                recordType = ExerciseSessionRecord::class,
-                recordIdsList = insertedIds.distinct(),
-                clientRecordIdsList = listOf(clientRecordId),
-            )
+            if (readPermission in granted) {
+                val remaining =
+                    client.readRecords(
+                        ReadRecordsRequest(
+                            recordType = ExerciseSessionRecord::class,
+                            timeRangeFilter =
+                                TimeRangeFilter.between(
+                                    start.minusSeconds(1),
+                                    end.plusSeconds(1),
+                                ),
+                            dataOriginFilter = setOf(DataOrigin(context.packageName)),
+                        )
+                    ).records
+                assertTrue(
+                    remaining.none { it.metadata.clientRecordId == clientRecordId }
+                )
+            }
             println(
                 "health_connect_owned_lifecycle inserted=${insertedIds.size} " +
-                    "routeIncluded=${route != null} deleted=true"
+                    "routeIncluded=${route != null} " +
+                    "queryVerified=${readPermission in granted} deleted=true"
             )
         } finally {
             runCatching {
