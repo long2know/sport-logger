@@ -1,10 +1,13 @@
 package com.long2know.sportlogger.recording;
 
+import com.long2know.utilities.contract.proto.ActivityType;
+
 import java.util.Objects;
 
 public final class PersistentRecording {
     private final RecordingState state;
     private final int activityId;
+    private final ActivityType activityType;
     private final long startedAtMillis;
     private final long activeSinceMillis;
     private final long activeSinceElapsedRealtimeMillis;
@@ -26,6 +29,7 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
                 startedAtMillis,
                 activeSinceMillis,
                 0L,
@@ -50,6 +54,7 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -64,6 +69,7 @@ public final class PersistentRecording {
     public PersistentRecording(
             RecordingState state,
             int activityId,
+            ActivityType activityType,
             long startedAtMillis,
             long activeSinceMillis,
             long activeSinceElapsedRealtimeMillis,
@@ -75,6 +81,7 @@ public final class PersistentRecording {
             RecordingError error) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.activityType = Objects.requireNonNull(activityType);
         this.startedAtMillis = startedAtMillis;
         this.activeSinceMillis = activeSinceMillis;
         this.activeSinceElapsedRealtimeMillis =
@@ -100,6 +107,10 @@ public final class PersistentRecording {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public ActivityType getActivityType() {
+        return activityType;
     }
 
     public long getStartedAtMillis() {
@@ -221,6 +232,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 state,
                 activityId,
+                activityType,
                 startedAtMillis,
                 state == RecordingState.RECORDING ? wallClockMillis : 0L,
                 state == RecordingState.RECORDING ? elapsedRealtimeMillis : 0L,
@@ -283,6 +295,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 nextState,
                 activityId,
+                activityType,
                 startedAtMillis,
                 nextActiveSinceMillis,
                 nextActiveSinceElapsedRealtimeMillis,
@@ -298,6 +311,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 state,
                 activityId,
+                activityType,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -314,5 +328,11 @@ public final class PersistentRecording {
             return Long.MAX_VALUE;
         }
         return left + right;
+    }
+
+    private static ActivityType defaultActivityType(int activityId) {
+        return activityId > 0
+                ? ActivityType.ACTIVITY_TYPE_RUNNING
+                : ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
     }
 }

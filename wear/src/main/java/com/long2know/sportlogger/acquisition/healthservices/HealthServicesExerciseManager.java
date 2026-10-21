@@ -34,6 +34,8 @@ import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
 import com.long2know.sportlogger.acquisition.RawHardwareProbe;
 import com.long2know.sportlogger.acquisition.RouteStatus;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
+import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Collections;
 import java.util.EnumMap;
@@ -71,6 +73,7 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
         ListenableFuture<ExerciseInfo> getCurrentExerciseInfoAsync();
 
         ListenableFuture<Void> startExerciseAsync(
+                ExerciseType exerciseType,
                 Set<DataType<?, ?>> dataTypes,
                 boolean gpsEnabled);
 
@@ -140,7 +143,9 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
     private final EnumSet<ExerciseMetric> configuredMetrics =
             EnumSet.noneOf(ExerciseMetric.class);
     private final Set<DataType<?, ?>> configuredDataTypes = new HashSet<>();
-    private Set<DataType<?, ?>> runningSupportedDataTypes = Collections.emptySet();
+    private Set<DataType<?, ?>> configuredSupportedDataTypes = Collections.emptySet();
+    private ExerciseType configuredExerciseType = ExerciseType.RUNNING;
+    private ActivityType configuredActivityType = ActivityType.ACTIVITY_TYPE_RUNNING;
 
     private volatile HealthServicesExerciseSnapshot snapshot =
             HealthServicesExerciseSnapshot.uninitialized();
@@ -216,19 +221,37 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
 
     public void startOrRecoverAsync(
             int activityId,
+            ActivityType activityType,
             boolean recovery,
             boolean pausedRecovery) {
         if (activityId <= 0) {
             return;
         }
+        ActivityType supported =
+                RecordingActivityTypePolicy.requireSupported(activityType);
         execute(() -> {
-            pendingStart = new PendingStart(activityId, recovery, pausedRecovery);
+            pendingStart = new PendingStart(
+                    activityId,
+                    supported,
+                    recovery,
+                    pausedRecovery);
             if (!initialized) {
                 initializeInternal();
                 return;
             }
             consumePendingStart();
         });
+    }
+
+    public void startOrRecoverAsync(
+            int activityId,
+            boolean recovery,
+            boolean pausedRecovery) {
+        startOrRecoverAsync(
+                activityId,
+                ActivityType.ACTIVITY_TYPE_RUNNING,
+                recovery,
+                pausedRecovery);
     }
 
     public void pauseAsync() {
@@ -298,11 +321,12 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
     private void handleCapabilities(ExerciseCapabilities exerciseCapabilities) {
         discoveredExerciseCapabilities = exerciseCapabilities;
         ExerciseTypeCapabilities runningCapabilities = exerciseCapabilities
-                .getExerciseTypeCapabilities(ExerciseType.RUNNING);
+                .getTypeToCapabilities()
+                .get(ExerciseType.RUNNING);
         Set<DataType<?, ?>> supportedDataTypes = runningCapabilities == null
                 ? Collections.emptySet()
                 : runningCapabilities.getSupportedDataTypes();
-        runningSupportedDataTypes = Collections.unmodifiableSet(
+        configuredSupportedDataTypes = Collections.unmodifiableSet(
                 new HashSet<>(supportedDataTypes));
         rebuildCapabilities(supportedDataTypes);
         configuredMetrics.clear();
@@ -383,13 +407,15 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
         if (start == null || closed) {
             return;
         }
-        reconfigureMetrics();
+        configureForActivity(start.activityType);
         if (!healthServicesUsable) {
             publish(
                     HealthServicesExerciseSnapshot.State.RAW_FALLBACK,
                     snapshot.getOwnership(),
                     Collections.emptySet(),
-                    "Health Services is unavailable for running on this watch");
+                    "Health Services is unavailable for "
+                            + start.activityType
+                            + " on this watch");
             return;
         }
         listen(
@@ -421,6 +447,18 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
             return;
         }
         if (ownership == HealthServicesExerciseSnapshot.Ownership.OWNED_BY_THIS_APP) {
+            if (!configuredExerciseType.equals(info.getExerciseType())) {
+                publish(
+                        HealthServicesExerciseSnapshot.State.RAW_FALLBACK,
+                        ownership,
+                        Collections.emptySet(),
+                        "Owned Health Services exercise type does not match "
+                                + start.activityType);
+                listener.onFailure(
+                        "Owned Health Services exercise type does not match recovered activity",
+                        null);
+                return;
+            }
             activeActivityId = start.activityId;
             if (!persistOwnedActivity(start.activityId)) {
                 abandonUndurableOwnedSession();
@@ -464,6 +502,7 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
                 "");
         listen(
                 client.startExerciseAsync(
+                        configuredExerciseType,
                         Collections.unmodifiableSet(
                                 new HashSet<>(configuredDataTypes)),
                         gpsEnabled),
@@ -842,7 +881,7 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
     }
 
     private void reconfigureMetrics() {
-        rebuildCapabilities(runningSupportedDataTypes);
+        rebuildCapabilities(configuredSupportedDataTypes);
         configuredMetrics.clear();
         configuredMetrics.addAll(selectConfiguredMetrics());
         configuredDataTypes.clear();
@@ -853,6 +892,45 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
             }
         }
         healthServicesUsable = !configuredDataTypes.isEmpty();
+    }
+
+    private void configureForActivity(ActivityType activityType) {
+        configuredActivityType =
+                RecordingActivityTypePolicy.requireSupported(activityType);
+        configuredExerciseType = healthServicesType(configuredActivityType);
+        ExerciseTypeCapabilities typeCapabilities =
+                discoveredExerciseCapabilities == null
+                        ? null
+                        : discoveredExerciseCapabilities
+                        .getTypeToCapabilities()
+                        .get(configuredExerciseType);
+        configuredSupportedDataTypes = typeCapabilities == null
+                ? Collections.emptySet()
+                : Collections.unmodifiableSet(new HashSet<>(
+                        typeCapabilities.getSupportedDataTypes()));
+        reconfigureMetrics();
+    }
+
+    private static ExerciseType healthServicesType(ActivityType activityType) {
+        switch (activityType) {
+            case ACTIVITY_TYPE_RUNNING:
+                return ExerciseType.RUNNING;
+            case ACTIVITY_TYPE_WALKING:
+                return ExerciseType.WALKING;
+            case ACTIVITY_TYPE_CYCLING:
+                return ExerciseType.BIKING;
+            case ACTIVITY_TYPE_HIKING:
+                return ExerciseType.HIKING;
+            case ACTIVITY_TYPE_SWIMMING:
+                return ExerciseType.SWIMMING_POOL;
+            case ACTIVITY_TYPE_STRENGTH:
+                return ExerciseType.STRENGTH_TRAINING;
+            case ACTIVITY_TYPE_OTHER:
+                return ExerciseType.WORKOUT;
+            default:
+                throw new IllegalArgumentException(
+                        "Unsupported Health Services activity type " + activityType);
+        }
     }
 
     private void publish(
@@ -1072,14 +1150,17 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
 
     private static final class PendingStart {
         private final int activityId;
+        private final ActivityType activityType;
         private final boolean recovery;
         private final boolean pausedRecovery;
 
         private PendingStart(
                 int activityId,
+                ActivityType activityType,
                 boolean recovery,
                 boolean pausedRecovery) {
             this.activityId = activityId;
+            this.activityType = activityType;
             this.recovery = recovery;
             this.pausedRecovery = pausedRecovery;
         }
@@ -1197,9 +1278,10 @@ public final class HealthServicesExerciseManager implements RecordingSessionTerm
 
         @Override
         public ListenableFuture<Void> startExerciseAsync(
+                ExerciseType exerciseType,
                 Set<DataType<?, ?>> dataTypes,
                 boolean gpsEnabled) {
-            ExerciseConfig config = ExerciseConfig.builder(ExerciseType.RUNNING)
+            ExerciseConfig config = ExerciseConfig.builder(exerciseType)
                     .setDataTypes(dataTypes)
                     .setIsAutoPauseAndResumeEnabled(false)
                     .setIsGpsEnabled(gpsEnabled)

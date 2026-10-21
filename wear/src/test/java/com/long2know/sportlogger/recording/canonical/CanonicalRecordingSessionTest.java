@@ -14,6 +14,9 @@ import com.long2know.sportlogger.persistence.watch.WatchDatabase;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
+import com.long2know.utilities.contract.CanonicalPayload;
+import com.long2know.utilities.contract.proto.ActivityTransferFile;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import org.junit.After;
 import org.junit.Before;
@@ -75,6 +78,7 @@ public class CanonicalRecordingSessionTest {
     public void startSamplesReservationFinalizationAndOutboxAreDurable()
             throws Exception {
         RecordingSnapshot recording = snapshot(
+                ActivityType.ACTIVITY_TYPE_HIKING,
                 RecordingState.RECORDING,
                 0L,
                 0L,
@@ -86,6 +90,7 @@ public class CanonicalRecordingSessionTest {
 
         session.onAcceptedSample(heartRate(50_500_000_000L, 145D));
         RecordingSnapshot paused = snapshot(
+                ActivityType.ACTIVITY_TYPE_HIKING,
                 RecordingState.PAUSED,
                 500L,
                 700L,
@@ -93,6 +98,7 @@ public class CanonicalRecordingSessionTest {
                 50_700L);
         session.onRecordingSnapshot(paused);
         RecordingSnapshot resumed = snapshot(
+                ActivityType.ACTIVITY_TYPE_HIKING,
                 RecordingState.RECORDING,
                 500L,
                 900L,
@@ -100,6 +106,7 @@ public class CanonicalRecordingSessionTest {
                 50_900L);
         session.onRecordingSnapshot(resumed);
         RecordingSnapshot stopping = snapshot(
+                ActivityType.ACTIVITY_TYPE_HIKING,
                 RecordingState.STOPPING,
                 900L,
                 1_200L,
@@ -120,7 +127,18 @@ public class CanonicalRecordingSessionTest {
         assertEquals(
                 WatchActivityRepository.OUTBOX_READY,
                 repository.readyOutbox(10).join().get(0).getState());
+        ActivityTransferFile transfer = ActivityTransferFile.parseFrom(
+                repository.readyOutbox(10).join().get(0).getPayload());
+        assertEquals(
+                ActivityType.ACTIVITY_TYPE_HIKING,
+                CanonicalPayload.parse(
+                        transfer.getActivityFile().toByteArray())
+                        .getActivity()
+                        .getActivityType());
         assertTrue(journal.read().terminal);
+        assertEquals(
+                ActivityType.ACTIVITY_TYPE_HIKING,
+                journal.read().activityType);
         assertNull(fatal.get());
 
         session.onRecordingSnapshot(new RecordingSnapshot(
@@ -177,9 +195,26 @@ public class CanonicalRecordingSessionTest {
             long elapsedDuration,
             long activeSince,
             long elapsedSince) {
+        return snapshot(
+                ActivityType.ACTIVITY_TYPE_RUNNING,
+                state,
+                activeDuration,
+                elapsedDuration,
+                activeSince,
+                elapsedSince);
+    }
+
+    private static RecordingSnapshot snapshot(
+            ActivityType activityType,
+            RecordingState state,
+            long activeDuration,
+            long elapsedDuration,
+            long activeSince,
+            long elapsedSince) {
         return new RecordingSnapshot(
                 state,
                 1,
+                activityType,
                 1_000L,
                 activeDuration,
                 elapsedDuration,

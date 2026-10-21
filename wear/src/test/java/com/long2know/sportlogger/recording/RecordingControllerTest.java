@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.recording;
 
 import com.long2know.utilities.models.SportActivity;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import org.junit.After;
 import org.junit.Test;
@@ -204,6 +205,49 @@ public class RecordingControllerTest {
         assertTrue(exporter.awaitCount(2, 1_000L));
         exporter.acknowledge(1);
         replacementSnapshots.awaitState(RecordingState.IDLE);
+        replacement.closeAsync();
+    }
+
+    @Test
+    public void selectedActivityTypeIsDurableAndAuthoritativeAfterRecovery()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        FakeStore store = new FakeStore();
+        MutableClock clock = new MutableClock(15_000L);
+        SnapshotRecorder firstSnapshots = new SnapshotRecorder();
+        ScheduledThreadPoolExecutor firstWorker = worker();
+        RecordingController first = controller(
+                journal,
+                store,
+                new FakeExporter(),
+                firstWorker,
+                clock,
+                firstSnapshots);
+
+        first.start(ActivityType.ACTIVITY_TYPE_CYCLING);
+        RecordingSnapshot started =
+                firstSnapshots.awaitState(RecordingState.RECORDING);
+        assertEquals(ActivityType.ACTIVITY_TYPE_CYCLING, started.getActivityType());
+        assertEquals(
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                journal.state.getActivityType());
+        first.closeAsync();
+        assertTrue(firstWorker.awaitTermination(1, TimeUnit.SECONDS));
+
+        SnapshotRecorder replacementSnapshots = new SnapshotRecorder();
+        RecordingController replacement = controller(
+                journal,
+                store,
+                new FakeExporter(),
+                worker(),
+                clock,
+                replacementSnapshots);
+        replacement.recover();
+
+        assertEquals(
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                replacementSnapshots.awaitState(
+                        RecordingState.RECORDING).getActivityType());
         replacement.closeAsync();
     }
 

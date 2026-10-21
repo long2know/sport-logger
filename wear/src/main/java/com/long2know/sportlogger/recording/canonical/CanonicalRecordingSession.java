@@ -17,7 +17,6 @@ import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.ActiveInterval;
 import com.long2know.utilities.contract.proto.ActivityRecord;
 import com.long2know.utilities.contract.proto.ActivitySummary;
-import com.long2know.utilities.contract.proto.ActivityType;
 import com.long2know.utilities.contract.proto.DoubleMeasurement;
 import com.long2know.utilities.contract.proto.LongMeasurement;
 import com.long2know.utilities.contract.proto.MeasurementStatus;
@@ -415,7 +414,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
                                 session.sessionId,
                                 session.leaseToken,
                                 session.startedAtUtcMs)
-                        .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                .activityType(session.activityType)
                         .timeZone(session.timeZoneId, session.utcOffsetMinutes)
                         .accumulatedActiveMs(session.accumulatedActiveAtStartMs);
         if (session.bootId != null && session.monotonicAnchorMs != null) {
@@ -488,7 +487,7 @@ public final class CanonicalRecordingSession implements AutoCloseable {
         ActivityRecord.Builder activity = ActivityRecord.newBuilder()
                 .setSessionId(session.sessionId)
                 .setWatchRevision(session.completionRevision)
-                .setActivityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                .setActivityType(session.activityType)
                 .setStartTimeUtcMs(session.startedAtUtcMs)
                 .setEndTimeUtcMs(saturatedAdd(session.startedAtUtcMs, elapsed))
                 .setElapsedDurationMs(elapsed)
