@@ -159,6 +159,8 @@ fun SportLoggerPhoneRoute(
             onCancelEndurainReconcile = viewModel::cancelEndurainReconcile,
             onIntegrationAction = viewModel::performIntegrationAction,
             onConsumeNotice = viewModel::consumeNotice,
+            onEndurainRemoteEdit = viewModel::endurainRemoteEdit,
+            onEndurainRemoteDelete = viewModel::endurainRemoteDelete,
         )
     }
 }
@@ -203,6 +205,8 @@ fun SportLoggerPhoneApp(
     onCancelEndurainReconcile: () -> Unit,
     onIntegrationAction: (IntegrationAction) -> Unit,
     onConsumeNotice: () -> Unit,
+    onEndurainRemoteEdit: (EndurainDeliveryKey) -> Unit = {},
+    onEndurainRemoteDelete: (EndurainDeliveryKey) -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(state.notice) {
@@ -309,6 +313,8 @@ fun SportLoggerPhoneApp(
                             onEndurainConfirmDuplicate = onEndurainConfirmDuplicate,
                             onEndurainRepairArtifact = onEndurainRepairArtifact,
                             onOpenEndurainReconcile = onOpenEndurainReconcile,
+                            onEndurainRemoteEdit = onEndurainRemoteEdit,
+                            onEndurainRemoteDelete = onEndurainRemoteDelete,
                         )
                     }
                 }
@@ -1121,6 +1127,8 @@ private fun StatusScreen(
     onEndurainConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
     onEndurainRepairArtifact: (EndurainDeliveryKey) -> Unit,
     onOpenEndurainReconcile: (EndurainDeliveryKey) -> Unit,
+    onEndurainRemoteEdit: (EndurainDeliveryKey) -> Unit,
+    onEndurainRemoteDelete: (EndurainDeliveryKey) -> Unit,
 ) {
     val status = state.status
     if (status.loading && status.integrations == null) {
@@ -1188,6 +1196,8 @@ private fun StatusScreen(
                 onConfirmDuplicate = onEndurainConfirmDuplicate,
                 onRepairArtifact = onEndurainRepairArtifact,
                 onOpenReconcile = onOpenEndurainReconcile,
+                onRemoteEdit = onEndurainRemoteEdit,
+                onRemoteDelete = onEndurainRemoteDelete,
             )
         }
     }
@@ -1308,6 +1318,8 @@ private fun EndurainSection(
     onConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
     onRepairArtifact: (EndurainDeliveryKey) -> Unit,
     onOpenReconcile: (EndurainDeliveryKey) -> Unit,
+    onRemoteEdit: (EndurainDeliveryKey) -> Unit,
+    onRemoteDelete: (EndurainDeliveryKey) -> Unit,
 ) {
     val snapshot = state.snapshot
     if (state.loading && snapshot == null) {
@@ -1424,6 +1436,8 @@ private fun EndurainSection(
                 onConfirmDuplicate = onConfirmDuplicate,
                 onRepairArtifact = onRepairArtifact,
                 onOpenReconcile = onOpenReconcile,
+                onRemoteEdit = onRemoteEdit,
+                onRemoteDelete = onRemoteDelete,
             )
         }
     }
@@ -1436,6 +1450,8 @@ private fun EndurainDeliveryCard(
     onConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
     onRepairArtifact: (EndurainDeliveryKey) -> Unit,
     onOpenReconcile: (EndurainDeliveryKey) -> Unit,
+    onRemoteEdit: (EndurainDeliveryKey) -> Unit,
+    onRemoteDelete: (EndurainDeliveryKey) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -1495,6 +1511,37 @@ private fun EndurainDeliveryCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (delivery.state != EndurainDeliveryStatus.State.PREPARED) {
+                OutlinedButton(
+                    onClick = { onRemoteEdit(delivery.key) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("endurain_remote_edit_${delivery.artifactId}"),
+                ) {
+                    Text("Request Endurain remote edit")
+                }
+                if (!delivery.isDeleteUnsupportedRecorded) {
+                    OutlinedButton(
+                        onClick = { onRemoteDelete(delivery.key) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("endurain_remote_delete_${delivery.artifactId}"),
+                    ) {
+                        Text("Request Endurain remote delete")
+                    }
+                }
+            }
+            if (delivery.isDeleteUnsupportedRecorded) {
+                Text(
+                    text = "Remote delete was not performed. " +
+                        "Ownership is retained in the recovery ledger.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag(
+                        "endurain_remote_delete_recorded_${delivery.artifactId}",
+                    ),
+                )
+            }
         }
     }
 }
@@ -1646,8 +1693,10 @@ private fun EndurainReconcileDialog(
                     value = reconcile.remoteIds,
                     onValueChange = onRemoteIds,
                     label = { Text(stringResource(R.string.endurain_remote_ids_label)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     enabled = !reconcile.saving,
+                    isError = reconcile.error != null,
+                    singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("endurain_remote_ids"),
@@ -1661,6 +1710,7 @@ private fun EndurainReconcileDialog(
             TextButton(
                 onClick = onSave,
                 enabled = !reconcile.saving,
+                modifier = Modifier.testTag("endurain_reconcile_save"),
             ) {
                 Text(stringResource(R.string.save))
             }
