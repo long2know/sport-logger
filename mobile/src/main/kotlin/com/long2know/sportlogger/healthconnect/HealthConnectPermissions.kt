@@ -48,7 +48,6 @@ object HealthConnectPermissions {
             missing = missing,
         )
     }
-
     @JvmStatic
     fun interpretRequestResult(
         requestedAndroidPermissions: Set<String>,
@@ -78,4 +77,3 @@ object HealthConnectPermissions {
         )
     }
 }
-
