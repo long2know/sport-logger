@@ -6,6 +6,7 @@ import com.long2know.sportlogger.connector.endurain.EndurainHttpsTransport;
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository;
 import com.long2know.sportlogger.publishing.endurain.EndurainPublishingCoordinator;
 import com.long2know.sportlogger.publishing.endurain.HttpsEndurainTransportGateway;
+import com.long2know.sportlogger.publishing.endurain.LocalEndurainPublishingChangeSignal;
 import com.long2know.sportlogger.publishing.endurain.SecureEndurainCredentialGateway;
 import com.long2know.sportlogger.publishing.endurain.artifact.PreparedTcxArtifactStore;
 import com.long2know.sportlogger.publishing.endurain.profile.EndurainConnectionProfileStore;
@@ -83,10 +84,13 @@ public final class EndurainPublishingFactory {
         try {
             EndurainConnectionProfileStore profiles =
                     EndurainConnectionProfileStore.forApplication(context);
+            LocalEndurainPublishingChangeSignal changes =
+                    new LocalEndurainPublishingChangeSignal(context);
             EndurainPublishingCoordinator coordinator = coordinator(
                     context,
                     repository,
-                    profiles);
+                    profiles,
+                    changes);
             if (scheduleStartupRecovery) {
                 EndurainPublishingScheduler scheduler =
                         new EndurainPublishingScheduler(context);
@@ -98,6 +102,7 @@ public final class EndurainPublishingFactory {
                     repository,
                     profiles,
                     coordinator,
+                    changes,
                     worker,
                     ownsWorker);
         } catch (RuntimeException error) {
@@ -112,13 +117,15 @@ public final class EndurainPublishingFactory {
         return coordinator(
                 context,
                 repository,
-                EndurainConnectionProfileStore.forApplication(context));
+                EndurainConnectionProfileStore.forApplication(context),
+                new LocalEndurainPublishingChangeSignal(context));
     }
 
     private static EndurainPublishingCoordinator coordinator(
             Context context,
             PhoneActivityRepository repository,
-            EndurainConnectionProfileStore profiles) {
+            EndurainConnectionProfileStore profiles,
+            LocalEndurainPublishingChangeSignal changes) {
         EndurainPublishingScheduler scheduler =
                 new EndurainPublishingScheduler(context);
         return new EndurainPublishingCoordinator(
@@ -130,6 +137,7 @@ public final class EndurainPublishingFactory {
                 new HttpsEndurainTransportGateway(
                         new EndurainHttpsTransport()),
                 scheduler,
+                changes,
                 System::currentTimeMillis,
                 EndurainPublishingCoordinator.monotonicLeaseTokens());
     }

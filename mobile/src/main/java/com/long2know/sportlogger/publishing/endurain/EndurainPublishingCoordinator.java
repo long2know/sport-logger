@@ -39,6 +39,7 @@ public final class EndurainPublishingCoordinator {
     private final EndurainCredentialGateway credentials;
     private final EndurainTransportGateway transport;
     private final EndurainPublishingSchedule schedule;
+    private final EndurainPublishingChangeSignal changes;
     private final LongSupplier clock;
     private final LongSupplier leaseTokens;
 
@@ -49,6 +50,7 @@ public final class EndurainPublishingCoordinator {
             EndurainCredentialGateway credentials,
             EndurainTransportGateway transport,
             EndurainPublishingSchedule schedule,
+            EndurainPublishingChangeSignal changes,
             LongSupplier clock,
             LongSupplier leaseTokens) {
         this.repository = Objects.requireNonNull(repository, "repository");
@@ -57,6 +59,7 @@ public final class EndurainPublishingCoordinator {
         this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.transport = Objects.requireNonNull(transport, "transport");
         this.schedule = Objects.requireNonNull(schedule, "schedule");
+        this.changes = Objects.requireNonNull(changes, "changes");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.leaseTokens = Objects.requireNonNull(leaseTokens, "leaseTokens");
     }
@@ -76,6 +79,7 @@ public final class EndurainPublishingCoordinator {
         if (enabled) {
             schedule.schedulePublishAt(now);
         }
+        changes.signal();
         return profile;
     }
 
@@ -89,6 +93,7 @@ public final class EndurainPublishingCoordinator {
             schedule.scheduleRecoveryAt(now);
             schedule.schedulePublishAt(now);
         }
+        changes.signal();
         return profile;
     }
 
@@ -103,6 +108,7 @@ public final class EndurainPublishingCoordinator {
             Arrays.fill(apiKey, '\0');
         }
         schedule.schedulePublishAt(clock.getAsLong());
+        changes.signal();
         return EndurainCredentialGateway.State.AVAILABLE;
     }
 
@@ -110,6 +116,7 @@ public final class EndurainPublishingCoordinator {
             String connectionIdentity) throws CredentialStoreException {
         EndurainConnectionProfile profile = requireProfile(connectionIdentity);
         credentials.reset(profile);
+        changes.signal();
         return EndurainCredentialGateway.State.NOT_CONFIGURED;
     }
 
@@ -119,13 +126,13 @@ public final class EndurainPublishingCoordinator {
             long revision) throws PreparedArtifactException {
         EndurainConnectionProfile profile = requireProfile(connectionIdentity);
         long now = clock.getAsLong();
+        schedule.scheduleRecoveryAt(now + LEASE_DURATION_MILLIS);
         PreparedArtifact prepared = artifacts.prepare(
                 repository,
                 profile,
                 sessionId,
                 revision,
                 now);
-        schedule.scheduleRecoveryAt(now);
         ArtifactManifest manifest = prepared.getManifest();
         repository.prepareConnectorDelivery(
                 manifest.getKey().toRepositoryKey(),
@@ -133,9 +140,11 @@ public final class EndurainPublishingCoordinator {
                 manifest.getArtifactLength(),
                 manifest.getArtifactSha256(),
                 manifest.getCreatedAtUtcMs());
+        schedule.scheduleRecoveryAt(now);
         if (profile.isEnabled()) {
             schedule.schedulePublishAt(now);
         }
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.QUEUED,
                 manifest.getKey(),
@@ -157,6 +166,7 @@ public final class EndurainPublishingCoordinator {
                         "The server-supplied retry time has not elapsed");
             }
             schedule.schedulePublishAt(now);
+            changes.signal();
             return EndurainActionResult.of(
                     EndurainActionResult.Code.QUEUED,
                     key,
@@ -216,6 +226,7 @@ public final class EndurainPublishingCoordinator {
                 null,
                 now);
         schedule.schedulePublishAt(now);
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.QUEUED,
                 key,
@@ -229,6 +240,7 @@ public final class EndurainPublishingCoordinator {
                 key.toRepositoryKey(),
                 remoteIds,
                 clock.getAsLong());
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.COMPLETED,
                 key,
@@ -266,6 +278,7 @@ public final class EndurainPublishingCoordinator {
                 key.toRepositoryKey(),
                 clock.getAsLong());
         schedule.schedulePublishAt(clock.getAsLong());
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.QUEUED,
                 key,
@@ -284,6 +297,7 @@ public final class EndurainPublishingCoordinator {
         artifacts.repair(
                 repository,
                 PreparedTcxArtifactStore.artifactId(key));
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.COMPLETED,
                 key,
@@ -305,6 +319,7 @@ public final class EndurainPublishingCoordinator {
         repository.markConnectorDeleteUnsupported(
                 key.toRepositoryKey(),
                 clock.getAsLong());
+        changes.signal();
         return EndurainActionResult.of(
                 EndurainActionResult.Code.UNSUPPORTED_REMOTE_DELETE,
                 key,
@@ -370,6 +385,7 @@ public final class EndurainPublishingCoordinator {
         int delivered = 0;
         int failed = 0;
         int unknown = 0;
+        boolean changed = false;
         Long nextPublishAt = null;
         for (ArtifactManifest manifest : artifacts.listManifests()) {
             if (inspected == limit) {
@@ -388,11 +404,13 @@ public final class EndurainPublishingCoordinator {
                         manifest.getArtifactLength(),
                         manifest.getArtifactSha256(),
                         manifest.getCreatedAtUtcMs());
+                changed = true;
             }
             if (repository.recoverExpiredConnectorClaimAsUnknown(
                     repositoryKey,
                     clock.getAsLong())) {
                 unknown++;
+                changed = true;
             }
             delivery = repository.connectorDelivery(repositoryKey);
             if (delivery.getState() != ConnectorState.PENDING) {
@@ -412,6 +430,7 @@ public final class EndurainPublishingCoordinator {
                         "The prepared Endurain connection is not configured",
                         now)) {
                     failed++;
+                    changed = true;
                 }
                 continue;
             }
@@ -430,6 +449,7 @@ public final class EndurainPublishingCoordinator {
                         "The frozen TCX artifact failed verification",
                         now)) {
                     failed++;
+                    changed = true;
                 }
                 continue;
             }
@@ -443,11 +463,13 @@ public final class EndurainPublishingCoordinator {
                             "The scoped Endurain credential is unavailable",
                             now)) {
                         failed++;
+                        changed = true;
                     }
                     continue;
                 }
                 long leaseToken = nextLeaseToken();
                 long leaseExpiresAt = now + LEASE_DURATION_MILLIS;
+                schedule.scheduleRecoveryAt(leaseExpiresAt);
                 if (!repository.claimConnectorDelivery(
                         repositoryKey,
                         ConnectorState.PENDING,
@@ -455,22 +477,6 @@ public final class EndurainPublishingCoordinator {
                         LEASE_OWNER,
                         leaseExpiresAt,
                         now)) {
-                    schedule.scheduleRecoveryAt(leaseExpiresAt);
-                    continue;
-                }
-                try {
-                    schedule.scheduleRecoveryAt(leaseExpiresAt);
-                } catch (RuntimeException error) {
-                    repository.transitionConnectorDelivery(
-                            repositoryKey,
-                            leaseToken,
-                            ConnectorState.PENDING,
-                            ConnectorState.FAILED,
-                            null,
-                            "RECOVERY_SCHEDULE_FAILED",
-                            "The ambiguous-delivery recovery watchdog could not be scheduled",
-                            now);
-                    failed++;
                     continue;
                 }
                 Verification claimedVerification = artifacts.verify(manifest);
@@ -485,6 +491,7 @@ public final class EndurainPublishingCoordinator {
                             "The frozen TCX artifact changed before transmission",
                             now);
                     failed++;
+                    changed = true;
                     continue;
                 }
                 EndurainTransportGateway.UploadOutcome outcome;
@@ -504,6 +511,7 @@ public final class EndurainPublishingCoordinator {
                             "Transport stopped without trustworthy delivery evidence",
                             clock.getAsLong());
                     unknown++;
+                    changed = true;
                     continue;
                 }
                 long completedAt = clock.getAsLong();
@@ -515,6 +523,7 @@ public final class EndurainPublishingCoordinator {
                                 outcome.getRemoteIds(),
                                 completedAt);
                         delivered++;
+                        changed = true;
                         break;
                     case RETRYABLE:
                         long retryAt =
@@ -529,6 +538,7 @@ public final class EndurainPublishingCoordinator {
                                 "No request body was transmitted",
                                 completedAt);
                         nextPublishAt = earlier(nextPublishAt, retryAt);
+                        changed = true;
                         break;
                     case RATE_LIMITED:
                         long rateLimitAt = completedAt
@@ -543,6 +553,7 @@ public final class EndurainPublishingCoordinator {
                                 "Endurain supplied a bounded retry delay",
                                 completedAt);
                         nextPublishAt = earlier(nextPublishAt, rateLimitAt);
+                        changed = true;
                         break;
                     case UNKNOWN_DELIVERY:
                         repository.transitionConnectorDelivery(
@@ -555,6 +566,7 @@ public final class EndurainPublishingCoordinator {
                                 "Delivery requires explicit reconciliation or duplicate-risk confirmation",
                                 completedAt);
                         unknown++;
+                        changed = true;
                         break;
                     case AUTHENTICATION_REQUIRED:
                     case VALIDATION_REJECTED:
@@ -571,11 +583,15 @@ public final class EndurainPublishingCoordinator {
                                 "Endurain rejected the prepared upload",
                                 completedAt);
                         failed++;
+                        changed = true;
                         break;
                     default:
                         throw new AssertionError(outcome.getState());
                 }
             }
+        }
+        if (changed) {
+            changes.signal();
         }
         return new RunResult(
                 inspected,
@@ -591,12 +607,14 @@ public final class EndurainPublishingCoordinator {
             String failureMessage,
             long nowUtcMs) {
         long leaseToken = nextLeaseToken();
+        long leaseExpiresAt = nowUtcMs + LEASE_DURATION_MILLIS;
+        schedule.scheduleRecoveryAt(leaseExpiresAt);
         if (!repository.claimConnectorDelivery(
                 key.toRepositoryKey(),
                 ConnectorState.PENDING,
                 leaseToken,
                 LEASE_OWNER,
-                nowUtcMs + LEASE_DURATION_MILLIS,
+                leaseExpiresAt,
                 nowUtcMs)) {
             return false;
         }
