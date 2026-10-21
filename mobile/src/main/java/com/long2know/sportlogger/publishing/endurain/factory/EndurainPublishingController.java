@@ -4,11 +4,13 @@ import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository;
 import com.long2know.sportlogger.publishing.endurain.EndurainCredentialGateway;
 import com.long2know.sportlogger.publishing.endurain.EndurainDeliveryKey;
 import com.long2know.sportlogger.publishing.endurain.EndurainPublishingCoordinator;
+import com.long2know.sportlogger.publishing.endurain.EndurainPublishingChangeSignal;
 import com.long2know.sportlogger.publishing.endurain.profile.EndurainConnectionProfile;
 import com.long2know.sportlogger.publishing.endurain.profile.EndurainConnectionProfileStore;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +22,7 @@ public final class EndurainPublishingController implements AutoCloseable {
     private final PhoneActivityRepository repository;
     private final EndurainConnectionProfileStore profiles;
     private final EndurainPublishingCoordinator coordinator;
+    private final EndurainPublishingChangeSignal changes;
     private final ExecutorService worker;
     private final boolean ownsWorker;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -29,11 +32,13 @@ public final class EndurainPublishingController implements AutoCloseable {
             PhoneActivityRepository repository,
             EndurainConnectionProfileStore profiles,
             EndurainPublishingCoordinator coordinator,
+            EndurainPublishingChangeSignal changes,
             ExecutorService worker,
             boolean ownsWorker) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
+        this.changes = Objects.requireNonNull(changes, "changes");
         this.worker = Objects.requireNonNull(worker, "worker");
         this.ownsWorker = ownsWorker;
     }
@@ -102,7 +107,8 @@ public final class EndurainPublishingController implements AutoCloseable {
     public CompletableFuture<EndurainActionResult> reconcileRemoteIds(
             EndurainDeliveryKey deliveryKey,
             List<Long> confirmedRemoteIds) {
-        List<Long> immutableIds = List.copyOf(confirmedRemoteIds);
+        List<Long> immutableIds = Collections.unmodifiableList(
+                new ArrayList<>(confirmedRemoteIds));
         return submit(() -> coordinator.reconcileRemoteIds(
                 deliveryKey,
                 immutableIds));
@@ -140,9 +146,12 @@ public final class EndurainPublishingController implements AutoCloseable {
                 repository.observeChanges(callbackExecutor, listener);
         AutoCloseable profileObservation =
                 profiles.observe(callbackExecutor, listener);
+        AutoCloseable publishingObservation =
+                changes.observe(callbackExecutor, listener);
         AutoCloseable combined = () -> {
             closeQuietly(repositoryObservation);
             closeQuietly(profileObservation);
+            closeQuietly(publishingObservation);
         };
         observations.add(combined);
         return () -> {
@@ -163,7 +172,11 @@ public final class EndurainPublishingController implements AutoCloseable {
             closeQuietly(observation);
         }
         observations.clear();
-        repository.close();
+        try {
+            worker.execute(repository::close);
+        } catch (RuntimeException error) {
+            repository.close();
+        }
         if (ownsWorker) {
             worker.shutdown();
         }

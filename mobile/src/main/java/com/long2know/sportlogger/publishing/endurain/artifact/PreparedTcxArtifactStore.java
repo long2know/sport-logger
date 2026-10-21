@@ -41,6 +41,8 @@ public final class PreparedTcxArtifactStore {
     private static final int MANIFEST_MAGIC = 0x534c4531;
     private static final int MANIFEST_VERSION = 1;
     private static final long MAX_MANIFEST_BYTES = 64L * 1024L;
+    private static final long STAGING_STALE_MILLIS =
+            24L * 60L * 60L * 1_000L;
     private static final Pattern ARTIFACT_ID =
             Pattern.compile("[0-9a-f]{64}");
     private static final String ROOT_DIRECTORY = "endurain-publishing-v1";
@@ -172,6 +174,7 @@ public final class PreparedTcxArtifactStore {
         if (!root.exists()) {
             return Collections.emptyList();
         }
+        cleanupStagingDirectories();
         File[] directories = root.listFiles(file ->
                 file.isDirectory()
                         && ARTIFACT_ID.matcher(file.getName()).matches());
@@ -464,6 +467,33 @@ public final class PreparedTcxArtifactStore {
             throw new PreparedArtifactException(
                     "ARTIFACT_STORAGE_UNAVAILABLE",
                     "Prepared TCX storage is not a directory");
+        }
+        cleanupStagingDirectories();
+    }
+
+    private void cleanupStagingDirectories()
+            throws PreparedArtifactException {
+        File[] staging = root.listFiles(file ->
+                file.isDirectory()
+                        && file.getName().startsWith(".staging-"));
+        if (staging == null) {
+            throw new PreparedArtifactException(
+                    "ARTIFACT_STORAGE_UNAVAILABLE",
+                    "Could not inspect prepared TCX staging files");
+        }
+        long now = System.currentTimeMillis();
+        for (File directory : staging) {
+            long modified = directory.lastModified();
+            if (modified > 0L
+                    && now - modified <= STAGING_STALE_MILLIS) {
+                continue;
+            }
+            deleteStaging(directory);
+            if (directory.exists()) {
+                throw new PreparedArtifactException(
+                        "ARTIFACT_STORAGE_UNAVAILABLE",
+                        "Could not remove an interrupted TCX staging directory");
+            }
         }
     }
 
