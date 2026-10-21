@@ -298,6 +298,83 @@ public class ResourceOwnerTest {
         assertEquals(ResourceFailure.Code.PERMISSION_DENIED, listener.failures.get(0).getCode());
     }
 
+    @Test
+    public void repeatedStartAndActivityRebindCannotDuplicatePlatformRegistration()
+            throws Exception {
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger activeRegistrations = new AtomicInteger();
+        AtomicInteger maximumRegistrations = new AtomicInteger();
+        CountDownLatch firstOpen = new CountDownLatch(1);
+        CountDownLatch secondOpen = new CountDownLatch(1);
+        ResourceOwner owner = owner(
+                "rebind",
+                (ownership, sink) -> {
+                    int active = activeRegistrations.incrementAndGet();
+                    maximumRegistrations.accumulateAndGet(active, Math::max);
+                    int open = opens.incrementAndGet();
+                    ownership.own(
+                            "listener",
+                            () -> activeRegistrations.decrementAndGet());
+                    if (open == 1) {
+                        firstOpen.countDown();
+                    } else {
+                        secondOpen.countDown();
+                    }
+                },
+                new RecordingListener(),
+                attempt -> 1L);
+
+        assertTrue(owner.startAsync());
+        assertFalse(owner.startAsync());
+        assertTrue(firstOpen.await(1, TimeUnit.SECONDS));
+        assertEquals(1, activeRegistrations.get());
+
+        assertTrue(owner.suspendAsync());
+        assertTrue(waitUntil(() -> activeRegistrations.get() == 0, 1_000L));
+        assertTrue(owner.startAsync());
+        assertTrue(secondOpen.await(1, TimeUnit.SECONDS));
+        assertEquals(1, activeRegistrations.get());
+        assertEquals(1, maximumRegistrations.get());
+    }
+
+    @Test
+    public void refreshClosesOldGenerationBeforeReopening() throws Exception {
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger closes = new AtomicInteger();
+        AtomicInteger activeRegistrations = new AtomicInteger();
+        AtomicInteger maximumRegistrations = new AtomicInteger();
+        CountDownLatch firstOpen = new CountDownLatch(1);
+        CountDownLatch secondOpen = new CountDownLatch(1);
+        ResourceOwner owner = owner(
+                "refresh",
+                (ownership, sink) -> {
+                    int active = activeRegistrations.incrementAndGet();
+                    maximumRegistrations.accumulateAndGet(active, Math::max);
+                    int open = opens.incrementAndGet();
+                    ownership.own("listener", () -> {
+                        closes.incrementAndGet();
+                        activeRegistrations.decrementAndGet();
+                    });
+                    if (open == 1) {
+                        firstOpen.countDown();
+                    } else {
+                        secondOpen.countDown();
+                    }
+                },
+                new RecordingListener(),
+                attempt -> 1L);
+
+        owner.startAsync();
+        assertTrue(firstOpen.await(1, TimeUnit.SECONDS));
+        assertTrue(owner.refreshAsync());
+        assertTrue(secondOpen.await(1, TimeUnit.SECONDS));
+
+        assertEquals(2, opens.get());
+        assertEquals(1, closes.get());
+        assertEquals(1, activeRegistrations.get());
+        assertEquals(1, maximumRegistrations.get());
+    }
+
     private ResourceOwner owner(
             String name,
             ResourceOwner.Source source,

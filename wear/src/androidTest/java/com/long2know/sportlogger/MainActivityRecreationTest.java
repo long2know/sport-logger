@@ -1,6 +1,7 @@
 package com.long2know.sportlogger;
 
 import android.Manifest;
+import android.view.View;
 import android.widget.TextView;
 
 import androidx.fragment.app.Fragment;
@@ -11,6 +12,7 @@ import androidx.test.rule.GrantPermissionRule;
 
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
+import com.long2know.sportlogger.acquisition.RouteStatus;
 import com.long2know.utilities.models.SharedData;
 
 import org.junit.After;
@@ -23,11 +25,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(AndroidJUnit4.class)
-@SdkSuppress(minSdkVersion = 33)
+@SdkSuppress(minSdkVersion = 36)
 public class MainActivityRecreationTest {
     @Rule
     public final GrantPermissionRule permissions = GrantPermissionRule.grant(
-            Manifest.permission.BODY_SENSORS,
+            "android.permission.health.READ_HEART_RATE",
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACTIVITY_RECOGNITION,
@@ -57,16 +59,38 @@ public class MainActivityRecreationTest {
         }
     }
 
+    @Test
+    public void routeDegradationIsNonmodalAndRestoredActivityClearsItOnRecovery() {
+        try (ActivityScenario<MainActivity> scenario =
+                     ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                showRecording(activity);
+                activity.onRouteStatusChanged(RouteStatus.LOCATION_DISABLED);
+                TextView route = activity.findViewById(R.id.routeStatus);
+                assertEquals(View.VISIBLE, route.getVisibility());
+                assertEquals(
+                        activity.getString(R.string.route_status_location_disabled),
+                        route.getText().toString());
+            });
+
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                showRecording(activity);
+                activity.onRouteStatusChanged(RouteStatus.LOCATION_DISABLED);
+                activity.onRouteStatusChanged(RouteStatus.LOCATION_DISABLED);
+                activity.onRouteStatusChanged(RouteStatus.AVAILABLE);
+                TextView route = activity.findViewById(R.id.routeStatus);
+                assertEquals(View.GONE, route.getVisibility());
+                assertTrue(SharedData.getInstance().isRecording());
+            });
+        }
+    }
+
     private static void assertLiveUpdate(
             MainActivity activity,
             int steps,
             String duration) {
-        activity.onRecordingStateChanged(new RecordingSnapshot(
-                RecordingState.RECORDING,
-                91,
-                17_000L,
-                null));
-        activity.getSupportFragmentManager().executePendingTransactions();
+        showRecording(activity);
 
         SharedData sharedData = SharedData.getInstance();
         sharedData.setSteps(steps);
@@ -88,5 +112,14 @@ public class MainActivityRecreationTest {
             }
         }
         assertEquals(1, sensorFragments);
+    }
+
+    private static void showRecording(MainActivity activity) {
+        activity.onRecordingStateChanged(new RecordingSnapshot(
+                RecordingState.RECORDING,
+                91,
+                17_000L,
+                null));
+        activity.getSupportFragmentManager().executePendingTransactions();
     }
 }
