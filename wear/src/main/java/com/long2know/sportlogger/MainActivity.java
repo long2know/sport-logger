@@ -24,6 +24,7 @@ import androidx.wear.widget.drawer.WearableNavigationDrawerView;
 
 import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
 import com.long2know.sportlogger.acquisition.RouteStatus;
+import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.services.ISportLoggerServiceClient;
@@ -124,6 +125,11 @@ public final class MainActivity extends FragmentActivity implements
     public void onRouteStatusChanged(RouteStatus status) {
         routeStatus = status;
         sensorFragment.setRouteStatus(status);
+    }
+
+    @Override
+    public void onAcquisitionStateChanged(
+            HealthServicesExerciseSnapshot snapshot) {
     }
 
     @Override

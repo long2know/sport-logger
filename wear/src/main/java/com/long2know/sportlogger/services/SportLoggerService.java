@@ -249,6 +249,9 @@ public final class SportLoggerService extends Service {
         if (recordingController != null) {
             client.onRecordingStateChanged(recordingController.getSnapshot());
         }
+        if (healthServicesManager != null) {
+            client.onAcquisitionStateChanged(healthServicesManager.getSnapshot());
+        }
         client.onRouteStatusChanged(routeStatus.get());
         client.onLoggerUpdate(SharedData.getInstance());
     }
@@ -632,6 +635,7 @@ public final class SportLoggerService extends Service {
     private void handleHealthServicesSnapshot(
             HealthServicesExerciseSnapshot snapshot) {
         measurementBridge.configure(snapshot.getActiveHealthServicesMetrics());
+        clients.dispatch(client -> client.onAcquisitionStateChanged(snapshot));
         if ((snapshot.getState() == HealthServicesExerciseSnapshot.State.STARTING
                 || snapshot.getState() == HealthServicesExerciseSnapshot.State.ACTIVE)
                 && snapshot.getActiveHealthServicesMetrics()

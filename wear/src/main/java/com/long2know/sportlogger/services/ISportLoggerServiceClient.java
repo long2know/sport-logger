@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.services;
 
 import com.long2know.sportlogger.acquisition.RouteStatus;
+import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot;
 import com.long2know.utilities.models.SharedData;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 
@@ -10,6 +11,8 @@ public interface ISportLoggerServiceClient {
     void onRecordingStateChanged(RecordingSnapshot snapshot);
 
     void onRouteStatusChanged(RouteStatus status);
+
+    void onAcquisitionStateChanged(HealthServicesExerciseSnapshot snapshot);
 
     void onLoggerError(String code, String message);
 }
