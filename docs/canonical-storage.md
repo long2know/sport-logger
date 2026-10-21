@@ -142,6 +142,11 @@ joined to its matching outbox across READY, SENDING, AWAITING_COMMIT_ACK, RETRYA
 The existing Room invalidation observer now covers sessions, laps, and outboxes so UI integration
 does not need DAO access or polling.
 
+`WatchDatabase.open(context)` owns one lazy process-wide Room instance. Long-lived recording and
+short-lived sync repositories share that instance, while each repository owns only its executor.
+Closing a repository never closes the shared database, preventing concurrent service/job opens from
+contending on Room journal-mode initialization.
+
 Trinity owns service/controller actions, valid-state command results, selected activity type
 journaling, and callback/snapshot mapping. Switch consumes only those service callbacks and the
 read-only completed presentation API; UI does not own clocks, lap counters, or direct Room access.
