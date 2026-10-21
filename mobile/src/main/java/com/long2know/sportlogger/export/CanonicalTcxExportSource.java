@@ -25,16 +25,55 @@ public final class CanonicalTcxExportSource implements TcxExportSource {
     private final PhoneActivityRepository repository;
     private final PhoneActivityRepository.ActivityDetail detail;
     private final ActivityRecord activity;
+    private final MetadataSnapshot metadata;
     private final List<String> formatWarnings;
 
     public CanonicalTcxExportSource(
             PhoneActivityRepository repository,
             PhoneActivityRepository.ActivityDetail detail) {
+        this(repository, detail, MetadataSnapshot.from(detail.getMetadata()));
+    }
+
+    private CanonicalTcxExportSource(
+            PhoneActivityRepository repository,
+            PhoneActivityRepository.ActivityDetail detail,
+            MetadataSnapshot metadata) {
         this.repository = Objects.requireNonNull(repository);
         this.detail = Objects.requireNonNull(detail);
         this.activity = detail.getActivity();
+        this.metadata = Objects.requireNonNull(metadata);
         this.formatWarnings =
                 Collections.unmodifiableList(findFormatWarnings(activity));
+    }
+
+    public static CanonicalTcxExportSource fromRevision(
+            PhoneActivityRepository repository,
+            String sessionId,
+            long revision,
+            MetadataSnapshot frozenMetadata) {
+        PhoneActivityRepository.ActivityDetail detail =
+                Objects.requireNonNull(repository).detail(sessionId, revision);
+        if (detail == null) {
+            throw new IllegalArgumentException(
+                    "Canonical activity revision does not exist");
+        }
+        return new CanonicalTcxExportSource(
+                repository,
+                detail,
+                Objects.requireNonNull(frozenMetadata));
+    }
+
+    public static CanonicalTcxExportSource fromCurrentMetadata(
+            PhoneActivityRepository repository,
+            String sessionId,
+            long revision) {
+        PhoneActivityRepository.ActivityDetail detail =
+                Objects.requireNonNull(repository).detail(sessionId, revision);
+        if (detail == null) {
+            throw new IllegalArgumentException(
+                    "Canonical activity revision does not exist");
+        }
+        return new CanonicalTcxExportSource(repository, detail);
     }
 
     @Override
@@ -144,9 +183,11 @@ public final class CanonicalTcxExportSource implements TcxExportSource {
     @Override
     public String getNotes() {
         List<String> sections = new ArrayList<>();
-        PhoneActivityRepository.Metadata metadata = detail.getMetadata();
         addNonBlank(sections, metadata.getTitle());
         addNonBlank(sections, metadata.getNotes());
+        if (!metadata.getTags().isEmpty()) {
+            sections.add("Tags: " + String.join(", ", metadata.getTags()));
+        }
         if ((metadata.getTitle() == null || metadata.getTitle().trim().isEmpty())
                 && activity.hasRecordedName()) {
             addNonBlank(sections, activity.getRecordedName());
@@ -173,6 +214,18 @@ public final class CanonicalTcxExportSource implements TcxExportSource {
 
     public List<String> getFormatWarnings() {
         return formatWarnings;
+    }
+
+    public String getSessionId() {
+        return detail.getSessionId();
+    }
+
+    public long getRevision() {
+        return detail.getRevision();
+    }
+
+    public MetadataSnapshot getMetadataSnapshot() {
+        return metadata;
     }
 
     private static Integer roundedMeasurement(DoubleMeasurement measurement) {
@@ -343,6 +396,51 @@ public final class CanonicalTcxExportSource implements TcxExportSource {
                 throw new IllegalStateException("Current canonical point has no position");
             }
             return current.getLocation().getValue();
+        }
+    }
+
+    public static final class MetadataSnapshot {
+        private final String title;
+        private final String notes;
+        private final List<String> tags;
+        private final long updatedAtUtcMs;
+
+        public MetadataSnapshot(
+                String title,
+                String notes,
+                List<String> tags,
+                long updatedAtUtcMs) {
+            this.title = title;
+            this.notes = notes;
+            this.tags = Collections.unmodifiableList(
+                    new ArrayList<>(tags == null ? Collections.emptyList() : tags));
+            this.updatedAtUtcMs = updatedAtUtcMs;
+        }
+
+        public static MetadataSnapshot from(
+                PhoneActivityRepository.Metadata metadata) {
+            Objects.requireNonNull(metadata);
+            return new MetadataSnapshot(
+                    metadata.getTitle(),
+                    metadata.getNotes(),
+                    metadata.getTags(),
+                    metadata.getUpdatedAtUtcMs());
+        }
+
+        public String getTitle() {
+            return title;
+        }
+
+        public String getNotes() {
+            return notes;
+        }
+
+        public List<String> getTags() {
+            return tags;
+        }
+
+        public long getUpdatedAtUtcMs() {
+            return updatedAtUtcMs;
         }
     }
 }

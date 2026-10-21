@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.export;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -185,6 +186,44 @@ public final class CanonicalTcxExportSourceTest {
         assertTrue(placeholders.contains("Sport"));
     }
 
+    @Test
+    public void frozenMetadataReconstructsIdenticalArtifactAfterPhoneEdit() throws Exception {
+        accept(activity(3));
+        repository.setMetadata(
+                SESSION_ID,
+                "Frozen title",
+                "Frozen notes",
+                List.of("easy", "synthetic"),
+                START + 10_000L);
+        CanonicalTcxExportSource.MetadataSnapshot frozen =
+                CanonicalTcxExportSource.MetadataSnapshot.from(
+                        repository.metadata(SESSION_ID));
+        byte[] first = write(CanonicalTcxExportSource.fromRevision(
+                repository,
+                SESSION_ID,
+                1L,
+                frozen));
+
+        repository.setMetadata(
+                SESSION_ID,
+                "Later title",
+                "Later notes",
+                List.of("changed"),
+                START + 20_000L);
+        byte[] reconstructed = write(CanonicalTcxExportSource.fromRevision(
+                repository,
+                SESSION_ID,
+                1L,
+                frozen));
+        byte[] current = write(CanonicalTcxExportSource.fromCurrentMetadata(
+                repository,
+                SESSION_ID,
+                1L));
+
+        assertArrayEquals(first, reconstructed);
+        assertFalse(java.util.Arrays.equals(first, current));
+    }
+
     private void accept(ActivityRecord activity) {
         repository.acceptActivityTransfer(
                 CanonicalTransfers.activityTransfer(
@@ -192,6 +231,12 @@ public final class CanonicalTcxExportSourceTest {
                                 CanonicalPayload.create(activity))
                         .toByteArray(),
                 START + 120_000L);
+    }
+
+    private static byte[] write(CanonicalTcxExportSource source) throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new TcxWriter().write(source, output);
+        return output.toByteArray();
     }
 
     private static ActivityRecord activity(int sampleCount) {
