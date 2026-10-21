@@ -87,7 +87,8 @@ checkpoint:
 
 The focused instrumentation probe was temporary and removed after capture. Production
 sources and manifests remained unchanged. This checkpoint proves the phone sideload path;
-the final watch device matrix and combined pair retain their separate acceptance gates.
+the separately validated watch matrix is documented below, while physical and actual
+paired-device acceptance remain external.
 
 ### Final watch source and device matrix
 
@@ -111,13 +112,27 @@ The final device lanes remain separate:
 | --- | --- |
 | Phone sideload user flow | Passed: 7 existing main Compose tests plus 1 write-only Health Connect main-UI publish/delete test. |
 | Watch source/host tests | Passed: 164 Wear JVM tests in the final integrated build. |
-| Historical predecessor sideload flows | Passed ordinary, partial/zero-health, settings, start/lap/pause/resume/direct-finish, offline-summary, and retry paths; not the final corrected-head gate. |
-| Final watch debug QA components | 12-test result pending; do not claim passed. |
-| Final watch sideload user flows | Result pending; do not claim passed. |
+| Final watch debug QA components | Passed: matching debug app/test APKs, 12/12. |
+| Final watch sideload compatibility | Passed: normal `adb install -r`, same signer, non-debuggable package, and 3/3 legitimate Room migration/repository and activity-recreation tests. |
+| Final watch sideload launcher flow | Passed: single start, sourced live metrics, lap, pause/resume, direct paused finish, canonical summary, and offline retry. |
 
 Generic `ComponentActivity` fixtures are part of the debug-only test host and are
 intentionally absent from the sideload app. Their launch failure in that invalid lane is
-not a product crash and is not a substitute for the final sideload user-flow result.
+not a product crash and is not a substitute for the legitimate sideload tests.
+
+The final source-head gate used a synthetic 454×454 Wear OS 6 / API 36 device. With activity
+recognition granted and notifications, location, and heart-rate denied, one Start Running
+tap began recording without a permission loop. The service entered the foreground once.
+Distance and steps appeared with Health Services source labels, location stayed explicitly
+permission-denied, and missing values were not fabricated as zero. The final saved summary
+showed active `02:09`, elapsed `03:37`, distance `294 m`, `254` steps, `2` laps, and truthful
+offline retry. Filtered logs had zero critical fatal, ANR, database-lock/Room, command-
+rejection, or security matches.
+
+The evidence set contains 21 current PNG screenshots and 20 UI hierarchies with recorded
+checksums. It is synthetic emulator evidence only: it does not prove physical raw-hardware
+measurement, physical battery behavior, square hardware, or an actual paired-phone commit
+acknowledgement.
 
 The exact full CI command completed successfully after source alignment. JUnit XML totals
 were:

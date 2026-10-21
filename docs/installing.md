@@ -6,9 +6,10 @@ existing Gradle debug signing configuration so Android can install it. That cert
 is a development identity for manual installation, not a production or Play signing
 identity.
 
-The final watch Compose source and packaging are approved. Its final corrected-head API 36
-device gate is still pending: do not report the separate 12-test debug QA component lane or
-the sideload user-flow lane as passed until their final results are available.
+The final watch Compose source, packaging, and synthetic Wear API 36 device gate are approved.
+The debug QA and sideload lanes remain distinct: 12/12 debug component tests passed, while
+the normal non-debuggable sideload app passed 3/3 legitimate Room/recreation tests and the
+manual launcher recording flow.
 
 The debug APKs remain QA artifacts. In particular, the phone debug APK intentionally
 includes verification-only Health Connect `READ_*` permissions and a debug consent-test
@@ -40,8 +41,8 @@ actions against the real provider: provider IDs were returned, persisted receipt
 from `UPSERTED` to `DELETED`, and the granted read-permission set stayed empty. The temporary
 test-only probe was removed afterward; no production source or permission change was needed.
 
-This proves the phone user variant, not only a debug harness. It does not approve the current
-watch device gate or replace the external Play/signing and physical-device gates.
+This proves the phone user variant, not only a debug harness. The watch gate below is separate;
+neither device lane replaces the external Play/signing and physical-device gates.
 
 ## Watch source and device boundary
 
@@ -52,16 +53,20 @@ ambient active/elapsed minute updates, and raw-fallback live rendering.
 
 Historical sideload evidence from its accepted predecessor covered ordinary and partial/
 zero-health permission paths, settings recovery, start, lap, pause/resume, direct paused
-finish, and offline summary/retry. That evidence is not the final corrected-head device
-gate. The final matrix remains:
+finish, and offline summary/retry. The final corrected-head matrix then passed:
 
-- **Debug QA component lane:** 12 tests, result pending.
-- **Sideload user-flow lane:** result pending.
+- **Debug QA component lane:** matching debug app/test APKs; 12/12 passed.
+- **Sideload compatibility lane:** normal `adb install -r`, same signer, non-debuggable app;
+  3/3 Room migration/repository and activity-recreation tests passed.
+- **Sideload launcher flow:** single start, sourced live metrics, manual lap, pause/resume,
+  direct paused finish, canonical summary, and offline retry passed. The saved synthetic
+  summary showed 294 m, 254 steps, and 2 laps.
 
 Generic `ComponentActivity` fixtures belong to the debug-only test host and are intentionally
 absent from the sideload user app. Attempting those fixtures in the sideload lane is an
 invalid test configuration, not evidence of a product crash, and does not replace the real
-sideload flows.
+sideload flows. Final filtered logs had zero matches for the critical fatal, ANR, database,
+command-rejection, and security patterns.
 
 Watch-to-phone transfer uses Google Play services. Both apps must have the same package
 name and signing certificate; SportLogger intentionally uses `com.long2know.sportlogger`
@@ -195,5 +200,4 @@ battery life, or successful pairing with a particular watch model.
 Release signing, Play declarations, and physical-device acceptance are separate from
 building and manually installing these development APKs. API 36 emulator evidence does
 not prove physical heart-rate or GNSS accuracy, battery life, square-watch hardware,
-live paired-device acknowledgement, third-party production service acceptance, or the
-still-pending final corrected-head watch device matrix.
+live paired-device acknowledgement, or third-party production service acceptance.

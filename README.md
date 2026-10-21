@@ -19,10 +19,10 @@ provenance and quality, so no sample remains different from an actually recorded
 > `sideload` user variant are approved with API 36 device and host-test evidence, and the
 > final watch Compose source is formally approved. The integrated host build passes all 318 JVM
 > tests (132 phone, 164 watch, 22 utilities) with zero failures, errors, or skips. The final
-> corrected watch head still needs its actual API 36 device gate: the separate 12-test debug QA
-> component lane and the sideload user-flow lane have not yet been reported as passing.
-> Production/Play signing and declarations, physical sensors and battery, square-watch hardware,
-> and an actual paired-device commit acknowledgement remain separate release gates.
+> synthetic Wear API 36 device gate also passed: 12/12 debug QA component tests, 3/3 legitimate
+> sideload Room/recreation tests, and the actual launcher recording flow. Production/Play
+> signing and declarations, physical sensors and battery, square-watch hardware, and an actual
+> paired-device commit acknowledgement remain separate release gates.
 
 ## Features
 
@@ -41,9 +41,9 @@ provenance and quality, so no sample remains different from an actually recorded
 
 ## Product screens
 
-These synthetic API 36 emulator results show the approved phone UI and the watch UI surface.
-The watch screenshots predate the final source corrections and are visual examples, not proof
-that the pending final debug/sideload device matrix passed.
+These synthetic API 36 emulator results show the approved phone UI and watch UI surface. The
+final watch gate retained a separate current evidence set of 21 screenshots and 20 UI
+hierarchies with checksums; the images below remain representative visual examples.
 
 | Persisted phone history | Watch readiness and activity selection |
 |---|---|
@@ -75,8 +75,8 @@ unchanged.
 
 ### Record on the watch
 
-The following source behavior is formally approved; the final corrected-head device gate is
-still pending.
+The following source behavior is formally approved and passed the final synthetic Wear API 36
+device gate.
 
 1. Choose an activity and review capability and permission status.
 2. Grant at least one health prerequisite: heart rate or activity recognition. Route and
@@ -249,12 +249,11 @@ The [Cycle 3 modernization roadmap](docs/modernization-roadmap.md) is the histor
 design and acceptance plan. Its core implementation milestones now exist: the JDK 17/API 36
 toolchain, canonical protobuf and Room storage, capability-aware recording, durable Data Layer
 transfer and commit acknowledgement, approved Compose phone/watch source, TCX save/share,
-Health Connect publication, and the Endurain TCX publishing workflow.
+Health Connect publication, and the Endurain TCX publishing workflow. The final synthetic watch
+device matrix passed its separate debug QA and sideload user-flow lanes.
 
 Remaining release acceptance is deliberately narrower and evidence-based:
 
-- complete the final corrected watch device matrix: 12 debug QA component tests and the
-  separate sideload user flows;
 - exercise a real paired phone/watch commit-acknowledgement path;
 - validate physical heart-rate, GNSS, off-body, battery, and square-watch behavior;
 - validate against a disposable supported Endurain deployment;
