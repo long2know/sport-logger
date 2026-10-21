@@ -31,7 +31,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class WatchSyncFinishHookTest {
     private static final String SESSION_ID = "45110f45-e214-4810-9524-65ad21c213cd";
     private static final String TRANSFER_ID = "077ec2d0-92bb-4775-a8bb-853c23ad7985";

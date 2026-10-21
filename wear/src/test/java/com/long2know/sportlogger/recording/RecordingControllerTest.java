@@ -281,7 +281,7 @@ public class RecordingControllerTest {
 
         controller.start();
         snapshots.awaitState(RecordingState.RECORDING);
-        journal.failWrites.set(1);
+        journal.failState = RecordingState.STOPPING;
         controller.stop();
 
         RecordingSnapshot failed = snapshots.awaitError(RecordingError.Code.DURABILITY);
@@ -317,6 +317,158 @@ public class RecordingControllerTest {
         controller.closeAsync();
     }
 
+    @Test
+    public void elapsedDurationIgnoresWallClockChangesAndEndsFromMonotonicTime()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        FakeStore store = new FakeStore();
+        FakeExporter exporter = new FakeExporter();
+        MutableClock clock = new MutableClock(100_000L);
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = controller(
+                journal,
+                store,
+                exporter,
+                worker(),
+                clock,
+                snapshots);
+
+        controller.start();
+        snapshots.awaitState(RecordingState.RECORDING);
+        clock.advanceElapsed(5_000L);
+        clock.setWall(10_000L);
+        controller.pause();
+        assertEquals(
+                5_000L,
+                snapshots.awaitState(RecordingState.PAUSED).getDurationMillis());
+
+        clock.advanceElapsed(3_000L);
+        controller.resume();
+        snapshots.awaitState(RecordingState.RECORDING);
+        clock.advanceElapsed(2_000L);
+        clock.setWall(9_000_000L);
+        controller.stop();
+        RecordingSnapshot pending =
+                snapshots.awaitState(RecordingState.EXPORT_PENDING);
+
+        assertEquals(7_000L, pending.getDurationMillis());
+        assertEquals(10_000L, pending.getElapsedDurationMillis());
+        assertEquals(
+                110_000L,
+                store.activities.get(1).EndTimeUTC.getTime());
+        assertTrue(exporter.awaitCount(1, 1_000L));
+        exporter.queue(0);
+        controller.closeAsync();
+    }
+
+    @Test
+    public void sameBootProcessRecoveryUsesElapsedRealtimeDespiteWallClockJump()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        journal.state = new PersistentRecording(
+                RecordingState.RECORDING,
+                1,
+                1_000L,
+                50_000L,
+                10_000L,
+                2_000L,
+                0L,
+                7,
+                null);
+        FakeStore store = new FakeStore();
+        store.addActivity(1, 1_000L);
+        MutableClock clock = new MutableClock(900_000L);
+        clock.setElapsed(15_000L);
+        clock.setBoot(7);
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = controller(
+                journal,
+                store,
+                new FakeExporter(),
+                worker(),
+                clock,
+                snapshots);
+
+        controller.recover();
+
+        assertEquals(
+                7_000L,
+                snapshots.awaitState(RecordingState.RECORDING).getDurationMillis());
+        controller.closeAsync();
+    }
+
+    @Test
+    public void deviceRestartBecomesDurableInterruptedStateWithoutResettingDuration()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        journal.state = new PersistentRecording(
+                RecordingState.RECORDING,
+                1,
+                1_000L,
+                50_000L,
+                10_000L,
+                4_000L,
+                0L,
+                7,
+                null);
+        MutableClock clock = new MutableClock(2_000L);
+        clock.setElapsed(500L);
+        clock.setBoot(8);
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = controller(
+                journal,
+                new FakeStore(),
+                new FakeExporter(),
+                worker(),
+                clock,
+                snapshots);
+
+        controller.recover();
+
+        RecordingSnapshot interrupted =
+                snapshots.awaitState(RecordingState.INTERRUPTED);
+        assertEquals(4_000L, interrupted.getDurationMillis());
+        assertEquals(
+                RecordingError.Code.BOOT_INTERRUPTION,
+                interrupted.getError().getCode());
+        assertEquals(RecordingState.INTERRUPTED, journal.state.getState());
+        controller.closeAsync();
+    }
+
+    @Test
+    public void stopDoesNotFinishOrExportUntilAcquisitionFinalDataCompletes()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        FakeStore store = new FakeStore();
+        FakeExporter exporter = new FakeExporter();
+        FakeTerminator terminator = new FakeTerminator();
+        SnapshotRecorder snapshots = new SnapshotRecorder();
+        RecordingController controller = controller(
+                journal,
+                store,
+                exporter,
+                terminator,
+                worker(),
+                new MutableClock(60_000L),
+                snapshots);
+
+        controller.start();
+        snapshots.awaitState(RecordingState.RECORDING);
+        controller.stop();
+        snapshots.awaitState(RecordingState.STOPPING);
+
+        assertTrue(terminator.entered.await(1, TimeUnit.SECONDS));
+        assertEquals(0, store.finishAttempts.get());
+        assertFalse(exporter.awaitCount(1, 50L));
+
+        terminator.complete();
+        snapshots.awaitState(RecordingState.EXPORT_PENDING);
+        assertEquals(1, store.finishAttempts.get());
+        assertTrue(store.writeAttempts.get() >= 1);
+        assertTrue(exporter.awaitCount(1, 1_000L));
+        controller.closeAsync();
+    }
+
     private RecordingController controller(
             InMemoryJournal journal,
             FakeStore store,
@@ -335,6 +487,26 @@ public class RecordingControllerTest {
                 attempt -> 5L);
     }
 
+    private RecordingController controller(
+            InMemoryJournal journal,
+            FakeStore store,
+            FakeExporter exporter,
+            RecordingSessionTerminator terminator,
+            ScheduledThreadPoolExecutor worker,
+            MutableClock clock,
+            SnapshotRecorder snapshots) throws Exception {
+        return new RecordingController(
+                journal,
+                store,
+                exporter,
+                terminator,
+                worker,
+                Runnable::run,
+                clock,
+                snapshots,
+                attempt -> 5L);
+    }
+
     private ScheduledThreadPoolExecutor worker() {
         ScheduledThreadPoolExecutor worker = new ScheduledThreadPoolExecutor(1);
         worker.setRemoveOnCancelPolicy(true);
@@ -344,19 +516,49 @@ public class RecordingControllerTest {
     }
 
     private static final class MutableClock implements RecordingController.Clock {
-        private final AtomicLong now;
+        private final AtomicLong wall;
+        private final AtomicLong elapsed;
+        private final AtomicInteger boot = new AtomicInteger(1);
 
         private MutableClock(long now) {
-            this.now = new AtomicLong(now);
+            this.wall = new AtomicLong(now);
+            this.elapsed = new AtomicLong(now);
         }
 
         @Override
         public long currentTimeMillis() {
-            return now.get();
+            return wall.get();
+        }
+
+        @Override
+        public long elapsedRealtimeMillis() {
+            return elapsed.get();
+        }
+
+        @Override
+        public int bootCount() {
+            return boot.get();
         }
 
         private void advance(long millis) {
-            now.addAndGet(millis);
+            wall.addAndGet(millis);
+            elapsed.addAndGet(millis);
+        }
+
+        private void advanceElapsed(long millis) {
+            elapsed.addAndGet(millis);
+        }
+
+        private void setWall(long millis) {
+            wall.set(millis);
+        }
+
+        private void setElapsed(long millis) {
+            elapsed.set(millis);
+        }
+
+        private void setBoot(int value) {
+            boot.set(value);
         }
     }
 
@@ -365,6 +567,7 @@ public class RecordingControllerTest {
         private final AtomicInteger failWrites = new AtomicInteger();
         private volatile PersistentRecording state = PersistentRecording.idle();
         private volatile RuntimeException readFailure;
+        private volatile RecordingState failState;
 
         @Override
         public long acquireLease() {
@@ -383,6 +586,10 @@ public class RecordingControllerTest {
         public synchronized void write(long lease, PersistentRecording recording) {
             if (!isCurrent(lease)) {
                 throw new IllegalStateException("stale lease");
+            }
+            if (recording.getState() == failState) {
+                failState = null;
+                throw new IllegalStateException("journal unavailable");
             }
             if (failWrites.getAndUpdate(value -> Math.max(0, value - 1)) > 0) {
                 throw new IllegalStateException("journal unavailable");
@@ -409,6 +616,7 @@ public class RecordingControllerTest {
         private final AtomicInteger nextId = new AtomicInteger();
         private final AtomicInteger createCount = new AtomicInteger();
         private final AtomicInteger finishAttempts = new AtomicInteger();
+        private final AtomicInteger writeAttempts = new AtomicInteger();
         private final AtomicInteger finishFailures = new AtomicInteger();
         private final Map<Integer, SportActivity> activities = new ConcurrentHashMap<>();
         private final CountDownLatch finishEntered = new CountDownLatch(1);
@@ -428,6 +636,7 @@ public class RecordingControllerTest {
 
         @Override
         public void writeSample(int activityId) {
+            writeAttempts.incrementAndGet();
             if (!activities.containsKey(activityId)) {
                 throw new IllegalStateException("missing activity");
             }
@@ -462,6 +671,34 @@ public class RecordingControllerTest {
                 throw new IllegalStateException("missing activity");
             }
             return activity;
+        }
+
+        private void addActivity(int activityId, long startedAtMillis) {
+            SportActivity activity = new SportActivity();
+            activity.Id = activityId;
+            activity.StartTimeUTC = new Date(startedAtMillis);
+            activities.put(activityId, activity);
+            nextId.set(Math.max(nextId.get(), activityId));
+        }
+    }
+
+    private static final class FakeTerminator
+            implements RecordingSessionTerminator {
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private volatile Callback callback;
+
+        @Override
+        public void endSession(
+                int activityId,
+                boolean preserveFinalData,
+                RecordingSnapshot finalSnapshot,
+                Callback callback) {
+            this.callback = callback;
+            entered.countDown();
+        }
+
+        private void complete() {
+            callback.onComplete();
         }
     }
 

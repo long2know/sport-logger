@@ -35,7 +35,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class LegacyWatchMigratorTest {
     private static final String SOURCE_IDENTITY = "sportlogger:test-watch:legacy-db";
 

@@ -25,7 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class WearChannelFileSenderTest {
     private static final String NODE_ID = "phone-node";
     private static final String TRANSFER_ID = "7ba85aad-aed1-4a22-80df-eb42abfd2470";

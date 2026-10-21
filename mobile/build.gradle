@@ -5,7 +5,7 @@ android {
     namespace = 'com.long2know.sportlogger'
     compileSdk = 36
     buildToolsVersion = '36.0.0'
-    enableKotlin = false
+    enableKotlin = true
 
     defaultConfig {
         applicationId = 'com.long2know.sportlogger'
@@ -54,15 +54,18 @@ dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation 'androidx.appcompat:appcompat:1.8.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.2.2'
+    implementation 'androidx.health.connect:connect-client:1.1.0'
     implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
     implementation 'androidx.room:room-runtime:2.8.5'
     implementation 'com.google.android.gms:play-services-wearable:20.0.1'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
     implementation project(':utilities')
     annotationProcessor 'androidx.room:room-compiler:2.8.5'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'androidx.room:room-testing:2.8.5'
     testImplementation 'androidx.test:core:1.7.0'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
     testImplementation 'org.robolectric:robolectric:4.17'
     androidTestImplementation 'androidx.test:runner:1.7.0'
     androidTestImplementation 'androidx.test.ext:junit:1.3.0'
