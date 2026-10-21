@@ -27,6 +27,63 @@ import com.long2know.sportlogger.ui.SportLoggerPhoneRoute
 import com.long2know.utilities.export.tcx.TcxWriter
 import java.io.File
 
+internal class ActivityReceiptReceiver(
+    private val onActivityReceived: () -> Unit,
+    private val onHistoryChanged: () -> Unit,
+) : BroadcastReceiver() {
+    override fun onReceive(
+        context: Context,
+        intent: Intent,
+    ) {
+        if (intent.action == ListenerService.ACTION_ACTIVITY_RECEIVED) {
+            onActivityReceived()
+        } else {
+            onHistoryChanged()
+        }
+    }
+
+    companion object {
+        fun intentFilter(): IntentFilter =
+            IntentFilter(ListenerService.ACTION_ACTIVITY_RECEIVED)
+    }
+}
+
+internal class CanonicalSyncReceiver(
+    private val onCanonicalSyncHint: (Boolean) -> Unit,
+    private val onCanonicalSyncFailure: () -> Unit,
+    private val onTombstoneSyncState: (String) -> Unit,
+) : BroadcastReceiver() {
+    override fun onReceive(
+        context: Context,
+        intent: Intent,
+    ) {
+        when (intent.action) {
+            PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED ->
+                onCanonicalSyncHint(
+                    intent.getBooleanExtra(
+                        PhoneSyncEvents.EXTRA_ACK_DELIVERED,
+                        false,
+                    ),
+                )
+            PhoneSyncEvents.ACTION_CANONICAL_SYNC_FAILED ->
+                onCanonicalSyncFailure()
+            PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED ->
+                onTombstoneSyncState(
+                    intent.getStringExtra(PhoneSyncEvents.EXTRA_DISPLAY_STATE).orEmpty(),
+                )
+        }
+    }
+
+    companion object {
+        fun intentFilter(): IntentFilter =
+            IntentFilter().apply {
+                addAction(PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED)
+                addAction(PhoneSyncEvents.ACTION_CANONICAL_SYNC_FAILED)
+                addAction(PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED)
+            }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private val viewModel: ComposePhoneViewModel by viewModels()
     private lateinit var healthPermissionLauncher: ActivityResultLauncher<Set<String>>
@@ -37,40 +94,20 @@ class MainActivity : ComponentActivity() {
         viewModel.saveToUri(contentResolver, destination)
     }
 
-    private val activityReceiver = object : BroadcastReceiver() {
-        override fun onReceive(
-            context: Context,
-            intent: Intent,
-        ) {
-            if (intent.action == ListenerService.ACTION_ACTIVITY_RECEIVED) {
-                viewModel.refreshFromReceipt()
-            } else if (intent.action == PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED) {
-                viewModel.onTombstoneSyncState(
-                    intent.getStringExtra(PhoneSyncEvents.EXTRA_DISPLAY_STATE).orEmpty(),
-                )
-            } else {
-                viewModel.refreshHistory()
-            }
-        }
-    }
+    private val activityReceiver = ActivityReceiptReceiver(
+        onActivityReceived = { viewModel.refreshFromReceipt() },
+        onHistoryChanged = { viewModel.refreshHistory() },
+    )
 
-    private val canonicalSyncReceiver = object : BroadcastReceiver() {
-        override fun onReceive(
-            context: Context,
-            intent: Intent,
-        ) {
-            if (intent.action == PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED) {
-                viewModel.onCanonicalSyncHint(
-                    acknowledgementDelivered = intent.getBooleanExtra(
-                        PhoneSyncEvents.EXTRA_ACK_DELIVERED,
-                        false,
-                    ),
-                )
-            } else {
-                viewModel.onCanonicalSyncFailure()
-            }
-        }
-    }
+    private val canonicalSyncReceiver = CanonicalSyncReceiver(
+        onCanonicalSyncHint = { acknowledgementDelivered ->
+            viewModel.onCanonicalSyncHint(acknowledgementDelivered)
+        },
+        onCanonicalSyncFailure = { viewModel.onCanonicalSyncFailure() },
+        onTombstoneSyncState = { displayState ->
+            viewModel.onTombstoneSyncState(displayState)
+        },
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,16 +149,12 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         LocalBroadcastManager.getInstance(this).registerReceiver(
             activityReceiver,
-            IntentFilter(ListenerService.ACTION_ACTIVITY_RECEIVED),
+            ActivityReceiptReceiver.intentFilter(),
         )
         ContextCompat.registerReceiver(
             this,
             canonicalSyncReceiver,
-            IntentFilter().apply {
-                addAction(PhoneSyncEvents.ACTION_CANONICAL_ACTIVITY_CHANGED)
-                addAction(PhoneSyncEvents.ACTION_CANONICAL_SYNC_FAILED)
-                addAction(PhoneSyncEvents.ACTION_TOMBSTONE_SYNC_STATE_CHANGED)
-            },
+            CanonicalSyncReceiver.intentFilter(),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
