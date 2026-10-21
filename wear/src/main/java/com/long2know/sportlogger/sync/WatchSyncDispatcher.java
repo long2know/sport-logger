@@ -115,4 +115,29 @@ final class WatchSyncDispatcher {
             RUN_LOCK.unlock();
         }
     }
+
+    static CanonicalWatchTombstoneTransferHandler.Result acceptIncomingTombstone(
+            Context context,
+            String sourceNodeId,
+            String channelPath,
+            byte[] exactTombstoneBytes,
+            long committedAtUtcMs,
+            CanonicalWatchTombstoneTransferHandler.AcknowledgementSender
+                    acknowledgementSender) {
+        RUN_LOCK.lock();
+        Context applicationContext = context.getApplicationContext();
+        try (WatchActivityRepository repository =
+                     WatchActivityRepository.open(applicationContext)) {
+            return new CanonicalWatchTombstoneTransferHandler(
+                    repository,
+                    acknowledgementSender)
+                    .receive(
+                            sourceNodeId,
+                            channelPath,
+                            exactTombstoneBytes,
+                            committedAtUtcMs);
+        } finally {
+            RUN_LOCK.unlock();
+        }
+    }
 }

@@ -14,6 +14,12 @@ public class CanonicalSyncProtocolTest {
 
     @Test
     public void activityChannelPathRoundTripsCanonicalTransferIdentity() {
+        assertEquals(
+                "sportlogger_phone_activity_sync_v1",
+                CanonicalSyncProtocol.PHONE_RECEIVER_CAPABILITY);
+        assertEquals(
+                "sportlogger_watch_tombstone_sync_v1",
+                CanonicalSyncProtocol.WATCH_RECEIVER_CAPABILITY);
         String path = CanonicalSyncProtocol.activityChannelPath(TRANSFER_ID);
 
         assertTrue(CanonicalSyncProtocol.isActivityChannelPath(path));

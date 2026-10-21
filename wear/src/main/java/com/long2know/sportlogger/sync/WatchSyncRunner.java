@@ -62,6 +62,11 @@ final class WatchSyncRunner {
                 reclaimInterruptedTransfers
                         ? repository.reclaimPendingOutbox(BATCH_LIMIT, nowUtcMs).join()
                         : repository.pendingOutbox(BATCH_LIMIT).join();
+        if (reclaimInterruptedTransfers) {
+            for (WatchActivityRepository.OutboxItem item : activities) {
+                eventSink.activityChanged(item, null);
+            }
+        }
         List<WatchActivityRepository.TombstoneOutboxItem> tombstones =
                 new ArrayList<>(repository.pendingTombstoneOutbox(BATCH_LIMIT).join());
         if (reclaimInterruptedTransfers) {
