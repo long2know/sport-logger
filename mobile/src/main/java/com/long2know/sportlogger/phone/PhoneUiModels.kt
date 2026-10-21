@@ -4,6 +4,8 @@ import android.content.Intent
 import com.long2know.sportlogger.export.CanonicalTcxExportSource
 import com.long2know.sportlogger.integration.IntegrationSnapshot
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.sportlogger.publishing.endurain.EndurainDeliveryKey
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainPublishingSnapshot
 import com.long2know.utilities.contract.proto.MeasurementStatus
 import java.io.File
 
@@ -39,6 +41,29 @@ data class MeasurementAvailabilityUi(
 data class MetadataEditorUi(
     val title: String,
     val notes: String,
+    val saving: Boolean = false,
+    val error: String? = null,
+)
+
+data class EndurainUi(
+    val loading: Boolean = true,
+    val snapshot: EndurainPublishingSnapshot? = null,
+    val error: String? = null,
+)
+
+data class EndurainEditorUi(
+    val existingConnectionIdentity: String? = null,
+    val label: String = "",
+    val httpsBaseUrl: String = "",
+    val apiKey: String = "",
+    val enabled: Boolean = true,
+    val saving: Boolean = false,
+    val error: String? = null,
+)
+
+data class EndurainReconcileUi(
+    val deliveryKey: EndurainDeliveryKey,
+    val remoteIds: String = "",
     val saving: Boolean = false,
     val error: String? = null,
 )
@@ -123,6 +148,9 @@ data class PhoneUiState(
     val detailLoading: Boolean = false,
     val detailError: String? = null,
     val editor: MetadataEditorUi? = null,
+    val endurain: EndurainUi = EndurainUi(),
+    val endurainEditor: EndurainEditorUi? = null,
+    val endurainReconcile: EndurainReconcileUi? = null,
     val deleteConfirmation: Boolean = false,
     val deleteBusy: Boolean = false,
     val trends: TrendsUi? = null,

@@ -53,6 +53,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -71,6 +72,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -85,12 +89,18 @@ import com.long2know.sportlogger.phone.ActivityDetailUi
 import com.long2know.sportlogger.phone.ActivityTypeTrendUi
 import com.long2know.sportlogger.phone.MeasurementAvailabilityUi
 import com.long2know.sportlogger.phone.MetadataEditorUi
+import com.long2know.sportlogger.phone.EndurainEditorUi
+import com.long2know.sportlogger.phone.EndurainReconcileUi
+import com.long2know.sportlogger.phone.EndurainUi
 import com.long2know.sportlogger.phone.PhoneDestination
 import com.long2know.sportlogger.phone.PhoneUiEvent
 import com.long2know.sportlogger.phone.PhoneUiState
 import com.long2know.sportlogger.phone.StatusUi
 import com.long2know.sportlogger.phone.TrendsUi
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.sportlogger.publishing.endurain.EndurainDeliveryKey
+import com.long2know.sportlogger.publishing.endurain.EndurainCredentialGateway
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainDeliveryStatus
 import com.long2know.utilities.contract.proto.ActivityType
 import com.long2know.utilities.contract.proto.MeasurementStatus
 import java.text.DateFormat
@@ -130,6 +140,23 @@ fun SportLoggerPhoneRoute(
             onPrepareShare = onPrepareShare,
             onRetryBackfill = viewModel::retryBackfill,
             onRetryDeleteSync = viewModel::retryDeleteSync,
+            onOpenEndurainConnection = viewModel::openNewEndurainConnection,
+            onEditEndurainConnection = viewModel::editEndurainConnection,
+            onEndurainLabel = viewModel::updateEndurainLabel,
+            onEndurainBaseUrl = viewModel::updateEndurainBaseUrl,
+            onEndurainApiKey = viewModel::updateEndurainApiKey,
+            onEndurainEnabled = viewModel::updateEndurainEnabled,
+            onSaveEndurainConnection = viewModel::saveEndurainConnection,
+            onCancelEndurainEditor = viewModel::cancelEndurainEditor,
+            onResetEndurainCredential = viewModel::resetEndurainCredential,
+            onQueueEndurainPublish = viewModel::queueEndurainPublish,
+            onEndurainManualRetry = viewModel::endurainManualRetry,
+            onEndurainConfirmDuplicate = viewModel::endurainConfirmDuplicateRiskRetry,
+            onEndurainRepairArtifact = viewModel::endurainRepairArtifact,
+            onOpenEndurainReconcile = viewModel::openEndurainReconcile,
+            onEndurainRemoteIds = viewModel::updateEndurainRemoteIds,
+            onSaveEndurainReconcile = viewModel::reconcileEndurainRemoteIds,
+            onCancelEndurainReconcile = viewModel::cancelEndurainReconcile,
             onIntegrationAction = viewModel::performIntegrationAction,
             onConsumeNotice = viewModel::consumeNotice,
         )
@@ -157,6 +184,23 @@ fun SportLoggerPhoneApp(
     onPrepareShare: () -> Unit,
     onRetryBackfill: () -> Unit,
     onRetryDeleteSync: () -> Unit,
+    onOpenEndurainConnection: () -> Unit,
+    onEditEndurainConnection: (String) -> Unit,
+    onEndurainLabel: (String) -> Unit,
+    onEndurainBaseUrl: (String) -> Unit,
+    onEndurainApiKey: (String) -> Unit,
+    onEndurainEnabled: (Boolean) -> Unit,
+    onSaveEndurainConnection: () -> Unit,
+    onCancelEndurainEditor: () -> Unit,
+    onResetEndurainCredential: (String) -> Unit,
+    onQueueEndurainPublish: (String) -> Unit,
+    onEndurainManualRetry: (EndurainDeliveryKey) -> Unit,
+    onEndurainConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
+    onEndurainRepairArtifact: (EndurainDeliveryKey) -> Unit,
+    onOpenEndurainReconcile: (EndurainDeliveryKey) -> Unit,
+    onEndurainRemoteIds: (String) -> Unit,
+    onSaveEndurainReconcile: () -> Unit,
+    onCancelEndurainReconcile: () -> Unit,
     onIntegrationAction: (IntegrationAction) -> Unit,
     onConsumeNotice: () -> Unit,
 ) {
@@ -257,6 +301,14 @@ fun SportLoggerPhoneApp(
                             onRetryBackfill = onRetryBackfill,
                             onRetryDeleteSync = onRetryDeleteSync,
                             onIntegrationAction = onIntegrationAction,
+                            onOpenEndurainConnection = onOpenEndurainConnection,
+                            onEditEndurainConnection = onEditEndurainConnection,
+                            onResetEndurainCredential = onResetEndurainCredential,
+                            onQueueEndurainPublish = onQueueEndurainPublish,
+                            onEndurainManualRetry = onEndurainManualRetry,
+                            onEndurainConfirmDuplicate = onEndurainConfirmDuplicate,
+                            onEndurainRepairArtifact = onEndurainRepairArtifact,
+                            onOpenEndurainReconcile = onOpenEndurainReconcile,
                         )
                     }
                 }
@@ -278,6 +330,25 @@ fun SportLoggerPhoneApp(
             deleting = state.deleteBusy,
             onConfirm = onConfirmDelete,
             onCancel = onCancelDelete,
+        )
+    }
+    state.endurainEditor?.let { editor ->
+        EndurainConnectionDialog(
+            editor = editor,
+            onLabel = onEndurainLabel,
+            onBaseUrl = onEndurainBaseUrl,
+            onApiKey = onEndurainApiKey,
+            onEnabled = onEndurainEnabled,
+            onSave = onSaveEndurainConnection,
+            onCancel = onCancelEndurainEditor,
+        )
+    }
+    state.endurainReconcile?.let { reconcile ->
+        EndurainReconcileDialog(
+            reconcile = reconcile,
+            onRemoteIds = onEndurainRemoteIds,
+            onSave = onSaveEndurainReconcile,
+            onCancel = onCancelEndurainReconcile,
         )
     }
 }
@@ -1042,6 +1113,14 @@ private fun StatusScreen(
     onRetryBackfill: () -> Unit,
     onRetryDeleteSync: () -> Unit,
     onIntegrationAction: (IntegrationAction) -> Unit,
+    onOpenEndurainConnection: () -> Unit,
+    onEditEndurainConnection: (String) -> Unit,
+    onResetEndurainCredential: (String) -> Unit,
+    onQueueEndurainPublish: (String) -> Unit,
+    onEndurainManualRetry: (EndurainDeliveryKey) -> Unit,
+    onEndurainConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
+    onEndurainRepairArtifact: (EndurainDeliveryKey) -> Unit,
+    onOpenEndurainReconcile: (EndurainDeliveryKey) -> Unit,
 ) {
     val status = state.status
     if (status.loading && status.integrations == null) {
@@ -1096,12 +1175,20 @@ private fun StatusScreen(
                     onAction = onIntegrationAction,
                 )
             }
-            item {
-                ConnectorStatusCard(
-                    connector = integrations.endurain,
-                    onAction = onIntegrationAction,
-                )
-            }
+        }
+        item {
+            EndurainSection(
+                state = state.endurain,
+                latestActivityAvailable = state.history.isNotEmpty(),
+                onOpenConnection = onOpenEndurainConnection,
+                onEditConnection = onEditEndurainConnection,
+                onResetCredential = onResetEndurainCredential,
+                onQueuePublish = onQueueEndurainPublish,
+                onManualRetry = onEndurainManualRetry,
+                onConfirmDuplicate = onEndurainConfirmDuplicate,
+                onRepairArtifact = onEndurainRepairArtifact,
+                onOpenReconcile = onOpenEndurainReconcile,
+            )
         }
     }
 }
@@ -1210,6 +1297,209 @@ private fun StatusSummaryCard(
 }
 
 @Composable
+private fun EndurainSection(
+    state: EndurainUi,
+    latestActivityAvailable: Boolean,
+    onOpenConnection: () -> Unit,
+    onEditConnection: (String) -> Unit,
+    onResetCredential: (String) -> Unit,
+    onQueuePublish: (String) -> Unit,
+    onManualRetry: (EndurainDeliveryKey) -> Unit,
+    onConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
+    onRepairArtifact: (EndurainDeliveryKey) -> Unit,
+    onOpenReconcile: (EndurainDeliveryKey) -> Unit,
+) {
+    val snapshot = state.snapshot
+    if (state.loading && snapshot == null) {
+        Card(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(12.dp))
+                Text("Loading Endurain status…")
+            }
+        }
+        return
+    }
+    state.error?.let { InlineWarning(it) }
+    if (snapshot == null || snapshot.connections.isEmpty()) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Endurain",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(stringResource(R.string.endurain_no_connections))
+                Button(
+                    onClick = onOpenConnection,
+                    modifier = Modifier.testTag("endurain_configure"),
+                ) {
+                    Text(stringResource(R.string.endurain_configure))
+                }
+            }
+        }
+        return
+    }
+
+    snapshot.connections.forEach { connection ->
+        val profile = connection.profile
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = profile.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    StatusChip(
+                        text = if (profile.isEnabled) "Enabled" else "Disabled",
+                        warning = !profile.isEnabled,
+                    )
+                }
+                Text(profile.normalizedBaseUrl)
+                Text("Credential: ${humanize(connection.credentialState.name)}")
+                Text(stringResource(R.string.endurain_future_claims_only))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onEditConnection(profile.connectionIdentity) },
+                    ) {
+                        Text(stringResource(R.string.endurain_edit))
+                    }
+                    if (
+                        profile.isEnabled &&
+                        latestActivityAvailable &&
+                        connection.credentialState == EndurainCredentialGateway.State.AVAILABLE
+                    ) {
+                        Button(
+                            onClick = { onQueuePublish(profile.connectionIdentity) },
+                            modifier = Modifier.testTag(
+                                "endurain_publish_${profile.connectionIdentity}",
+                            ),
+                        ) {
+                            Text(stringResource(R.string.endurain_publish))
+                        }
+                    }
+                }
+                if (connection.credentialState != EndurainCredentialGateway.State.NOT_CONFIGURED) {
+                    TextButton(
+                        onClick = {
+                            onResetCredential(profile.connectionIdentity)
+                        },
+                    ) {
+                        Text(stringResource(R.string.endurain_reset_credential))
+                    }
+                }
+            }
+        }
+    }
+
+    Text(
+        text = "Endurain deliveries",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.semantics { heading() },
+    )
+    if (snapshot.deliveries.isEmpty()) {
+        Text(stringResource(R.string.endurain_no_deliveries))
+    } else {
+        snapshot.deliveries.forEach { delivery ->
+            EndurainDeliveryCard(
+                delivery = delivery,
+                onManualRetry = onManualRetry,
+                onConfirmDuplicate = onConfirmDuplicate,
+                onRepairArtifact = onRepairArtifact,
+                onOpenReconcile = onOpenReconcile,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EndurainDeliveryCard(
+    delivery: EndurainDeliveryStatus,
+    onManualRetry: (EndurainDeliveryKey) -> Unit,
+    onConfirmDuplicate: (EndurainDeliveryKey) -> Unit,
+    onRepairArtifact: (EndurainDeliveryKey) -> Unit,
+    onOpenReconcile: (EndurainDeliveryKey) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = humanize(delivery.state.name),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                StatusChip(
+                    text = humanize(delivery.artifactState.name),
+                    warning = delivery.artifactState !=
+                        EndurainDeliveryStatus.ArtifactState.READY,
+                )
+            }
+            Text("Revision ${delivery.key.revision}")
+            if (delivery.remoteIds.isNotEmpty()) {
+                Text("Remote IDs: ${delivery.remoteIds.joinToString()}")
+            }
+            delivery.lastFailureCode?.let { code ->
+                Text(
+                    text = "Failure: $code",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            delivery.retryNotBeforeUtcMs?.let { retryAt ->
+                Text("Retry after ${formatDateTime(retryAt)}")
+            }
+            if (delivery.requiresReconciliation()) {
+                Button(onClick = { onOpenReconcile(delivery.key) }) {
+                    Text(stringResource(R.string.endurain_reconcile))
+                }
+            }
+            if (delivery.canManualRetry()) {
+                Button(onClick = { onManualRetry(delivery.key) }) {
+                    Text(stringResource(R.string.endurain_manual_retry))
+                }
+            }
+            if (delivery.canConfirmDuplicateRiskRetry()) {
+                Button(onClick = { onConfirmDuplicate(delivery.key) }) {
+                    Text(stringResource(R.string.endurain_confirm_duplicate))
+                }
+            }
+            if (delivery.canRepairArtifact()) {
+                Button(onClick = { onRepairArtifact(delivery.key) }) {
+                    Text(stringResource(R.string.endurain_repair_artifact))
+                }
+            }
+            Text(
+                text = stringResource(R.string.endurain_remote_mutations_unsupported),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ConnectorStatusCard(
     connector: ConnectorUiStatus,
     onAction: (IntegrationAction) -> Unit,
@@ -1242,6 +1532,148 @@ private fun ConnectorStatusCard(
             }
         }
     }
+}
+
+@Composable
+private fun EndurainConnectionDialog(
+    editor: EndurainEditorUi,
+    onLabel: (String) -> Unit,
+    onBaseUrl: (String) -> Unit,
+    onApiKey: (String) -> Unit,
+    onEnabled: (Boolean) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!editor.saving) {
+                onCancel()
+            }
+        },
+        title = { Text(stringResource(R.string.endurain_settings_title)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedTextField(
+                    value = editor.label,
+                    onValueChange = onLabel,
+                    label = { Text(stringResource(R.string.endurain_connection_label)) },
+                    singleLine = true,
+                    enabled = !editor.saving,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("endurain_label"),
+                )
+                OutlinedTextField(
+                    value = editor.httpsBaseUrl,
+                    onValueChange = onBaseUrl,
+                    label = { Text(stringResource(R.string.endurain_base_url_label)) },
+                    singleLine = true,
+                    enabled = !editor.saving,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("endurain_base_url"),
+                )
+                OutlinedTextField(
+                    value = editor.apiKey,
+                    onValueChange = onApiKey,
+                    label = { Text(stringResource(R.string.endurain_api_key_label)) },
+                    singleLine = true,
+                    enabled = !editor.saving,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("endurain_api_key"),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.endurain_enabled_label))
+                    Switch(
+                        checked = editor.enabled,
+                        onCheckedChange = onEnabled,
+                        enabled = !editor.saving,
+                    )
+                }
+                editor.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onSave,
+                enabled = !editor.saving,
+                modifier = Modifier.testTag("endurain_save"),
+            ) {
+                Text(stringResource(R.string.save))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !editor.saving,
+            ) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
+@Composable
+private fun EndurainReconcileDialog(
+    reconcile: EndurainReconcileUi,
+    onRemoteIds: (String) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!reconcile.saving) {
+                onCancel()
+            }
+        },
+        title = { Text(stringResource(R.string.endurain_reconcile_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = reconcile.remoteIds,
+                    onValueChange = onRemoteIds,
+                    label = { Text(stringResource(R.string.endurain_remote_ids_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !reconcile.saving,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("endurain_remote_ids"),
+                )
+                reconcile.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onSave,
+                enabled = !reconcile.saving,
+            ) {
+                Text(stringResource(R.string.save))
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !reconcile.saving,
+            ) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
 }
 
 @Composable

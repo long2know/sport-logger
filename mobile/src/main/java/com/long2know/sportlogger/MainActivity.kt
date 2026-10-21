@@ -20,6 +20,7 @@ import com.long2know.sportlogger.integration.UnboundPhoneIntegrationStatusGatewa
 import com.long2know.sportlogger.healthconnect.HealthConnectProviderFactory
 import com.long2know.sportlogger.phone.CanonicalPhoneDataSource
 import com.long2know.sportlogger.phone.PhoneUiEvent
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainPublishingFactory
 import com.long2know.sportlogger.transfer.PhoneSyncEvents
 import com.long2know.sportlogger.transfer.PhoneTombstoneSyncHook
 import com.long2know.sportlogger.ui.SportLoggerPhoneRoute
@@ -81,6 +82,9 @@ class MainActivity : ComponentActivity() {
             integrationGateway = UnboundPhoneIntegrationStatusGateway(),
             healthConnectProviderFactory = {
                 HealthConnectProviderFactory.create(applicationContext)
+            },
+            endurainControllerFactory = {
+                EndurainPublishingFactory.create(applicationContext)
             },
             deletionCommittedHook = { outbox ->
                 PhoneTombstoneSyncHook.onDeletionCommitted(applicationContext, outbox)

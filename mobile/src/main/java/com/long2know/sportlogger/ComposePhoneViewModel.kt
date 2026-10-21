@@ -23,6 +23,9 @@ import com.long2know.sportlogger.phone.ActivityKey
 import com.long2know.sportlogger.phone.ActivityTypeTrendUi
 import com.long2know.sportlogger.phone.BackfillUi
 import com.long2know.sportlogger.phone.CanonicalPhoneDataSource
+import com.long2know.sportlogger.phone.EndurainEditorUi
+import com.long2know.sportlogger.phone.EndurainReconcileUi
+import com.long2know.sportlogger.phone.EndurainUi
 import com.long2know.sportlogger.phone.MeasurementAvailabilityUi
 import com.long2know.sportlogger.phone.MetadataEditorUi
 import com.long2know.sportlogger.phone.PhoneDestination
@@ -33,6 +36,9 @@ import com.long2know.sportlogger.phone.StatusUi
 import com.long2know.sportlogger.phone.TrendsUi
 import com.long2know.sportlogger.phone.WeeklyTrendUi
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.sportlogger.publishing.endurain.EndurainDeliveryKey
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainActionResult
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainPublishingController
 import com.long2know.utilities.contract.CanonicalContractException
 import com.long2know.utilities.contract.proto.ActivityRecord
 import com.long2know.utilities.export.tcx.TcxCancellation
@@ -49,6 +55,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.Executor
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,20 +97,24 @@ class ComposePhoneViewModel(
     private var deleteRetryHook: (() -> Unit)? = null
     private var latestHealthConnectStatus: HealthConnectSessionStatus? = null
     private var latestHealthVerification: HealthConnectVerificationResult? = null
+    private var endurainController: EndurainPublishingController? = null
     private var repositoryObserver: AutoCloseable? = null
     private var integrationObserver: AutoCloseable? = null
     private var healthConnectObserver: AutoCloseable? = null
+    private var endurainObserver: AutoCloseable? = null
     private var initialLoadJob: Job? = null
     private var repositoryRefreshJob: Job? = null
     private var detailJob: Job? = null
     private var trendJob: Job? = null
     private var statusJob: Job? = null
     private var exportJob: Job? = null
+    private var endurainJob: Job? = null
 
     fun initialize(
         dataSourceFactory: () -> CanonicalPhoneDataSource,
         integrationGateway: PhoneIntegrationStatusGateway,
         healthConnectProviderFactory: () -> HealthConnectProvider,
+        endurainControllerFactory: () -> CompletableFuture<EndurainPublishingController>,
         deletionCommittedHook: (PhoneActivityRepository.TombstoneOutboxItem) -> Unit,
         deleteRetryHook: () -> Unit,
     ) {
@@ -122,6 +133,7 @@ class ComposePhoneViewModel(
             repositoryCallbackExecutor,
             Runnable { refreshStatus() },
         )
+        initializeEndurain(endurainControllerFactory)
         loadInitial()
     }
 
@@ -540,7 +552,11 @@ class ComposePhoneViewModel(
                 }
             }
             HEALTH_PERMISSION_ACTION -> {
-                val permissions = status.permissionRequestInput
+                val permissions = if (BuildConfig.DEBUG) {
+                    status.permissionRequestInput
+                } else {
+                    status.permissions.requestInput
+                }
                 if (permissions.isEmpty()) {
                     _state.update {
                         it.copy(notice = "No Health Connect permissions are missing.")
@@ -608,8 +624,12 @@ class ComposePhoneViewModel(
             runCatching { operation() }
                 .onSuccess { result ->
                     val verification = if (
-                        result.state == HealthConnectOperationState.SUCCEEDED ||
-                        result.state == HealthConnectOperationState.PARTIAL
+                        BuildConfig.DEBUG &&
+                        latestHealthConnectStatus?.canVerifyProvider == true &&
+                        (
+                            result.state == HealthConnectOperationState.SUCCEEDED ||
+                                result.state == HealthConnectOperationState.PARTIAL
+                            )
                     ) {
                         runCatching {
                             requireHealthConnectProvider().verifyOwnedExerciseSession(
@@ -641,6 +661,339 @@ class ComposePhoneViewModel(
             refreshStatus()
         }
     }
+
+    fun openNewEndurainConnection() {
+        _state.update {
+            it.copy(
+                endurainEditor = EndurainEditorUi(),
+                notice = null,
+            )
+        }
+    }
+
+    fun editEndurainConnection(connectionIdentity: String) {
+        val connection = _state.value.endurain.snapshot
+            ?.connections
+            ?.firstOrNull {
+                it.profile.connectionIdentity == connectionIdentity
+            } ?: return
+        _state.update {
+            it.copy(
+                endurainEditor = EndurainEditorUi(
+                    existingConnectionIdentity = connection.profile.connectionIdentity,
+                    label = connection.profile.label,
+                    httpsBaseUrl = connection.profile.normalizedBaseUrl,
+                    enabled = connection.profile.isEnabled,
+                ),
+                notice = null,
+            )
+        }
+    }
+
+    fun updateEndurainLabel(value: String) {
+        _state.update {
+            it.copy(
+                endurainEditor = it.endurainEditor?.copy(label = value, error = null),
+            )
+        }
+    }
+
+    fun updateEndurainBaseUrl(value: String) {
+        _state.update {
+            it.copy(
+                endurainEditor = it.endurainEditor?.copy(
+                    httpsBaseUrl = value,
+                    error = null,
+                ),
+            )
+        }
+    }
+
+    fun updateEndurainApiKey(value: String) {
+        _state.update {
+            it.copy(
+                endurainEditor = it.endurainEditor?.copy(apiKey = value, error = null),
+            )
+        }
+    }
+
+    fun updateEndurainEnabled(value: Boolean) {
+        _state.update {
+            it.copy(
+                endurainEditor = it.endurainEditor?.copy(enabled = value, error = null),
+            )
+        }
+    }
+
+    fun cancelEndurainEditor() {
+        if (_state.value.endurainEditor?.saving != true) {
+            _state.update { it.copy(endurainEditor = null) }
+        }
+    }
+
+    fun saveEndurainConnection() {
+        val editor = _state.value.endurainEditor ?: return
+        if (editor.label.isBlank()) {
+            _state.update {
+                it.copy(
+                    endurainEditor = editor.copy(error = "Connection name is required."),
+                )
+            }
+            return
+        }
+        if (!editor.httpsBaseUrl.startsWith("https://", ignoreCase = true)) {
+            _state.update {
+                it.copy(
+                    endurainEditor = editor.copy(error = "An HTTPS base URL is required."),
+                )
+            }
+            return
+        }
+        val controller = endurainController ?: return
+        _state.update {
+            it.copy(endurainEditor = editor.copy(saving = true, error = null))
+        }
+        endurainJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val profile = controller.saveConnection(
+                    editor.existingConnectionIdentity,
+                    editor.label.trim(),
+                    editor.httpsBaseUrl.trim(),
+                    editor.enabled,
+                ).get()
+                if (editor.apiKey.isNotEmpty()) {
+                    controller.saveCredential(
+                        profile.connectionIdentity,
+                        editor.apiKey.toCharArray(),
+                    ).get()
+                }
+            }.onSuccess {
+                _state.update {
+                    it.copy(
+                        endurainEditor = null,
+                        notice = "Endurain connection saved.",
+                    )
+                }
+                refreshEndurain()
+            }.onFailure {
+                _state.update {
+                    it.copy(
+                        endurainEditor = it.endurainEditor?.copy(
+                            saving = false,
+                            apiKey = "",
+                            error = "Endurain connection could not be saved.",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun resetEndurainCredential(connectionIdentity: String) {
+        runEndurainOperation("Endurain credential reset.") {
+            it.resetCredential(connectionIdentity).get()
+        }
+    }
+
+    fun queueEndurainPublish(connectionIdentity: String) {
+        val key = _state.value.selectedKey
+            ?: _state.value.history.firstOrNull()?.let {
+                ActivityKey(it.sessionId, it.revision)
+            }
+        if (key == null) {
+            _state.update {
+                it.copy(notice = "Receive an activity before publishing to Endurain.")
+            }
+            return
+        }
+        _state.update {
+            it.copy(notice = "Preparing Endurain TCX publish…")
+        }
+        runEndurainAction {
+            it.queuePublish(connectionIdentity, key.sessionId, key.revision).get()
+        }
+    }
+
+    fun endurainManualRetry(key: EndurainDeliveryKey) {
+        runEndurainAction { it.manualRetry(key).get() }
+    }
+
+    fun endurainConfirmDuplicateRiskRetry(key: EndurainDeliveryKey) {
+        runEndurainAction { it.confirmDuplicateRiskRetry(key).get() }
+    }
+
+    fun endurainRepairArtifact(key: EndurainDeliveryKey) {
+        runEndurainAction { it.repairPreparedArtifact(key).get() }
+    }
+
+    fun openEndurainReconcile(key: EndurainDeliveryKey) {
+        _state.update {
+            it.copy(
+                endurainReconcile = EndurainReconcileUi(deliveryKey = key),
+                notice = null,
+            )
+        }
+    }
+
+    fun updateEndurainRemoteIds(value: String) {
+        _state.update {
+            it.copy(
+                endurainReconcile = it.endurainReconcile?.copy(
+                    remoteIds = value,
+                    error = null,
+                ),
+            )
+        }
+    }
+
+    fun cancelEndurainReconcile() {
+        if (_state.value.endurainReconcile?.saving != true) {
+            _state.update { it.copy(endurainReconcile = null) }
+        }
+    }
+
+    fun reconcileEndurainRemoteIds() {
+        val reconcile = _state.value.endurainReconcile ?: return
+        val ids = reconcile.remoteIds
+            .split(',')
+            .mapNotNull { it.trim().takeIf(String::isNotEmpty)?.toLongOrNull() }
+            .filter { it > 0L }
+            .distinct()
+        if (ids.isEmpty()) {
+            _state.update {
+                it.copy(
+                    endurainReconcile = reconcile.copy(
+                        error = "Enter at least one positive remote ID.",
+                    ),
+                )
+            }
+            return
+        }
+        _state.update {
+            it.copy(endurainReconcile = reconcile.copy(saving = true, error = null))
+        }
+        runEndurainAction(
+            onSuccess = {
+                _state.update { it.copy(endurainReconcile = null) }
+            },
+        ) {
+            it.reconcileRemoteIds(reconcile.deliveryKey, ids).get()
+        }
+    }
+
+    private fun initializeEndurain(
+        factory: () -> CompletableFuture<EndurainPublishingController>,
+    ) {
+        _state.update { it.copy(endurain = EndurainUi(loading = true)) }
+        endurainJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching { factory().get() }
+                .onSuccess { controller ->
+                    endurainController = controller
+                    endurainObserver = controller.observe(
+                        repositoryCallbackExecutor,
+                        Runnable { refreshEndurain() },
+                    )
+                    refreshEndurain()
+                }
+                .onFailure {
+                    _state.update {
+                        it.copy(
+                            endurain = EndurainUi(
+                                loading = false,
+                                error = "Endurain publishing could not be initialized.",
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun refreshEndurain() {
+        val controller = endurainController ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { controller.statusList().get() }
+                .onSuccess { snapshot ->
+                    _state.update {
+                        it.copy(
+                            endurain = EndurainUi(
+                                loading = false,
+                                snapshot = snapshot,
+                            ),
+                        )
+                    }
+                }
+                .onFailure {
+                    _state.update {
+                        it.copy(
+                            endurain = it.endurain.copy(
+                                loading = false,
+                                error = "Endurain status could not be loaded.",
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun runEndurainAction(
+        onSuccess: () -> Unit = {},
+        operation: (EndurainPublishingController) -> EndurainActionResult,
+    ) {
+        val controller = endurainController ?: return
+        endurainJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching { operation(controller) }
+                .onSuccess { result ->
+                    onSuccess()
+                    _state.update {
+                        it.copy(notice = endurainActionMessage(result))
+                    }
+                }
+                .onFailure {
+                    _state.update {
+                        it.copy(notice = "Endurain action failed.")
+                    }
+                }
+            refreshEndurain()
+        }
+    }
+
+    private fun <T> runEndurainOperation(
+        successMessage: String,
+        operation: (EndurainPublishingController) -> T,
+    ) {
+        val controller = endurainController ?: return
+        endurainJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching { operation(controller) }
+                .onSuccess {
+                    _state.update { it.copy(notice = successMessage) }
+                }
+                .onFailure {
+                    _state.update { it.copy(notice = "Endurain action failed.") }
+                }
+            refreshEndurain()
+        }
+    }
+
+    private fun endurainActionMessage(result: EndurainActionResult): String =
+        result.message?.takeIf(String::isNotBlank)
+            ?: when (result.code) {
+                EndurainActionResult.Code.COMPLETED -> "Endurain action completed."
+                EndurainActionResult.Code.QUEUED -> "Endurain publish queued."
+                EndurainActionResult.Code.CREDENTIAL_REQUIRED ->
+                    "Endurain credential is required."
+                EndurainActionResult.Code.ARTIFACT_REPAIR_REQUIRED ->
+                    "Endurain TCX artifact requires repair."
+                EndurainActionResult.Code.RETRY_NOT_DUE ->
+                    "Endurain retry is not due yet."
+                EndurainActionResult.Code.RECONCILIATION_REQUIRED ->
+                    "Endurain delivery requires manual reconciliation."
+                EndurainActionResult.Code.UNSUPPORTED_REMOTE_EDIT ->
+                    "Endurain remote edit is unsupported."
+                EndurainActionResult.Code.UNSUPPORTED_REMOTE_DELETE ->
+                    "Endurain remote delete is unsupported."
+                EndurainActionResult.Code.INVALID_STATE ->
+                    "Endurain action is invalid for the current state."
+            }
 
     fun prepareSave() {
         val detail = _state.value.detail ?: return
@@ -1338,7 +1691,12 @@ class ComposePhoneViewModel(
             if (status.canResolveProvider) {
                 add(IntegrationAction(HEALTH_RESOLVE_ACTION, "Install or update provider"))
             }
-            if (status.canRequestPermissions) {
+            val canRequestPermissions = if (BuildConfig.DEBUG) {
+                status.canRequestPermissions
+            } else {
+                status.availability.isAvailable && status.permissions.missing.isNotEmpty()
+            }
+            if (canRequestPermissions) {
                 add(IntegrationAction(HEALTH_PERMISSION_ACTION, "Grant permissions"))
             }
             if (status.lastOperation == null && status.canPublish) {
@@ -1352,7 +1710,7 @@ class ComposePhoneViewModel(
             if (status.canRetry) {
                 add(IntegrationAction(HEALTH_RETRY_ACTION, "Retry"))
             }
-            if (status.canVerifyProvider && status.lastOperation != null) {
+            if (BuildConfig.DEBUG && status.canVerifyProvider && status.lastOperation != null) {
                 add(IntegrationAction(HEALTH_VERIFY_ACTION, "Verify provider record"))
             }
         }
@@ -1382,11 +1740,14 @@ class ComposePhoneViewModel(
             append(status.permissions.granted.size)
             append("/")
             append(status.permissions.required.size)
-            append(" write granted; read ")
-            append(status.readPermissions.granted.size)
-            append("/")
-            append(status.readPermissions.required.size)
-            append(" granted.")
+            append(" write granted.")
+            if (BuildConfig.DEBUG) {
+                append(" Verification read: ")
+                append(status.readPermissions.granted.size)
+                append("/")
+                append(status.readPermissions.required.size)
+                append(" granted.")
+            }
             if (status.routePresent) {
                 append(" Route data is present.")
             }
@@ -1494,6 +1855,8 @@ class ComposePhoneViewModel(
         runCatching { integrationObserver?.close() }
         runCatching { healthConnectObserver?.close() }
         runCatching { healthConnectProvider?.close() }
+        runCatching { endurainObserver?.close() }
+        runCatching { endurainController?.close() }
         runCatching { dataSource?.close() }
         super.onCleared()
     }

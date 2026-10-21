@@ -20,6 +20,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -27,6 +29,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.long2know.sportlogger.persistence.phone.PhoneDatabase
 import com.long2know.sportlogger.persistence.phone.PhoneActivityRepository
+import com.long2know.sportlogger.publishing.endurain.factory.EndurainPublishingFactory
 import com.long2know.sportlogger.transfer.PhoneActivityStore
 import com.long2know.utilities.models.SportActivity
 import com.long2know.utilities.models.SportTrackPoint
@@ -204,6 +207,48 @@ class MainActivityComposeTest {
         }
     }
 
+    @Test
+    fun endurainSettingsPersistCredentialAndQueueCanonicalTcxPublish() {
+        persistLegacy(activity("Synthetic Endurain activity", 1_700_000_500_000L, 750.0))
+        launch()
+        waitForText("Synthetic Endurain activity")
+        compose.onNodeWithText(context.getString(R.string.nav_status)).performClick()
+        waitForTag("status_screen")
+        compose.onNodeWithTag("status_screen")
+            .performScrollToNode(hasText(context.getString(R.string.endurain_configure)))
+        compose.onNodeWithTag("endurain_configure").performClick()
+        compose.onNodeWithTag("endurain_label")
+            .performTextReplacement("Synthetic Endurain")
+        compose.onNodeWithTag("endurain_base_url")
+            .performTextReplacement("https://example.invalid")
+        compose.onNodeWithTag("endurain_api_key")
+            .performTextReplacement("synthetic-test-api-key")
+        compose.onNodeWithTag("endurain_save").performClick()
+
+        val connectionIdentity = waitForEndurainCredential()
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasText(context.getString(R.string.endurain_publish)),
+        )
+        compose.mainClock.advanceTimeBy(10_000L)
+        compose.waitForIdle()
+        compose.onNodeWithTag("endurain_publish_$connectionIdentity")
+            .performTouchInput { click() }
+        waitForEndurainDelivery()
+        compose.onNodeWithTag("status_screen").performScrollToNode(
+            hasText(context.getString(R.string.endurain_remote_mutations_unsupported)),
+        )
+        compose.onNodeWithText(context.getString(R.string.endurain_remote_mutations_unsupported))
+            .assertIsDisplayed()
+        capture("compose-endurain.png")
+    }
+
+    @Test
+    fun endurainPublishingFactoryInitializesWithApplicationStorageAndScheduler() {
+        EndurainPublishingFactory.create(context).get().use { controller ->
+            controller.statusList().get()
+        }
+    }
+
     private fun launch() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         instrumentation.waitForIdleSync()
@@ -261,6 +306,70 @@ class MainActivityComposeTest {
         throw AssertionError("Timed out waiting for TCX output: ${file.name}")
     }
 
+    private fun waitForEndurainCredential(): String {
+        val deadline = SystemClock.uptimeMillis() + 12_000L
+        var diagnostic = "controller snapshot unavailable"
+        while (SystemClock.uptimeMillis() < deadline) {
+            var availableIdentity: String? = null
+            scenario?.onActivity { activity ->
+                val state = ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                    .state
+                    .value
+                diagnostic = buildString {
+                    append("credentials=")
+                    append(
+                        state.endurain.snapshot
+                            ?.connections
+                            ?.map { it.credentialState.name },
+                    )
+                    append(", error=")
+                    append(state.endurain.error)
+                    append(", editorError=")
+                    append(state.endurainEditor?.error)
+                }
+                if (state.endurainEditor == null) {
+                    availableIdentity = state.endurain.snapshot
+                        ?.connections
+                        ?.firstOrNull { it.credentialState.name == "AVAILABLE" }
+                        ?.profile
+                        ?.connectionIdentity
+                }
+            }
+            if (availableIdentity != null) {
+                return availableIdentity!!
+            }
+            SystemClock.sleep(100L)
+        }
+        throw AssertionError("Timed out waiting for Endurain credential state: $diagnostic")
+    }
+
+    private fun waitForEndurainDelivery() {
+        val deadline = SystemClock.uptimeMillis() + 12_000L
+        var diagnostic = "controller snapshot unavailable"
+        while (SystemClock.uptimeMillis() < deadline) {
+            var present = false
+            scenario?.onActivity { activity ->
+                val state = ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                    .state
+                    .value
+                diagnostic = buildString {
+                    append("deliveries=")
+                    append(state.endurain.snapshot?.deliveries?.size)
+                    append(", error=")
+                    append(state.endurain.error)
+                    append(", notice=")
+                    append(state.notice)
+                }
+                present = state.endurain.snapshot?.deliveries?.isNotEmpty() == true
+            }
+            if (present) {
+                return
+            }
+            SystemClock.sleep(100L)
+        }
+        throw AssertionError("Timed out waiting for Endurain delivery: $diagnostic")
+    }
+
     private fun assertTcx(file: File) {
         assertTrue(file.isFile)
         assertTrue(file.length() > 0L)
@@ -316,6 +425,12 @@ class MainActivityComposeTest {
     private fun clearAppData() {
         deleteRecursively(File(context.filesDir, "received-sport-activities"))
         deleteRecursively(File(context.filesDir, "shared-tcx"))
+        deleteRecursively(File(context.noBackupFilesDir, "endurain-publishing-v1"))
+        deleteRecursively(File(context.noBackupFilesDir, "connector-credentials-v1"))
+        context.getSharedPreferences("endurain_connection_profiles_v1", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
         context.deleteDatabase(PhoneDatabase.DATABASE_NAME)
     }
 
