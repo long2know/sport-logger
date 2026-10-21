@@ -1,30 +1,31 @@
 apply plugin: 'com.android.library'
 
 android {
-    namespace 'com.long2know.utilities'
-    compileSdk 36
-    buildToolsVersion '36.0.0'
+    namespace = 'com.long2know.utilities'
+    compileSdk = 36
+    buildToolsVersion = '36.0.0'
+    enableKotlin = false
 
     defaultConfig {
-        minSdk 23
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        minSdk = 23
+        testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     lint {
-        abortOnError true
-        checkReleaseBuilds true
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 }
 
