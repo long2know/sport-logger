@@ -93,6 +93,8 @@ public class LegacyPhoneInboxBackfillTest {
         assertArrayEquals(corruptBytes, Files.readAllBytes(corruptFile.toPath()));
         PhoneActivityRepository.ActivityDetail detail = repository.detail(sessionId, 1L);
         assertNotNull(detail);
+        assertEquals(1_000L, detail.getActivity().getElapsedDurationMs());
+        assertFalse(detail.getActivity().hasActiveDurationMs());
         assertEquals("User title", detail.getMetadata().getTitle());
         assertEquals("User notes", detail.getMetadata().getNotes());
         assertEquals(Collections.singletonList("keep"), detail.getMetadata().getTags());
@@ -124,7 +126,7 @@ public class LegacyPhoneInboxBackfillTest {
         activity.Name = "Legacy title";
         activity.Description = "Legacy notes";
         activity.Distance = 100.25D;
-        activity.Time = 1D;
+        activity.Time = 20_240_101_123_456D;
         SportTrackPoint point = new SportTrackPoint();
         point.Id = 1;
         point.SportActivityId = id;
