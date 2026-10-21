@@ -166,6 +166,31 @@ public class WatchSyncRunnerTest {
     }
 
     @Test
+    public void typedStaleActivityAckTerminatesRetryAtNewerPhoneRevision() {
+        WatchActivityRepository.OutboxItem ready = completedActivity();
+        nodes.nodeIds = Collections.singletonList(NODE_ID);
+        runner().run(false);
+        ActivityTransferFile transfer =
+                CanonicalTransfers.parseActivityTransfer(ready.getPayload()).getTransfer();
+        byte[] staleAck = CanonicalTransfers.commitAck(
+                        transfer,
+                        2L,
+                        AckResult.ACK_RESULT_STALE,
+                        null,
+                        null)
+                .toByteArray();
+
+        WatchCommitAckHandler.Result accepted =
+                ackHandler().receive(staleAck, 12_000L);
+
+        assertTrue(accepted.isCommittedNow());
+        assertEquals(
+                WatchActivityRepository.OUTBOX_COMMITTED,
+                repository.outbox(TRANSFER_ID).join().getState());
+        assertTrue(repository.pendingOutbox(10).join().isEmpty());
+    }
+
+    @Test
     public void processRestartReclaimsSendingBeforeRetryingWholeFile() {
         WatchActivityRepository.OutboxItem ready = completedActivity();
         repository.transitionOutbox(
@@ -184,12 +209,102 @@ public class WatchSyncRunnerTest {
         assertArrayEquals(ready.getPayload(), sender.activityPayloads.get(0));
         assertEquals(
                 asList(
+                        WatchActivityRepository.OUTBOX_RETRYABLE,
                         WatchActivityRepository.OUTBOX_SENDING,
                         WatchActivityRepository.OUTBOX_AWAITING_COMMIT_ACK),
                 events.activityStates);
         assertEquals(
                 WatchActivityRepository.OUTBOX_AWAITING_COMMIT_ACK,
                 repository.outbox(TRANSFER_ID).join().getState());
+    }
+
+    @Test
+    public void sendingStateSurvivesDatabaseCloseAndProcessRestart() {
+        database.close();
+        Context context = ApplicationProvider.getApplicationContext();
+        String databaseName = "watch-sync-process-death-" + System.nanoTime() + ".db";
+        context.deleteDatabase(databaseName);
+        WatchDatabase firstDatabase = Room.databaseBuilder(
+                        context,
+                        WatchDatabase.class,
+                        databaseName)
+                .allowMainThreadQueries()
+                .build();
+        try {
+            WatchActivityRepository firstRepository =
+                    new WatchActivityRepository(firstDatabase, Runnable::run);
+            firstRepository.startSession(
+                            WatchActivityRepository.StartRequest
+                                    .builder(SESSION_ID, LEASE, 1_000L)
+                                    .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                                    .build())
+                    .join();
+            firstRepository.finishSession(
+                            SESSION_ID,
+                            LEASE,
+                            ActivityRecord.newBuilder()
+                                    .setSessionId(SESSION_ID)
+                                    .setWatchRevision(1L)
+                                    .setActivityType(ActivityType.ACTIVITY_TYPE_RUNNING)
+                                    .setStartTimeUtcMs(1_000L)
+                                    .setEndTimeUtcMs(2_000L)
+                                    .setElapsedDurationMs(1_000L)
+                                    .setSource(SourceMetadata.newBuilder()
+                                            .setKind(
+                                                    SourceKind
+                                                            .SOURCE_KIND_HEALTH_SERVICES)
+                                            .setAppContractVersion(1))
+                                    .build(),
+                            TRANSFER_ID,
+                            2_100L)
+                    .join();
+            firstRepository.transitionOutbox(
+                            TRANSFER_ID,
+                            WatchActivityRepository.OUTBOX_READY,
+                            WatchActivityRepository.OUTBOX_SENDING,
+                            2_200L,
+                            null,
+                            null)
+                    .join();
+        } finally {
+            firstDatabase.close();
+        }
+
+        WatchDatabase restartedDatabase = Room.databaseBuilder(
+                        context,
+                        WatchDatabase.class,
+                        databaseName)
+                .allowMainThreadQueries()
+                .build();
+        try {
+            WatchActivityRepository restartedRepository =
+                    new WatchActivityRepository(restartedDatabase, Runnable::run);
+            MutableNodes restartedNodes = new MutableNodes();
+            restartedNodes.nodeIds = Collections.singletonList(NODE_ID);
+            RecordingSender restartedSender = new RecordingSender();
+            RecordingEvents restartedEvents = new RecordingEvents();
+            WatchSyncRunner.Result result = new WatchSyncRunner(
+                    restartedRepository,
+                    restartedNodes,
+                    restartedSender,
+                    restartedEvents,
+                    () -> 3_000L)
+                    .run(true);
+
+            assertEquals(1, result.getSentCount());
+            assertEquals(1, restartedSender.activityPayloads.size());
+            assertEquals(
+                    WatchActivityRepository.OUTBOX_AWAITING_COMMIT_ACK,
+                    restartedRepository.outbox(TRANSFER_ID).join().getState());
+        } finally {
+            restartedDatabase.close();
+            context.deleteDatabase(databaseName);
+        }
+
+        database = Room.inMemoryDatabaseBuilder(context, WatchDatabase.class)
+                .allowMainThreadQueries()
+                .build();
+        repository = new WatchActivityRepository(database, Runnable::run);
     }
 
     @Test
@@ -314,6 +429,49 @@ public class WatchSyncRunnerTest {
         assertEquals(
                 WatchActivityRepository.OUTBOX_COMMITTED,
                 repository.tombstoneOutbox(transferId).join().getState());
+    }
+
+    @Test
+    public void typedStaleTombstoneAckTerminatesLosingWatchDelete() {
+        String sessionId = "6f81251d-e619-438f-986d-e17ab0b1a284";
+        String transferId = "2cd33895-afac-4718-8dcb-4b7b42abcc17";
+        repository.startSession(
+                        WatchActivityRepository.StartRequest
+                                .builder(sessionId, 92L, 1_000L)
+                                .build())
+                .join();
+        repository.discardSession(
+                        sessionId,
+                        92L,
+                        CanonicalTransfers.tombstone(
+                                transferId,
+                                sessionId,
+                                1L,
+                                0L,
+                                TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH,
+                                2_000L),
+                        2_000L)
+                .join();
+        WatchActivityRepository.TombstoneOutboxItem ready =
+                repository.tombstoneOutbox(transferId).join();
+        nodes.nodeIds = Collections.singletonList(NODE_ID);
+        runner().run(false);
+        byte[] staleAck = CanonicalTransfers.tombstoneCommitAck(
+                        CanonicalTransfers.parseTombstone(ready.getPayload()),
+                        AckResult.ACK_RESULT_STALE,
+                        null,
+                        null)
+                .toByteArray();
+
+        WatchCommitAckHandler.Result accepted =
+                ackHandler().receive(staleAck, 12_000L);
+
+        assertTrue(accepted.isCommittedNow());
+        assertTrue(accepted.isTombstone());
+        assertEquals(
+                WatchActivityRepository.OUTBOX_COMMITTED,
+                repository.tombstoneOutbox(transferId).join().getState());
+        assertTrue(repository.pendingTombstoneOutbox(10).join().isEmpty());
     }
 
     @Test

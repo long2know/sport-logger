@@ -5,6 +5,8 @@ import com.long2know.utilities.contract.CanonicalIds;
 public final class CanonicalSyncProtocol {
     public static final String PHONE_RECEIVER_CAPABILITY =
             "sportlogger_phone_activity_sync_v1";
+    public static final String WATCH_RECEIVER_CAPABILITY =
+            "sportlogger_watch_tombstone_sync_v1";
     public static final String ACTIVITY_CHANNEL_ROOT =
             "/sportlogger/sync/v1/activity";
     public static final String TOMBSTONE_CHANNEL_ROOT =
