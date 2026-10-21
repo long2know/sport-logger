@@ -1,10 +1,14 @@
 package com.long2know.sportlogger.recording;
 
+import com.long2know.utilities.contract.proto.ActivityType;
+
 import java.util.Objects;
 
 public final class RecordingSnapshot {
     private final RecordingState state;
     private final int activityId;
+    private final ActivityType activityType;
+    private final RecordingAuthority authority;
     private final long startedAtMillis;
     private final long durationMillis;
     private final long elapsedDurationMillis;
@@ -12,6 +16,9 @@ public final class RecordingSnapshot {
     private final long elapsedSinceElapsedRealtimeMillis;
     private final int bootCount;
     private final RecordingError error;
+    private final int currentLapIndex;
+    private final Long lastLapElapsedDurationMillis;
+    private final Long lastLapActiveDurationMillis;
 
     public RecordingSnapshot(
             RecordingState state,
@@ -21,6 +28,8 @@ public final class RecordingSnapshot {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 0L,
                 durationMillis,
                 durationMillis,
@@ -40,8 +49,118 @@ public final class RecordingSnapshot {
             long elapsedSinceElapsedRealtimeMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                defaultActivityType(activityId),
+                authority,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                authority,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error,
+                activityId > 0 ? 1 : 0,
+                null,
+                null);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error,
+            int currentLapIndex,
+            Long lastLapElapsedDurationMillis,
+            Long lastLapActiveDurationMillis) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.activityType = Objects.requireNonNull(activityType);
+        this.authority = Objects.requireNonNull(authority);
         this.startedAtMillis = startedAtMillis;
         this.durationMillis = Math.max(0L, durationMillis);
         this.elapsedDurationMillis =
@@ -52,6 +171,9 @@ public final class RecordingSnapshot {
                 Math.max(0L, elapsedSinceElapsedRealtimeMillis);
         this.bootCount = bootCount;
         this.error = error;
+        this.currentLapIndex = Math.max(0, currentLapIndex);
+        this.lastLapElapsedDurationMillis = lastLapElapsedDurationMillis;
+        this.lastLapActiveDurationMillis = lastLapActiveDurationMillis;
     }
 
     public RecordingState getState() {
@@ -60,6 +182,14 @@ public final class RecordingSnapshot {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public ActivityType getActivityType() {
+        return activityType;
+    }
+
+    public RecordingAuthority getAuthority() {
+        return authority;
     }
 
     public long getDurationMillis() {
@@ -90,6 +220,18 @@ public final class RecordingSnapshot {
         return error;
     }
 
+    public int getCurrentLapIndex() {
+        return currentLapIndex;
+    }
+
+    public Long getLastLapElapsedDurationMillis() {
+        return lastLapElapsedDurationMillis;
+    }
+
+    public Long getLastLapActiveDurationMillis() {
+        return lastLapActiveDurationMillis;
+    }
+
     public boolean isActive() {
         return state == RecordingState.STARTING
                 || state == RecordingState.RECORDING
@@ -97,5 +239,11 @@ public final class RecordingSnapshot {
                 || state == RecordingState.STOPPING
                 || state == RecordingState.DISCARDING
                 || state == RecordingState.EXPORT_PENDING;
+    }
+
+    private static ActivityType defaultActivityType(int activityId) {
+        return activityId > 0
+                ? ActivityType.ACTIVITY_TYPE_RUNNING
+                : ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
     }
 }

@@ -18,20 +18,31 @@ import java.util.concurrent.Executor;
 public final class HealthConnectLedgerRepository implements AutoCloseable {
     private final PhoneDatabase database;
     private final PhoneDao dao;
-    private final boolean ownsDatabase;
+    private final PhoneDatabase.ProcessLease processLease;
 
     public HealthConnectLedgerRepository(PhoneDatabase database) {
-        this(database, false);
+        this(database, null);
     }
 
-    private HealthConnectLedgerRepository(PhoneDatabase database, boolean ownsDatabase) {
+    private HealthConnectLedgerRepository(
+            PhoneDatabase database,
+            PhoneDatabase.ProcessLease processLease) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.phoneDao();
-        this.ownsDatabase = ownsDatabase;
+        this.processLease = processLease;
     }
 
     public static HealthConnectLedgerRepository open(Context context) {
-        return new HealthConnectLedgerRepository(PhoneDatabase.open(context), true);
+        PhoneDatabase.ProcessLease processLease =
+                PhoneDatabase.acquireProcessLease(context);
+        try {
+            return new HealthConnectLedgerRepository(
+                    processLease.database(),
+                    processLease);
+        } catch (RuntimeException | Error error) {
+            processLease.close();
+            throw error;
+        }
     }
 
     public static String deterministicClientRecordId(
@@ -716,8 +727,8 @@ public final class HealthConnectLedgerRepository implements AutoCloseable {
 
     @Override
     public void close() {
-        if (ownsDatabase) {
-            database.close();
+        if (processLease != null) {
+            processLease.close();
         }
     }
 

@@ -73,12 +73,13 @@ Java controller and legacy compatibility path below must not be mistaken for the
 phone commit boundary.
 
 `SportLoggerService` delegates durable recording transitions to a serial
-`RecordingController`. START, PAUSE, RESUME, STOP, DISCARD, database sampling, finalization,
-and Data Layer export are ordered on its worker. Durable state is committed before STOP or
-DISCARD work proceeds, and a replacement service resumes STOPPING, DISCARDING,
-EXPORT_PENDING, or EXPORT_QUEUED work after recreation. A local Data Layer write moves the
-controller to EXPORT_QUEUED, not IDLE. That state permits another workout while the phone is
-offline, while IDLE is reached only after a durable phone receipt is acknowledged.
+`RecordingController`. START, PAUSE, RESUME, STOP, DISCARD, sampling, and finalization are
+ordered on its worker. Durable state is committed before STOP or DISCARD work proceeds, and a
+replacement service resumes STOPPING, DISCARDING, EXPORT_PENDING, or EXPORT_QUEUED work after
+recreation. New canonical recordings enter EXPORT_QUEUED only after the Room completion and
+immutable outbox commit; `WatchSyncEvents` then owns truthful queued/transferring/failed/synced
+presentation. A recovered pre-cutover legacy recording retains its matching serialized export and
+ACK path.
 
 The recording journal serializes lease acquisition, lease validation, and the complete
 SharedPreferences commit under one process-wide lock. Listener delivery is also lease- and
@@ -100,16 +101,20 @@ converted from since-boot totals into per-session deltas, with pause, counter re
 service recreation fencing. A step detector is used only when the counter cannot be
 registered.
 
-In the legacy compatibility path, SQLite table names, columns, and timestamps remain unchanged. Payloads
-use the legacy Java `SportActivity` serialization and `sportActivity` asset. Each completed
-workout is additionally written to a unique `/sportactivity/<transfer-id>` Data Item, while
-the fixed `/sportactivity` item remains as a legacy-reader alias. The phone accepts both
-formats, fsyncs each unique payload into app-private `received-sport-activities` storage,
-and keeps a durable pending-ack record until its unique
-`/sportactivity-ack/<watch>/<transfer-id>` Data Item is locally queued. Replays are
-idempotent and conflicting bytes never overwrite an existing receipt. The watch deletes the
-source item only after receiving that phone acknowledgement. No legacy watch database table
-or serialized model schema is changed.
+The legacy SQLite table names, columns, timestamp format, Java `SportActivity` serialization,
+and `/sportactivity` receiver remain unchanged for migration, rollback, and recovery of a
+pre-cutover pending recording. Those legacy paths retain their existing receipt and matching
+ACK behavior; they are not the outbound authority for a new canonical recording.
+
+For supported upgrades, legacy-only `GPSLOGGERDB_LONG2KNOW` and phone serialized inbox data
+remain readable and migrate idempotently into canonical storage. New watch recordings are
+canonical-authority only: they allocate a non-SQL local recording token, write Room/protobuf
+samples and outbox state, and never emit the legacy serialized `/sportactivity` mirror. Legacy
+pending recordings recovered from a pre-cutover journal retain the legacy store/export path.
+The unreleased development build that briefly dual-wrote canonical and legacy identities is not
+a supported persisted upgrade source; acceptance devices using that build must reset app data
+rather than merge identities heuristically. Matching current watch and phone versions are
+required for new canonical transfers.
 
 ## Toolchain-upgrade validation checkpoint
 

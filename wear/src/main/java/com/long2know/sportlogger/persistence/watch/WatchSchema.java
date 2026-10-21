@@ -117,6 +117,47 @@ final class WatchSampleEntity {
 }
 
 @Entity(
+        tableName = "watch_laps",
+        primaryKeys = {"session_id", "lap_index"},
+        foreignKeys = @ForeignKey(
+                entity = WatchSessionEntity.class,
+                parentColumns = "session_id",
+                childColumns = "session_id",
+                onDelete = ForeignKey.CASCADE),
+        indices = {
+                @Index(value = {"lap_id"}, unique = true),
+                @Index(value = {"session_id", "state"})
+        })
+final class WatchLapEntity {
+    @NonNull
+    @ColumnInfo(name = "session_id")
+    public String sessionId;
+    @ColumnInfo(name = "lap_index")
+    public int lapIndex;
+    @NonNull
+    @ColumnInfo(name = "lap_id")
+    public String lapId;
+    @NonNull
+    public String state;
+    @ColumnInfo(name = "start_time_utc_ms")
+    public long startTimeUtcMs;
+    @ColumnInfo(name = "end_time_utc_ms")
+    public Long endTimeUtcMs;
+    @ColumnInfo(name = "start_elapsed_duration_ms")
+    public long startElapsedDurationMs;
+    @ColumnInfo(name = "end_elapsed_duration_ms")
+    public Long endElapsedDurationMs;
+    @ColumnInfo(name = "start_active_duration_ms")
+    public long startActiveDurationMs;
+    @ColumnInfo(name = "end_active_duration_ms")
+    public Long endActiveDurationMs;
+    @ColumnInfo(name = "created_at_utc_ms")
+    public long createdAtUtcMs;
+    @ColumnInfo(name = "updated_at_utc_ms")
+    public long updatedAtUtcMs;
+}
+
+@Entity(
         tableName = "watch_activity_outbox",
         foreignKeys = @ForeignKey(
                 entity = WatchSessionEntity.class,
@@ -378,6 +419,32 @@ interface WatchDao {
 
     @Query("SELECT * FROM watch_samples WHERE session_id = :sessionId ORDER BY sequence")
     List<WatchSampleEntity> samples(String sessionId);
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    void insertLap(WatchLapEntity lap);
+
+    @Update
+    int updateLap(WatchLapEntity lap);
+
+    @Query("SELECT * FROM watch_laps WHERE session_id = :sessionId "
+            + "ORDER BY lap_index")
+    List<WatchLapEntity> laps(String sessionId);
+
+    @Query("SELECT * FROM watch_laps WHERE session_id = :sessionId "
+            + "ORDER BY lap_index DESC LIMIT 1")
+    WatchLapEntity latestLap(String sessionId);
+
+    @Query("SELECT * FROM watch_laps WHERE session_id = :sessionId "
+            + "AND lap_index = :lapIndex")
+    WatchLapEntity lap(String sessionId, int lapIndex);
+
+    @Query("DELETE FROM watch_laps WHERE session_id = :sessionId")
+    int deleteLaps(String sessionId);
+
+    @Query("SELECT * FROM watch_sessions WHERE state = 'COMPLETED' "
+            + "AND payload IS NOT NULL ORDER BY ended_at_utc_ms DESC, session_id "
+            + "LIMIT :limit")
+    List<WatchSessionEntity> recentCompletedSessions(int limit);
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     void insertOutbox(WatchOutboxEntity outbox);

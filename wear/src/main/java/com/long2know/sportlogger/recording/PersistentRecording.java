@@ -1,10 +1,14 @@
 package com.long2know.sportlogger.recording;
 
+import com.long2know.utilities.contract.proto.ActivityType;
+
 import java.util.Objects;
 
 public final class PersistentRecording {
     private final RecordingState state;
     private final int activityId;
+    private final ActivityType activityType;
+    private final RecordingAuthority authority;
     private final long startedAtMillis;
     private final long activeSinceMillis;
     private final long activeSinceElapsedRealtimeMillis;
@@ -14,6 +18,9 @@ public final class PersistentRecording {
     private final long endedAtMillis;
     private final int bootCount;
     private final RecordingError error;
+    private final int currentLapIndex;
+    private final Long lastLapElapsedDurationMillis;
+    private final Long lastLapActiveDurationMillis;
 
     public PersistentRecording(
             RecordingState state,
@@ -26,6 +33,8 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 0L,
@@ -50,6 +59,8 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -64,6 +75,7 @@ public final class PersistentRecording {
     public PersistentRecording(
             RecordingState state,
             int activityId,
+            ActivityType activityType,
             long startedAtMillis,
             long activeSinceMillis,
             long activeSinceElapsedRealtimeMillis,
@@ -73,8 +85,105 @@ public final class PersistentRecording {
             long endedAtMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error);
+    }
+
+    public PersistentRecording(
+            RecordingState state,
+            int activityId,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long activeSinceMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            long accumulatedMillis,
+            long accumulatedElapsedMillis,
+            long endedAtMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                defaultActivityType(activityId),
+                authority,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error);
+    }
+
+    public PersistentRecording(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long activeSinceMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            long accumulatedMillis,
+            long accumulatedElapsedMillis,
+            long endedAtMillis,
+            int bootCount,
+            RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                authority,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error,
+                activityId > 0 ? 1 : 0,
+                null,
+                null);
+    }
+
+    public PersistentRecording(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long activeSinceMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            long accumulatedMillis,
+            long accumulatedElapsedMillis,
+            long endedAtMillis,
+            int bootCount,
+            RecordingError error,
+            int currentLapIndex,
+            Long lastLapElapsedDurationMillis,
+            Long lastLapActiveDurationMillis) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.activityType = Objects.requireNonNull(activityType);
+        this.authority = Objects.requireNonNull(authority);
         this.startedAtMillis = startedAtMillis;
         this.activeSinceMillis = activeSinceMillis;
         this.activeSinceElapsedRealtimeMillis =
@@ -88,6 +197,9 @@ public final class PersistentRecording {
         this.endedAtMillis = endedAtMillis;
         this.bootCount = bootCount;
         this.error = error;
+        this.currentLapIndex = Math.max(0, currentLapIndex);
+        this.lastLapElapsedDurationMillis = lastLapElapsedDurationMillis;
+        this.lastLapActiveDurationMillis = lastLapActiveDurationMillis;
     }
 
     public static PersistentRecording idle() {
@@ -100,6 +212,14 @@ public final class PersistentRecording {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public ActivityType getActivityType() {
+        return activityType;
+    }
+
+    public RecordingAuthority getAuthority() {
+        return authority;
     }
 
     public long getStartedAtMillis() {
@@ -136,6 +256,18 @@ public final class PersistentRecording {
 
     public RecordingError getError() {
         return error;
+    }
+
+    public int getCurrentLapIndex() {
+        return currentLapIndex;
+    }
+
+    public Long getLastLapElapsedDurationMillis() {
+        return lastLapElapsedDurationMillis;
+    }
+
+    public Long getLastLapActiveDurationMillis() {
+        return lastLapActiveDurationMillis;
     }
 
     public long durationAt(long nowMillis) {
@@ -221,6 +353,8 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 state,
                 activityId,
+                activityType,
+                authority,
                 startedAtMillis,
                 state == RecordingState.RECORDING ? wallClockMillis : 0L,
                 state == RecordingState.RECORDING ? elapsedRealtimeMillis : 0L,
@@ -229,7 +363,10 @@ public final class PersistentRecording {
                 elapsedDuration,
                 endedAtMillis,
                 currentBootCount,
-                error);
+                error,
+                currentLapIndex,
+                lastLapElapsedDurationMillis,
+                lastLapActiveDurationMillis);
     }
 
     public PersistentRecording withState(
@@ -283,6 +420,8 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 nextState,
                 activityId,
+                activityType,
+                authority,
                 startedAtMillis,
                 nextActiveSinceMillis,
                 nextActiveSinceElapsedRealtimeMillis,
@@ -291,13 +430,18 @@ public final class PersistentRecording {
                 nextAccumulatedElapsedMillis,
                 nextEndedAtMillis,
                 nextBootCount,
-                nextError);
+                nextError,
+                currentLapIndex,
+                lastLapElapsedDurationMillis,
+                lastLapActiveDurationMillis);
     }
 
     public PersistentRecording withError(RecordingError nextError) {
         return new PersistentRecording(
                 state,
                 activityId,
+                activityType,
+                authority,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -306,7 +450,33 @@ public final class PersistentRecording {
                 accumulatedElapsedMillis,
                 endedAtMillis,
                 bootCount,
-                nextError);
+                nextError,
+                currentLapIndex,
+                lastLapElapsedDurationMillis,
+                lastLapActiveDurationMillis);
+    }
+
+    public PersistentRecording withLapState(
+            int nextCurrentLapIndex,
+            Long nextLastLapElapsedDurationMillis,
+            Long nextLastLapActiveDurationMillis) {
+        return new PersistentRecording(
+                state,
+                activityId,
+                activityType,
+                authority,
+                startedAtMillis,
+                activeSinceMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                accumulatedMillis,
+                accumulatedElapsedMillis,
+                endedAtMillis,
+                bootCount,
+                error,
+                nextCurrentLapIndex,
+                nextLastLapElapsedDurationMillis,
+                nextLastLapActiveDurationMillis);
     }
 
     private static long saturatedAdd(long left, long right) {
@@ -314,5 +484,11 @@ public final class PersistentRecording {
             return Long.MAX_VALUE;
         }
         return left + right;
+    }
+
+    private static ActivityType defaultActivityType(int activityId) {
+        return activityId > 0
+                ? ActivityType.ACTIVITY_TYPE_RUNNING
+                : ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
     }
 }
