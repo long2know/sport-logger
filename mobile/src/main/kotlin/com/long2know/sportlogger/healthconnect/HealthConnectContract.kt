@@ -44,16 +44,6 @@ enum class HealthConnectWritePermission(val androidPermission: String) {
     }
 }
 
-enum class HealthConnectReadPermission(val androidPermission: String) {
-    EXERCISE_SESSION("android.permission.health.READ_EXERCISE");
-
-    companion object {
-        @JvmStatic
-        fun fromAndroidPermission(permission: String): HealthConnectReadPermission? =
-            entries.firstOrNull { it.androidPermission == permission }
-    }
-}
-
 data class HealthConnectPermissionStatus(
     val grant: HealthConnectPermissionGrant,
     val required: Set<HealthConnectWritePermission>,
@@ -70,26 +60,10 @@ data class HealthConnectPermissionStatus(
         get() = HealthConnectWritePermission.PHONE_EXERCISE_ROUTE in granted
 }
 
-data class HealthConnectReadPermissionStatus(
-    val grant: HealthConnectPermissionGrant,
-    val required: Set<HealthConnectReadPermission>,
-    val granted: Set<HealthConnectReadPermission>,
-    val missing: Set<HealthConnectReadPermission>,
-) {
-    val requestInput: Set<String>
-        get() = missing.mapTo(linkedSetOf()) { it.androidPermission }
-
-    val hasExerciseSessionRead: Boolean
-        get() = HealthConnectReadPermission.EXERCISE_SESSION in granted
-}
-
 data class HealthConnectPermissionRequestResult(
     val requested: Set<HealthConnectWritePermission>,
     val granted: Set<HealthConnectWritePermission>,
     val denied: Set<HealthConnectWritePermission>,
-    val readRequested: Set<HealthConnectReadPermission>,
-    val readGranted: Set<HealthConnectReadPermission>,
-    val readDenied: Set<HealthConnectReadPermission>,
     val grant: HealthConnectPermissionGrant,
 )
 
@@ -138,7 +112,6 @@ enum class HealthConnectErrorCode {
     PERMISSION_REVOKED,
     PROVIDER_IO,
     PROVIDER_PROTOCOL,
-    PROVIDER_VERIFICATION,
     PROVIDER_FAILURE,
     LEDGER_CONFLICT,
 }
@@ -187,7 +160,6 @@ data class HealthConnectSessionStatus(
     val revision: Long,
     val availability: HealthConnectAvailability,
     val permissions: HealthConnectPermissionStatus,
-    val readPermissions: HealthConnectReadPermissionStatus,
     val presentRecordTypes: Set<HealthConnectRecordType>,
     val routePresent: Boolean,
     val lastOperation: HealthConnectOperationResult?,
@@ -199,11 +171,7 @@ data class HealthConnectSessionStatus(
         get() =
             availability.isAvailable &&
                 permissions.grant != HealthConnectPermissionGrant.UNAVAILABLE &&
-                readPermissions.grant != HealthConnectPermissionGrant.UNAVAILABLE &&
-                (permissions.missing.isNotEmpty() || readPermissions.missing.isNotEmpty())
-
-    val permissionRequestInput: Set<String>
-        get() = permissions.requestInput + readPermissions.requestInput
+                permissions.missing.isNotEmpty()
 
     val canPublish: Boolean
         get() = availability.isAvailable && permissions.hasExerciseSessionWrite
@@ -220,30 +188,7 @@ data class HealthConnectSessionStatus(
 
     val canRetry: Boolean
         get() = lastOperation?.canRetry == true
-
-    val canVerifyProvider: Boolean
-        get() = availability.isAvailable && readPermissions.hasExerciseSessionRead
 }
-
-enum class HealthConnectVerificationState {
-    PRESENT,
-    ABSENT,
-    BLOCKED,
-    MISMATCH,
-    FAILED,
-}
-
-data class HealthConnectVerificationResult(
-    val sessionId: String,
-    val revision: Long,
-    val state: HealthConnectVerificationState,
-    val clientRecordId: String?,
-    val clientRecordVersion: Long?,
-    val providerRecordId: String?,
-    val providerDataOrigin: String?,
-    val providerRoutePointCount: Int?,
-    val failure: HealthConnectFailure?,
-)
 
 interface HealthConnectProvider : AutoCloseable {
     fun permissionRequestContract(): ActivityResultContract<Set<String>, Set<String>>
@@ -271,11 +216,6 @@ interface HealthConnectProvider : AutoCloseable {
     ): HealthConnectOperationResult
 
     suspend fun retry(operationId: String): HealthConnectOperationResult
-
-    suspend fun verifyOwnedExerciseSession(
-        sessionId: String,
-        revision: Long,
-    ): HealthConnectVerificationResult
 
     /**
      * Observes canonical Room changes only. Call [refreshStatus] after this callback, after every

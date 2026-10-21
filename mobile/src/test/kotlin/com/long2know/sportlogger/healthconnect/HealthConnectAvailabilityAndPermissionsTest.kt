@@ -82,10 +82,6 @@ class HealthConnectAvailabilityAndPermissionsTest {
     @Test
     fun permissionStringsMatchStableHealthConnectApi() {
         assertEquals(
-            HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-            HealthConnectReadPermission.EXERCISE_SESSION.androidPermission,
-        )
-        assertEquals(
             HealthPermission.getWritePermission(ExerciseSessionRecord::class),
             HealthConnectWritePermission.EXERCISE_SESSION.androidPermission,
         )
@@ -161,19 +157,6 @@ class HealthConnectAvailabilityAndPermissionsTest {
             )
         assertEquals(HealthConnectPermissionGrant.GRANTED, granted.grant)
         assertTrue(granted.missing.isEmpty())
-
-        val readDenied =
-            HealthConnectPermissions.readStatus(
-                HealthConnectAvailability.AVAILABLE_FRAMEWORK,
-                emptySet(),
-            )
-        assertEquals(HealthConnectPermissionGrant.DENIED, readDenied.grant)
-        val readGranted =
-            HealthConnectPermissions.readStatus(
-                HealthConnectAvailability.AVAILABLE_FRAMEWORK,
-                setOf(HealthConnectReadPermission.EXERCISE_SESSION.androidPermission),
-            )
-        assertEquals(HealthConnectPermissionGrant.GRANTED, readGranted.grant)
     }
 
     @Test
@@ -182,7 +165,6 @@ class HealthConnectAvailabilityAndPermissionsTest {
             setOf(
                 HealthConnectWritePermission.EXERCISE_SESSION.androidPermission,
                 HealthConnectWritePermission.PHONE_EXERCISE_ROUTE.androidPermission,
-                HealthConnectReadPermission.EXERCISE_SESSION.androidPermission,
             )
         val result =
             HealthConnectPermissions.interpretRequestResult(
@@ -197,10 +179,6 @@ class HealthConnectAvailabilityAndPermissionsTest {
         assertEquals(
             setOf(HealthConnectWritePermission.PHONE_EXERCISE_ROUTE),
             result.denied,
-        )
-        assertEquals(
-            setOf(HealthConnectReadPermission.EXERCISE_SESSION),
-            result.readDenied,
         )
     }
 }

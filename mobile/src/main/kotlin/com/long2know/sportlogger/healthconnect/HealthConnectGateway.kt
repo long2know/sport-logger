@@ -3,17 +3,12 @@ package com.long2know.sportlogger.healthconnect
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ElevationGainedRecord
-import androidx.health.connect.client.records.ExerciseRouteResult
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SpeedRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
-import androidx.health.connect.client.records.metadata.DataOrigin
-import androidx.health.connect.client.request.ReadRecordsRequest
-import androidx.health.connect.client.time.TimeRangeFilter
-import java.time.Instant
 import kotlin.reflect.KClass
 
 internal interface HealthConnectGateway {
@@ -26,23 +21,7 @@ internal interface HealthConnectGateway {
         providerRecordIds: List<String>,
         clientRecordIds: List<String>,
     )
-
-    suspend fun readExerciseSession(providerRecordId: String): HealthConnectExerciseSnapshot
-
-    suspend fun readOwnedExerciseSessions(
-        startTime: Instant,
-        endTime: Instant,
-        packageName: String,
-    ): List<HealthConnectExerciseSnapshot>
 }
-
-internal data class HealthConnectExerciseSnapshot(
-    val providerRecordId: String,
-    val clientRecordId: String?,
-    val clientRecordVersion: Long,
-    val dataOriginPackageName: String,
-    val routePointCount: Int?,
-)
 
 internal class AndroidHealthConnectGateway(
     private val client: HealthConnectClient,
@@ -72,49 +51,6 @@ internal class AndroidHealthConnectGateway(
             clientRecordIdsList = clientRecordIds.filter(String::isNotEmpty).distinct(),
         )
     }
-
-    override suspend fun readExerciseSession(
-        providerRecordId: String,
-    ): HealthConnectExerciseSnapshot =
-        client.readRecord(ExerciseSessionRecord::class, providerRecordId).record.toSnapshot()
-
-    override suspend fun readOwnedExerciseSessions(
-        startTime: Instant,
-        endTime: Instant,
-        packageName: String,
-    ): List<HealthConnectExerciseSnapshot> {
-        val records = mutableListOf<HealthConnectExerciseSnapshot>()
-        var pageToken: String? = null
-        do {
-            val response =
-                client.readRecords(
-                    ReadRecordsRequest(
-                        recordType = ExerciseSessionRecord::class,
-                        timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
-                        dataOriginFilter = setOf(DataOrigin(packageName)),
-                        pageToken = pageToken,
-                    )
-                )
-            records += response.records.map { it.toSnapshot() }
-            pageToken = response.pageToken
-        } while (pageToken != null)
-        return records
-    }
-
-    private fun ExerciseSessionRecord.toSnapshot(): HealthConnectExerciseSnapshot =
-        HealthConnectExerciseSnapshot(
-            providerRecordId = metadata.id,
-            clientRecordId = metadata.clientRecordId,
-            clientRecordVersion = metadata.clientRecordVersion,
-            dataOriginPackageName = metadata.dataOrigin.packageName,
-            routePointCount =
-                when (val result = exerciseRouteResult) {
-                    is ExerciseRouteResult.Data -> result.exerciseRoute.route.size
-                    is ExerciseRouteResult.NoData -> 0
-                    is ExerciseRouteResult.ConsentRequired -> null
-                    else -> null
-                },
-        )
 
     private fun recordClass(providerRecordType: String): KClass<out Record> =
         when (providerRecordType) {
