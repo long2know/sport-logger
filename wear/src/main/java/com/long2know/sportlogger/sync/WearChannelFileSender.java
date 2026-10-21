@@ -79,8 +79,8 @@ public final class WearChannelFileSender {
         try {
             gateway.sendFile(nodeId, channelPath, Uri.fromFile(staged));
         } finally {
-            if (staged.exists() && !staged.delete()) {
-                staged.deleteOnExit();
+            if (staged.exists()) {
+                staged.delete();
             }
         }
     }
@@ -111,8 +111,8 @@ public final class WearChannelFileSender {
             }
             return destination;
         } finally {
-            if (pending.exists() && !pending.delete()) {
-                pending.deleteOnExit();
+            if (pending.exists()) {
+                pending.delete();
             }
         }
     }
@@ -148,16 +148,28 @@ public final class WearChannelFileSender {
                     channelClient.openChannel(nodeId, channelPath),
                     CLOSE_TIMEOUT_SECONDS,
                     TimeUnit.SECONDS);
+            Exception sendFailure = null;
             try {
                 Tasks.await(
                         channelClient.sendFile(channel, fileUri),
                         CHANNEL_TIMEOUT_MINUTES,
                         TimeUnit.MINUTES);
+            } catch (Exception error) {
+                sendFailure = error;
+                throw error;
             } finally {
-                Tasks.await(
-                        channelClient.close(channel),
-                        CLOSE_TIMEOUT_SECONDS,
-                        TimeUnit.SECONDS);
+                try {
+                    Tasks.await(
+                            channelClient.close(channel),
+                            CLOSE_TIMEOUT_SECONDS,
+                            TimeUnit.SECONDS);
+                } catch (Exception closeFailure) {
+                    if (sendFailure != null) {
+                        sendFailure.addSuppressed(closeFailure);
+                    } else {
+                        throw closeFailure;
+                    }
+                }
             }
         }
     }

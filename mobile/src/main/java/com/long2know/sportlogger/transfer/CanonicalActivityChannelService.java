@@ -29,7 +29,8 @@ public final class CanonicalActivityChannelService extends WearableListenerServi
     @Override
     public void onChannelOpened(ChannelClient.Channel channel) {
         String path = channel.getPath();
-        if (!CanonicalSyncProtocol.isActivityChannelPath(path)) {
+        if (!CanonicalSyncProtocol.isActivityChannelPath(path)
+                && !CanonicalSyncProtocol.isTombstoneChannelPath(path)) {
             closeQuietly(channel);
             return;
         }
@@ -42,8 +43,12 @@ public final class CanonicalActivityChannelService extends WearableListenerServi
         String transferId = null;
         File stagingFile = null;
         try {
-            transferId =
-                    CanonicalSyncProtocol.transferIdFromActivityChannelPath(
+            boolean activity =
+                    CanonicalSyncProtocol.isActivityChannelPath(channel.getPath());
+            transferId = activity
+                    ? CanonicalSyncProtocol.transferIdFromActivityChannelPath(
+                    channel.getPath())
+                    : CanonicalSyncProtocol.transferIdFromTombstoneChannelPath(
                             channel.getPath());
             stagingFile = stagingFile(transferId);
             if (stagingFile.exists() && !stagingFile.delete()) {
@@ -58,25 +63,37 @@ public final class CanonicalActivityChannelService extends WearableListenerServi
                     TimeUnit.MINUTES);
             byte[] transferBytes = readBounded(stagingFile);
 
-            CanonicalActivityTransferHandler.Result result;
             try (PhoneActivityRepository repository =
                          PhoneActivityRepository.open(this)) {
-                result = new CanonicalActivityTransferHandler(
-                        repository,
-                        this::sendAcknowledgement)
-                        .receive(
-                                channel.getNodeId(),
-                                channel.getPath(),
-                                transferBytes,
-                                System.currentTimeMillis());
-            }
-            PhoneSyncEvents.activityChanged(this, result);
-            if (!result.isAcknowledgementDelivered()) {
-                Log.w(
-                        TAG,
-                        "Canonical activity committed; commit ACK will be recovered "
-                                + "by duplicate delivery",
-                        result.getAcknowledgementDeliveryFailure());
+                if (activity) {
+                    CanonicalActivityTransferHandler.Result result =
+                            new CanonicalActivityTransferHandler(
+                                    repository,
+                                    this::sendAcknowledgement)
+                                    .receive(
+                                            channel.getNodeId(),
+                                            channel.getPath(),
+                                            transferBytes,
+                                            System.currentTimeMillis());
+                    PhoneSyncEvents.activityChanged(this, result);
+                    logAcknowledgementFailure(
+                            result.isAcknowledgementDelivered(),
+                            result.getAcknowledgementDeliveryFailure());
+                } else {
+                    CanonicalTombstoneTransferHandler.Result result =
+                            new CanonicalTombstoneTransferHandler(
+                                    repository,
+                                    this::sendAcknowledgement)
+                                    .receive(
+                                            channel.getNodeId(),
+                                            channel.getPath(),
+                                            transferBytes,
+                                            System.currentTimeMillis());
+                    PhoneSyncEvents.tombstoneChanged(this, result);
+                    logAcknowledgementFailure(
+                            result.isAcknowledgementDelivered(),
+                            result.getAcknowledgementDeliveryFailure());
+                }
             }
         } catch (Exception error) {
             Log.e(TAG, "Could not receive canonical activity transfer", error);
@@ -89,6 +106,18 @@ public final class CanonicalActivityChannelService extends WearableListenerServi
                 Log.w(TAG, "Could not remove canonical incoming staging file");
             }
             closeQuietly(channel);
+        }
+    }
+
+    private static void logAcknowledgementFailure(
+            boolean delivered,
+            Exception failure) {
+        if (!delivered) {
+            Log.w(
+                    TAG,
+                    "Canonical transfer committed; commit ACK will be recovered "
+                            + "by duplicate delivery",
+                    failure);
         }
     }
 
