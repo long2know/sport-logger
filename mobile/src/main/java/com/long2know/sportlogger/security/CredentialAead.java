@@ -9,6 +9,8 @@ interface CredentialAead {
 
     KeyStatus keyStatus();
 
+    Object transactionLock();
+
     byte[] seal(byte[] plaintext, byte[] associatedData)
             throws CredentialCryptoException;
 

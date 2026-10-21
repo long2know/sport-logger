@@ -48,24 +48,40 @@ creation, edit, delete, or server-local bulk import.
 | HTTP 401/403 | `AUTHENTICATION_REQUIRED` | No; user must correct key/scope |
 | HTTP 400/413/415/422 | `VALIDATION_REJECTED` | No; fix/regenerate TCX |
 | Connection failure before request transmission | `RETRYABLE` | Caller may use bounded backoff |
-| HTTP 429 | `RATE_LIMITED` with bounded `Retry-After` | Not before returned delay |
+| Probe HTTP 429 | `RATE_LIMITED` with bounded `Retry-After` | Safe for the caller to retry the GET after the returned delay |
+| Upload HTTP 429 after POST transmission begins | `UNKNOWN_DELIVERY` / `RATE_LIMITED`, retaining bounded `Retry-After` as advisory data | Never automatically; the server may have applied the body |
 | Redirect | `PERMANENT_FAILURE` / `REDIRECT_REJECTED` | No |
-| Drop/timeout after transmission may have started | `UNKNOWN_DELIVERY` | Never automatically |
+| Write/overall deadline or drop after transmission may have started | `UNKNOWN_DELIVERY` | Never automatically |
 | HTTP 5xx, unexpected 2xx, or malformed/empty/oversized HTTP 201 body | `UNKNOWN_DELIVERY` | Never automatically |
 
 `EndurainRetryPolicy` provides bounded exponential delays for pre-transmission failures and parses
 both delta-seconds and HTTP-date `Retry-After` values. The transport never performs a retry itself.
+OkHttp connection retries are disabled, request bodies are marked one-shot, and redirects are
+disabled. A 429 from an upload is therefore not evidence that the POST was unapplied.
 The later ledger/UI must require manual confirmation or an explicit duplicate-risk retry for
 `UNKNOWN_DELIVERY`.
 
+The transport has separate connect, read, write, and whole-call deadlines. The default values are
+15 seconds, 30 seconds, 30 seconds, and 75 seconds. The compatibility constructor uses its read
+timeout as the write timeout and derives a bounded whole-call timeout from connect plus two read
+windows. Deadline cancellation closes the tracked raw TCP socket rather than waiting for a blocked
+TLS writer to release an `SSLSocket` monitor. Expiry before request-body transmission is typed as a
+retryable pre-transmission timeout; expiry after writing starts is unknown delivery. Deadline tasks
+are cancelled and removed after every call, and the single daemon scheduler is allowed to time out
+when idle.
+
 Response bodies are size-bounded and strictly decoded as UTF-8 JSON. Results expose typed reasons,
 status codes, retry delay, and scoped IDs only; untrusted server bodies are never returned or logged.
+Valid supplementary Unicode code points, including raw UTF-8 emoji, are accepted; unmatched
+surrogate halves remain invalid JSON.
 
 ## HTTPS decision
 
 - The phone manifest retains `INTERNET`, rejects cleartext app traffic, and applies a network
   security configuration that trusts Android system CAs.
-- Production uses `HttpsURLConnection` defaults for certificate-path and hostname verification.
+- Production uses OkHttp 4.12.0 with Android platform certificate-path and hostname verification.
+- The fixed-length multipart request is streamed once from the verified file. Length and SHA-256
+  are checked both before network I/O and while the body is written.
 - Redirect following is disabled. Therefore `X-API-Key` is never forwarded across a host or scheme
   change.
 - Base URLs reject non-HTTPS schemes, embedded credentials, query strings, fragments, malformed
@@ -76,8 +92,8 @@ status codes, retry delay, and scoped IDs only; untrusted server bodies are neve
   hostname-verifier bypass.
 
 The JVM fixture creates an ephemeral CA and localhost certificate with JDK `keytool`, trusts only
-that CA through a test-only socket factory, retains the default hostname verifier, and removes the
-generated key material after the test class.
+that CA through a test-only socket factory/trust manager, retains the default hostname verifier,
+and removes the generated key material after the test class.
 
 ## Credential protection and restore decision
 
@@ -89,6 +105,13 @@ generated key material after the test class.
   Filenames are SHA-256 connection-scope digests and reveal neither the endpoint nor credential.
 - Credential writes are bounded and fsynced, request an atomic same-directory move, and use a
   same-directory replacement fallback where the filesystem cannot advertise atomic-move support.
+- Store instances sharing the same Android Keystore alias also share one process-wide transaction
+  monitor. Seal/write/load/reset/key deletion therefore cannot interleave across separately
+  constructed application store instances.
+- Startup construction removes only recognized
+  `<scope>.credential.<uuid>.new` crash remnants. Per-connection reset removes the final envelope
+  and matching scoped remnants; reset-all removes only recognized connector envelopes/remnants,
+  retaining unrelated files.
 - Missing/inaccessible Keystore keys and corrupt/tampered storage are separate typed read states.
   Loading never silently creates a replacement key for an existing ciphertext.
 - Per-connection reset removes the ciphertext. `resetAll()` removes connector ciphertexts and the
@@ -108,13 +131,17 @@ JVM tests execute the real HTTPS code path and cover:
 - exact about/upload paths and multipart field;
 - one and multiple returned IDs;
 - wrong-scope authentication and invalid-TCX rejection;
-- 429 `Retry-After`;
-- failure before transmission and dropped response after transmission;
+- body-accepted late 429 with advisory `Retry-After` and no automatic retry;
+- failure/whole-call expiry before transmission, a stalled request-body reader that reaches the
+  write deadline, a response dripped beneath the read-timeout interval that reaches the whole-call
+  deadline, and dropped response after transmission;
 - host/scheme redirects without credential forwarding;
 - TLS trust and hostname verification;
-- 5xx, malformed/empty/oversized 201 responses, integer range, UTF-8, and JSON bounds;
+- 5xx, malformed/empty/oversized 201 responses, integer range, UTF-8, supplementary Unicode,
+  unmatched surrogate, and JSON bounds;
 - local artifact length/hash validation;
-- credential encryption, fresh IVs, scoped AAD, tamper, key loss, reset, and non-revealing filenames.
+- credential encryption, fresh IVs, scoped AAD, tamper, key loss, two-store store/reset-all
+  serialization, recognized crash-temporary cleanup, scoped reset, and non-revealing filenames.
 
 An Android instrumentation test exercises the same credential store with the real
 `AndroidKeyStore`. It is compile-verified here and requires the parent-owned phone instrumentation

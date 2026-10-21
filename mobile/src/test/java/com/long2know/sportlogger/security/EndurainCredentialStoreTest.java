@@ -15,6 +15,12 @@ import java.nio.ByteBuffer;
 import java.security.Key;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
@@ -23,10 +29,14 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.net.ssl.HttpsURLConnection;
 
+import okhttp3.Request;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class EndurainCredentialStoreTest {
     private File directory;
@@ -80,6 +90,45 @@ public class EndurainCredentialStoreTest {
         byte[] second = read(store.credentialFile(config));
 
         assertFalse(Arrays.equals(first, second));
+    }
+
+    @Test
+    public void androidKeystoreInstancesShareAliasTransactionBoundary() {
+        String alias = "com.long2know.sportlogger.test."
+                + Long.toHexString(System.nanoTime());
+
+        AndroidKeystoreCredentialAead first =
+                new AndroidKeystoreCredentialAead(alias);
+        AndroidKeystoreCredentialAead second =
+                new AndroidKeystoreCredentialAead(alias);
+
+        assertSame(first.transactionLock(), second.transactionLock());
+    }
+
+    @Test
+    public void apiKeyOnlyAppliesToHttpsOkHttpRequests() {
+        EndurainApiKey key = EndurainApiKey.from(
+                "okhttp-test-key".toCharArray());
+        try {
+            Request.Builder https = new Request.Builder()
+                    .url("https://example.com")
+                    .get();
+            key.applyTo(https);
+            assertEquals(
+                    "okhttp-test-key",
+                    https.build().header("X-API-Key"));
+
+            try {
+                key.applyTo(new Request.Builder()
+                        .url("http://example.com")
+                        .get());
+                fail("Expected cleartext request to reject the API key");
+            } catch (IllegalArgumentException expected) {
+                assertFalse(expected.getMessage().isEmpty());
+            }
+        } finally {
+            key.close();
+        }
     }
 
     @Test
@@ -138,6 +187,106 @@ public class EndurainCredentialStoreTest {
         assertFalse(name.contains("example"));
         assertFalse(name.contains("connection"));
         assertNotEquals("filename-test-key", name);
+    }
+
+    @Test
+    public void twoStoreInstancesSerializeStoreAgainstResetAll() throws Exception {
+        BlockingCredentialBoundary boundary = new BlockingCredentialBoundary();
+        EndurainCredentialStore writingStore =
+                new EndurainCredentialStore(directory, boundary.newAeadInstance());
+        EndurainCredentialStore resettingStore =
+                new EndurainCredentialStore(directory, boundary.newAeadInstance());
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch resetAttempted = new CountDownLatch(1);
+        try {
+            Future<Void> write = executor.submit(() -> {
+                writingStore.store(config, "race-test-key".toCharArray());
+                return null;
+            });
+            assertTrue(boundary.sealEntered.await(5, TimeUnit.SECONDS));
+
+            Future<Void> reset = executor.submit(() -> {
+                resetAttempted.countDown();
+                resettingStore.resetAll();
+                return null;
+            });
+            assertTrue(resetAttempted.await(5, TimeUnit.SECONDS));
+            assertFalse(boundary.deleteKeyEntered.await(
+                    250,
+                    TimeUnit.MILLISECONDS));
+
+            boundary.allowSeal.countDown();
+            write.get(5, TimeUnit.SECONDS);
+            reset.get(5, TimeUnit.SECONDS);
+
+            assertEquals(
+                    CredentialAead.KeyStatus.MISSING,
+                    boundary.keyStatus());
+            assertFalse(writingStore.credentialFile(config).exists());
+            assertEquals(
+                    CredentialReadResult.State.NOT_CONFIGURED,
+                    writingStore.load(config).state());
+        } finally {
+            boundary.allowSeal.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void resetDeletesScopedCrashTemporaryAndRetainsUnrelatedFiles()
+            throws Exception {
+        store.store(config, "crash-state-key".toCharArray());
+        File scopedTemporary = crashTemporary(store.credentialFile(config));
+        write(scopedTemporary, read(store.credentialFile(config)));
+
+        EndurainConnectionConfig other = new EndurainConnectionConfig(
+                EndurainEndpoint.parse("https://example.com"),
+                "connection-other");
+        store.store(other, "other-key".toCharArray());
+        File otherTemporary = crashTemporary(store.credentialFile(other));
+        write(otherTemporary, read(store.credentialFile(other)));
+        File unrelated = new File(directory, "unrelated.new");
+        write(unrelated, new byte[]{1, 2, 3});
+
+        store.reset(config);
+
+        assertFalse(store.credentialFile(config).exists());
+        assertFalse(scopedTemporary.exists());
+        assertTrue(store.credentialFile(other).exists());
+        assertTrue(otherTemporary.exists());
+        assertTrue(unrelated.exists());
+        assertEquals(CredentialAead.KeyStatus.PRESENT, aead.keyStatus());
+    }
+
+    @Test
+    public void constructionCleansOnlyRecognizedCrashTemporaries()
+            throws Exception {
+        store.store(config, "startup-cleanup-key".toCharArray());
+        File recognized = crashTemporary(store.credentialFile(config));
+        write(recognized, read(store.credentialFile(config)));
+        File invalidUuid = new File(
+                directory,
+                store.credentialFile(config).getName() + ".not-a-uuid.new");
+        write(invalidUuid, new byte[]{4, 5, 6});
+        File unrelated = new File(directory, "unrelated.new");
+        write(unrelated, new byte[]{7, 8, 9});
+
+        EndurainCredentialStore restarted =
+                new EndurainCredentialStore(directory, aead);
+
+        assertFalse(recognized.exists());
+        assertTrue(invalidUuid.exists());
+        assertTrue(unrelated.exists());
+        try (CredentialReadResult loaded = restarted.load(config)) {
+            assertEquals(CredentialReadResult.State.AVAILABLE, loaded.state());
+        }
+    }
+
+    private static File crashTemporary(File credentialFile) {
+        return new File(
+                credentialFile.getParentFile(),
+                credentialFile.getName() + "." + UUID.randomUUID() + ".new");
     }
 
     private static byte[] read(File file) throws Exception {
@@ -219,6 +368,7 @@ public class EndurainCredentialStoreTest {
         private static final int TAG_BITS = 128;
 
         private final SecureRandom random = new SecureRandom();
+        private final Object transactionLock = new Object();
         private SecretKey key;
 
         private TestCredentialAead() throws Exception {
@@ -228,6 +378,11 @@ public class EndurainCredentialStoreTest {
         @Override
         public KeyStatus keyStatus() {
             return key == null ? KeyStatus.MISSING : KeyStatus.PRESENT;
+        }
+
+        @Override
+        public Object transactionLock() {
+            return transactionLock;
         }
 
         @Override
@@ -308,6 +463,73 @@ public class EndurainCredentialStoreTest {
             generator.init(256);
             Key generated = generator.generateKey();
             key = (SecretKey) generated;
+        }
+    }
+
+    private static final class BlockingCredentialBoundary {
+        private final TestCredentialAead delegate;
+        private final CountDownLatch sealEntered = new CountDownLatch(1);
+        private final CountDownLatch allowSeal = new CountDownLatch(1);
+        private final CountDownLatch deleteKeyEntered = new CountDownLatch(1);
+
+        private BlockingCredentialBoundary() throws Exception {
+            delegate = new TestCredentialAead();
+        }
+
+        private CredentialAead newAeadInstance() {
+            return new BlockingCredentialAead(this);
+        }
+
+        private CredentialAead.KeyStatus keyStatus() {
+            return delegate.keyStatus();
+        }
+    }
+
+    private static final class BlockingCredentialAead implements CredentialAead {
+        private final BlockingCredentialBoundary boundary;
+
+        private BlockingCredentialAead(BlockingCredentialBoundary boundary) {
+            this.boundary = boundary;
+        }
+
+        @Override
+        public KeyStatus keyStatus() {
+            return boundary.delegate.keyStatus();
+        }
+
+        @Override
+        public Object transactionLock() {
+            return boundary.delegate.transactionLock();
+        }
+
+        @Override
+        public byte[] seal(byte[] plaintext, byte[] associatedData)
+                throws CredentialCryptoException {
+            boundary.sealEntered.countDown();
+            try {
+                if (!boundary.allowSeal.await(5, TimeUnit.SECONDS)) {
+                    throw new CredentialCryptoException(
+                            CredentialCryptoException.Reason.KEY_UNAVAILABLE);
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new CredentialCryptoException(
+                        CredentialCryptoException.Reason.KEY_UNAVAILABLE,
+                        error);
+            }
+            return boundary.delegate.seal(plaintext, associatedData);
+        }
+
+        @Override
+        public byte[] open(byte[] sealed, byte[] associatedData)
+                throws CredentialCryptoException {
+            return boundary.delegate.open(sealed, associatedData);
+        }
+
+        @Override
+        public void deleteKey() {
+            boundary.deleteKeyEntered.countDown();
+            boundary.delegate.deleteKey();
         }
     }
 }

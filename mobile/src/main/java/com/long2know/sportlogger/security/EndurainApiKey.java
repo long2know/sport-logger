@@ -11,6 +11,8 @@ import java.util.Objects;
 
 import javax.net.ssl.HttpsURLConnection;
 
+import okhttp3.Request;
+
 public final class EndurainApiKey implements AutoCloseable {
     private static final int MAX_CHARACTERS = 4096;
 
@@ -42,6 +44,16 @@ public final class EndurainApiKey implements AutoCloseable {
         }
         char[] current = requireOpen();
         connection.setRequestProperty("X-API-Key", new String(current));
+    }
+
+    public void applyTo(Request.Builder request) {
+        Objects.requireNonNull(request, "request");
+        if (!request.build().url().isHttps()) {
+            throw new IllegalArgumentException(
+                    "Endurain API keys may only be applied to HTTPS requests");
+        }
+        char[] current = requireOpen();
+        request.header("X-API-Key", new String(current));
     }
 
     byte[] encodeUtf8() {

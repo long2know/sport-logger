@@ -12,8 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,10 +28,14 @@ final class EndurainTlsFixture implements AutoCloseable {
     enum Mode {
         SUCCESS_ONE,
         SUCCESS_MULTIPLE,
+        SUCCESS_RAW_EMOJI,
         AUTH_FAILURE,
         INVALID_TCX,
-        RATE_LIMITED,
+        LATE_RATE_LIMITED,
         DROP_AFTER_TRANSMISSION,
+        STALL_BEFORE_REQUEST,
+        STALL_REQUEST_BODY,
+        DRIP_CREATED_RESPONSE,
         REDIRECT_HOST,
         REDIRECT_SCHEME,
         EMPTY_CREATED_LIST,
@@ -39,7 +45,7 @@ final class EndurainTlsFixture implements AutoCloseable {
     }
 
     private static final int MAX_HEADER_LINE_BYTES = 8192;
-    private static final int MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+    private static final int MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
 
     private final SSLServerSocket server;
     private final ExecutorService executor;
@@ -51,8 +57,20 @@ final class EndurainTlsFixture implements AutoCloseable {
     private final AtomicBoolean redirectTargetHadApiKey = new AtomicBoolean();
     private final AtomicBoolean uploadHadApiKey = new AtomicBoolean();
     private final AtomicBoolean multipartWasFaithful = new AtomicBoolean();
+    private final AtomicBoolean preRequestStallEntered = new AtomicBoolean();
+    private final AtomicBoolean requestBodyStallEntered = new AtomicBoolean();
+    private final AtomicBoolean dripResponseStarted = new AtomicBoolean();
+    private final AtomicBoolean dripResponseCompleted = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicReference<Throwable> failure = new AtomicReference<>();
+    private final AtomicReference<CountDownLatch> stallRelease =
+            new AtomicReference<>(new CountDownLatch(0));
+    private final AtomicReference<CountDownLatch> preRequestStallReached =
+            new AtomicReference<>(new CountDownLatch(0));
+    private final AtomicReference<CountDownLatch> requestBodyStallReached =
+            new AtomicReference<>(new CountDownLatch(0));
+    private final AtomicReference<CountDownLatch> dripResponseReached =
+            new AtomicReference<>(new CountDownLatch(0));
 
     EndurainTlsFixture(RuntimeTlsMaterial material) throws Exception {
         server = (SSLServerSocket) material.serverContext()
@@ -75,11 +93,25 @@ final class EndurainTlsFixture implements AutoCloseable {
 
     void mode(Mode value) {
         assertHealthy();
+        releaseStall();
         mode.set(value);
         redirectTargetHit.set(false);
         redirectTargetHadApiKey.set(false);
         uploadHadApiKey.set(false);
         multipartWasFaithful.set(false);
+        preRequestStallEntered.set(false);
+        requestBodyStallEntered.set(false);
+        dripResponseStarted.set(false);
+        dripResponseCompleted.set(false);
+        preRequestStallReached.set(new CountDownLatch(1));
+        requestBodyStallReached.set(new CountDownLatch(1));
+        dripResponseReached.set(new CountDownLatch(1));
+        if (value == Mode.STALL_BEFORE_REQUEST
+                || value == Mode.STALL_REQUEST_BODY) {
+            stallRelease.set(new CountDownLatch(1));
+        } else {
+            stallRelease.set(new CountDownLatch(0));
+        }
     }
 
     int uploadRequests() {
@@ -112,9 +144,49 @@ final class EndurainTlsFixture implements AutoCloseable {
         return multipartWasFaithful.get();
     }
 
+    boolean preRequestStallEntered() {
+        assertHealthy();
+        return preRequestStallEntered.get();
+    }
+
+    boolean requestBodyStallEntered() {
+        assertHealthy();
+        return requestBodyStallEntered.get();
+    }
+
+    boolean dripResponseStarted() {
+        assertHealthy();
+        return dripResponseStarted.get();
+    }
+
+    boolean dripResponseCompleted() {
+        assertHealthy();
+        return dripResponseCompleted.get();
+    }
+
+    boolean awaitPreRequestStall(long timeout, TimeUnit unit)
+            throws InterruptedException {
+        return preRequestStallReached.get().await(timeout, unit);
+    }
+
+    boolean awaitRequestBodyStall(long timeout, TimeUnit unit)
+            throws InterruptedException {
+        return requestBodyStallReached.get().await(timeout, unit);
+    }
+
+    boolean awaitDripResponse(long timeout, TimeUnit unit)
+            throws InterruptedException {
+        return dripResponseReached.get().await(timeout, unit);
+    }
+
+    void releaseStall() {
+        stallRelease.get().countDown();
+    }
+
     @Override
     public void close() throws IOException {
         closed.set(true);
+        releaseStall();
         server.close();
         executor.shutdownNow();
         assertHealthy();
@@ -142,6 +214,12 @@ final class EndurainTlsFixture implements AutoCloseable {
     private void handle(SSLSocket socket) {
         try (SSLSocket connection = socket) {
             connection.setSoTimeout(5000);
+            if (mode.get() == Mode.STALL_BEFORE_REQUEST) {
+                preRequestStallEntered.set(true);
+                preRequestStallReached.get().countDown();
+                awaitStallRelease();
+                return;
+            }
             connection.startHandshake();
             Request request = readRequest(connection.getInputStream());
             dispatch(request, connection.getOutputStream());
@@ -211,13 +289,20 @@ final class EndurainTlsFixture implements AutoCloseable {
                                 + "{\"id\":42,\"name\":\"Ride\",\"distance\":2000,"
                                 + "\"activity_type\":4}]");
                 break;
+            case SUCCESS_RAW_EMOJI:
+                sendJson(
+                        output,
+                        201,
+                        "[{\"id\":41,\"name\":\"Run 🏃\",\"distance\":1000,"
+                                + "\"activity_type\":1}]");
+                break;
             case AUTH_FAILURE:
                 sendJson(output, 401, "{\"detail\":\"invalid scope\"}");
                 break;
             case INVALID_TCX:
                 sendJson(output, 400, "{\"detail\":\"invalid TCX\"}");
                 break;
-            case RATE_LIMITED:
+            case LATE_RATE_LIMITED:
                 send(
                         output,
                         429,
@@ -225,6 +310,16 @@ final class EndurainTlsFixture implements AutoCloseable {
                         "{\"detail\":\"rate limit\"}");
                 break;
             case DROP_AFTER_TRANSMISSION:
+                break;
+            case STALL_REQUEST_BODY:
+                break;
+            case DRIP_CREATED_RESPONSE:
+                sendDrippedJson(
+                        output,
+                        201,
+                        "[{\"id\":41,\"name\":\"Dripped response\"}]");
+                break;
+            case STALL_BEFORE_REQUEST:
                 break;
             case REDIRECT_HOST:
                 send(
@@ -311,9 +406,15 @@ final class EndurainTlsFixture implements AutoCloseable {
         if (contentLength < 0 || contentLength > MAX_REQUEST_BODY_BYTES) {
             throw new IOException("Request body exceeds fixture bound");
         }
+        if (mode.get() == Mode.STALL_REQUEST_BODY
+                && "/api/v1/activities/create/upload".equals(path)) {
+            requestBodyStallEntered.set(true);
+            requestBodyStallReached.get().countDown();
+            awaitStallRelease();
+            return new Request(parts[0], path, headers, new byte[0]);
+        }
         boolean rejectBeforeBody = "/api/v1/activities/create/upload".equals(path)
-                && (mode.get() == Mode.AUTH_FAILURE
-                || mode.get() == Mode.RATE_LIMITED);
+                && mode.get() == Mode.AUTH_FAILURE;
         byte[] body;
         if (rejectBeforeBody) {
             body = new byte[0];
@@ -389,6 +490,49 @@ final class EndurainTlsFixture implements AutoCloseable {
         output.write(headers.toString().getBytes(StandardCharsets.US_ASCII));
         output.write(bytes);
         output.flush();
+    }
+
+    private void sendDrippedJson(
+            OutputStream output,
+            int status,
+            String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        String headers = new StringBuilder()
+                .append("HTTP/1.1 ")
+                .append(status)
+                .append(' ')
+                .append(reason(status))
+                .append("\r\n")
+                .append("Content-Type: application/json; charset=utf-8\r\n")
+                .append("Content-Length: ")
+                .append(bytes.length)
+                .append("\r\n")
+                .append("Connection: close\r\n\r\n")
+                .toString();
+        output.write(headers.getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+        dripResponseStarted.set(true);
+        dripResponseReached.get().countDown();
+        for (byte value : bytes) {
+            output.write(value);
+            output.flush();
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        dripResponseCompleted.set(true);
+    }
+
+    private void awaitStallRelease() throws IOException {
+        try {
+            stallRelease.get().await();
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Stalled fixture was interrupted", error);
+        }
     }
 
     private static String reason(int status) {

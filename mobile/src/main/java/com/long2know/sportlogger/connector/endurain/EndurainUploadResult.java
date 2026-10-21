@@ -27,8 +27,11 @@ public final class EndurainUploadResult {
         REDIRECT_REJECTED,
         TLS_VALIDATION_FAILED,
         PRE_TRANSMISSION_NETWORK_FAILURE,
+        PRE_TRANSMISSION_TIMEOUT,
         RATE_LIMITED,
         POST_TRANSMISSION_NETWORK_FAILURE,
+        POST_TRANSMISSION_WRITE_TIMEOUT,
+        POST_TRANSMISSION_TIMEOUT,
         UNCERTAIN_SERVER_FAILURE,
         MALFORMED_SUCCESS_RESPONSE
     }
@@ -83,6 +86,17 @@ public final class EndurainUploadResult {
             Duration retryAfter) {
         return new EndurainUploadResult(
                 State.RATE_LIMITED,
+                Reason.RATE_LIMITED,
+                Collections.emptyList(),
+                httpStatus,
+                Objects.requireNonNull(retryAfter, "retryAfter"));
+    }
+
+    static EndurainUploadResult rateLimitedAfterTransmission(
+            Integer httpStatus,
+            Duration retryAfter) {
+        return new EndurainUploadResult(
+                State.UNKNOWN_DELIVERY,
                 Reason.RATE_LIMITED,
                 Collections.emptyList(),
                 httpStatus,

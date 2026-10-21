@@ -34,6 +34,20 @@ public class EndurainResponseParserTest {
     }
 
     @Test
+    public void acceptsRawUtf8AndEscapedSupplementaryCharacters() throws Exception {
+        assertEquals(
+                List.of(41L),
+                EndurainResponseParser.parseActivityIds(
+                        "[{\"id\":41,\"name\":\"Run 🏃\"}]"
+                                .getBytes(StandardCharsets.UTF_8)));
+        assertEquals(
+                List.of(42L),
+                EndurainResponseParser.parseActivityIds(
+                        "[{\"id\":42,\"name\":\"Run \\uD83C\\uDFC3\"}]"
+                                .getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
     public void rejectsEmptyMissingDuplicateFractionalAndOutOfRangeIds() {
         assertInvalid("[]");
         assertInvalid("[{}]");
@@ -56,6 +70,13 @@ public class EndurainResponseParserTest {
         } catch (EndurainResponseParser.ParseException expected) {
             assertEquals("Response is not valid UTF-8", expected.getMessage());
         }
+    }
+
+    @Test
+    public void rejectsUnmatchedSurrogateEscapes() {
+        assertInvalid("[{\"id\":1,\"name\":\"\\uD83C\"}]");
+        assertInvalid("[{\"id\":1,\"name\":\"\\uDFC3\"}]");
+        assertInvalid("[{\"id\":1,\"name\":\"\\uD83C\\u0041\"}]");
     }
 
     private static void assertInvalid(String json) {

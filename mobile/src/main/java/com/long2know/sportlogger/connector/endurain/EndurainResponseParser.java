@@ -319,8 +319,16 @@ final class EndurainResponseParser {
                     throw error("JSON string contains a control character");
                 }
                 if (current != '\\') {
-                    if (Character.isSurrogate(current)) {
-                        throw error("JSON string contains an unescaped surrogate");
+                    if (Character.isHighSurrogate(current)) {
+                        if (index >= input.length()
+                                || !Character.isLowSurrogate(input.charAt(index))) {
+                            throw error("JSON string contains an incomplete surrogate pair");
+                        }
+                        value.append(current).append(input.charAt(index++));
+                        continue;
+                    }
+                    if (Character.isLowSurrogate(current)) {
+                        throw error("JSON string contains an unexpected low surrogate");
                     }
                     value.append(current);
                     continue;

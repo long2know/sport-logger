@@ -24,9 +24,13 @@ public final class EndurainCredentialStore {
     private static final byte[] AAD_PREFIX =
             "sportlogger:endurain:credential:v1".getBytes(StandardCharsets.UTF_8);
     private static final int MAX_CREDENTIAL_FILE_BYTES = 16 * 1024;
+    private static final String CREDENTIAL_SUFFIX = ".credential";
+    private static final String TEMPORARY_SUFFIX = ".new";
 
     private final File directory;
     private final CredentialAead aead;
+    private final Object transactionLock;
+    private IOException startupCleanupFailure;
 
     public static EndurainCredentialStore forApplication(Context context) {
         Objects.requireNonNull(context, "context");
@@ -43,124 +47,147 @@ public final class EndurainCredentialStore {
     EndurainCredentialStore(File directory, CredentialAead aead) {
         this.directory = Objects.requireNonNull(directory, "directory");
         this.aead = Objects.requireNonNull(aead, "aead");
+        transactionLock = Objects.requireNonNull(
+                aead.transactionLock(),
+                "aead.transactionLock()");
+        synchronized (transactionLock) {
+            try {
+                cleanupAllCredentialTemporaries();
+            } catch (IOException error) {
+                startupCleanupFailure = error;
+            }
+        }
     }
 
-    public synchronized void store(
+    public void store(
             EndurainConnectionConfig config,
             char[] apiKey) throws CredentialStoreException {
         Objects.requireNonNull(config, "config");
-        EndurainApiKey credential = EndurainApiKey.from(apiKey);
-        byte[] plaintext = null;
-        byte[] associatedData = associatedData(config);
-        byte[] sealed = null;
-        try {
-            plaintext = credential.encodeUtf8();
-            sealed = aead.seal(plaintext, associatedData);
-            writeAtomically(credentialFile(config), sealed);
-        } catch (CredentialCryptoException error) {
-            throw new CredentialStoreException(
-                    CredentialStoreException.Reason.KEYSTORE_UNAVAILABLE,
-                    error);
-        } catch (IOException error) {
-            throw new CredentialStoreException(
-                    CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
-                    error);
-        } finally {
-            credential.close();
-            clear(plaintext);
-            clear(associatedData);
-            clear(sealed);
+        synchronized (transactionLock) {
+            EndurainApiKey credential = EndurainApiKey.from(apiKey);
+            byte[] plaintext = null;
+            byte[] associatedData = associatedData(config);
+            byte[] sealed = null;
+            try {
+                ensureStartupCleanup();
+                cleanupScopedTemporaries(credentialFile(config));
+                plaintext = credential.encodeUtf8();
+                sealed = aead.seal(plaintext, associatedData);
+                writeAtomically(credentialFile(config), sealed);
+            } catch (CredentialCryptoException error) {
+                throw new CredentialStoreException(
+                        CredentialStoreException.Reason.KEYSTORE_UNAVAILABLE,
+                        error);
+            } catch (IOException error) {
+                throw new CredentialStoreException(
+                        CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
+                        error);
+            } finally {
+                credential.close();
+                clear(plaintext);
+                clear(associatedData);
+                clear(sealed);
+            }
         }
     }
 
-    public synchronized CredentialReadResult load(EndurainConnectionConfig config) {
+    public CredentialReadResult load(EndurainConnectionConfig config) {
         Objects.requireNonNull(config, "config");
-        File file = credentialFile(config);
-        if (!file.isFile()) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.NOT_CONFIGURED);
-        }
+        synchronized (transactionLock) {
+            File file = credentialFile(config);
+            try {
+                ensureStartupCleanup();
+                cleanupScopedTemporaries(file);
+            } catch (IOException error) {
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.STORAGE_UNAVAILABLE);
+            }
+            if (!file.isFile()) {
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.NOT_CONFIGURED);
+            }
 
-        CredentialAead.KeyStatus keyStatus = aead.keyStatus();
-        if (keyStatus == CredentialAead.KeyStatus.MISSING) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.KEYSTORE_KEY_MISSING);
-        }
-        if (keyStatus == CredentialAead.KeyStatus.UNAVAILABLE) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.KEYSTORE_UNAVAILABLE);
-        }
-
-        byte[] sealed = null;
-        byte[] associatedData = associatedData(config);
-        byte[] plaintext = null;
-        try {
-            sealed = readBounded(file);
-            plaintext = aead.open(sealed, associatedData);
-            return CredentialReadResult.available(
-                    EndurainApiKey.decodeUtf8(plaintext));
-        } catch (CharacterCodingException | IllegalArgumentException error) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.STORAGE_CORRUPT);
-        } catch (CorruptCredentialFileException error) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.STORAGE_CORRUPT);
-        } catch (IOException error) {
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.STORAGE_UNAVAILABLE);
-        } catch (CredentialCryptoException error) {
-            if (error.reason() == CredentialCryptoException.Reason.KEY_MISSING) {
+            CredentialAead.KeyStatus keyStatus = aead.keyStatus();
+            if (keyStatus == CredentialAead.KeyStatus.MISSING) {
                 return CredentialReadResult.of(
                         CredentialReadResult.State.KEYSTORE_KEY_MISSING);
             }
-            if (error.reason()
-                    == CredentialCryptoException.Reason.KEY_UNAVAILABLE) {
+            if (keyStatus == CredentialAead.KeyStatus.UNAVAILABLE) {
                 return CredentialReadResult.of(
                         CredentialReadResult.State.KEYSTORE_UNAVAILABLE);
             }
-            return CredentialReadResult.of(
-                    CredentialReadResult.State.STORAGE_CORRUPT);
-        } finally {
-            clear(sealed);
-            clear(associatedData);
-            clear(plaintext);
+
+            byte[] sealed = null;
+            byte[] associatedData = associatedData(config);
+            byte[] plaintext = null;
+            try {
+                sealed = readBounded(file);
+                plaintext = aead.open(sealed, associatedData);
+                return CredentialReadResult.available(
+                        EndurainApiKey.decodeUtf8(plaintext));
+            } catch (CharacterCodingException | IllegalArgumentException error) {
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.STORAGE_CORRUPT);
+            } catch (CorruptCredentialFileException error) {
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.STORAGE_CORRUPT);
+            } catch (IOException error) {
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.STORAGE_UNAVAILABLE);
+            } catch (CredentialCryptoException error) {
+                if (error.reason() == CredentialCryptoException.Reason.KEY_MISSING) {
+                    return CredentialReadResult.of(
+                            CredentialReadResult.State.KEYSTORE_KEY_MISSING);
+                }
+                if (error.reason()
+                        == CredentialCryptoException.Reason.KEY_UNAVAILABLE) {
+                    return CredentialReadResult.of(
+                            CredentialReadResult.State.KEYSTORE_UNAVAILABLE);
+                }
+                return CredentialReadResult.of(
+                        CredentialReadResult.State.STORAGE_CORRUPT);
+            } finally {
+                clear(sealed);
+                clear(associatedData);
+                clear(plaintext);
+            }
         }
     }
 
-    public synchronized void reset(EndurainConnectionConfig config)
+    public void reset(EndurainConnectionConfig config)
             throws CredentialStoreException {
         Objects.requireNonNull(config, "config");
-        File file = credentialFile(config);
-        if (file.exists() && !file.delete()) {
-            throw new CredentialStoreException(
-                    CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
-                    new IOException("Credential file could not be removed"));
+        synchronized (transactionLock) {
+            File file = credentialFile(config);
+            try {
+                ensureStartupCleanup();
+                deleteFile(file);
+                cleanupScopedTemporaries(file);
+            } catch (IOException error) {
+                throw new CredentialStoreException(
+                        CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
+                        error);
+            }
         }
     }
 
-    public synchronized void resetAll() throws CredentialStoreException {
-        File[] files = directory.listFiles(
-                (ignored, name) -> name.endsWith(".credential")
-                        || name.endsWith(".new"));
-        if (files != null) {
-            for (File file : files) {
-                if (file.exists() && !file.delete()) {
-                    throw new CredentialStoreException(
-                            CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
-                            new IOException("Credential file could not be removed"));
-                }
+    public void resetAll() throws CredentialStoreException {
+        synchronized (transactionLock) {
+            try {
+                ensureStartupCleanup();
+                deleteAllCredentialFiles();
+            } catch (IOException error) {
+                throw new CredentialStoreException(
+                        CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
+                        error);
             }
-        } else if (directory.exists()) {
-            throw new CredentialStoreException(
-                    CredentialStoreException.Reason.STORAGE_UNAVAILABLE,
-                    new IOException("Credential directory could not be read"));
-        }
-        try {
-            aead.deleteKey();
-        } catch (CredentialCryptoException error) {
-            throw new CredentialStoreException(
-                    CredentialStoreException.Reason.KEYSTORE_UNAVAILABLE,
-                    error);
+            try {
+                aead.deleteKey();
+            } catch (CredentialCryptoException error) {
+                throw new CredentialStoreException(
+                        CredentialStoreException.Reason.KEYSTORE_UNAVAILABLE,
+                        error);
+            }
         }
     }
 
@@ -239,6 +266,104 @@ public final class EndurainCredentialStore {
                 temporary.delete();
             }
         }
+    }
+
+    private void ensureStartupCleanup() throws IOException {
+        if (startupCleanupFailure == null) {
+            return;
+        }
+        try {
+            cleanupAllCredentialTemporaries();
+            startupCleanupFailure = null;
+        } catch (IOException error) {
+            startupCleanupFailure = error;
+            throw error;
+        }
+    }
+
+    private void cleanupScopedTemporaries(File destination) throws IOException {
+        if (!directory.exists()) {
+            return;
+        }
+        File[] files = directory.listFiles(
+                (ignored, name) -> name.startsWith(destination.getName() + ".")
+                        && isCredentialTemporaryFileName(name));
+        deleteListedFiles(files);
+    }
+
+    private void cleanupAllCredentialTemporaries() throws IOException {
+        if (!directory.exists()) {
+            return;
+        }
+        File[] files = directory.listFiles(
+                (ignored, name) -> isCredentialTemporaryFileName(name));
+        deleteListedFiles(files);
+    }
+
+    private void deleteAllCredentialFiles() throws IOException {
+        if (!directory.exists()) {
+            return;
+        }
+        File[] files = directory.listFiles(
+                (ignored, name) -> isCredentialFileName(name)
+                        || isCredentialTemporaryFileName(name));
+        deleteListedFiles(files);
+    }
+
+    private void deleteListedFiles(File[] files) throws IOException {
+        if (files == null) {
+            throw new IOException("Credential directory could not be read");
+        }
+        for (File file : files) {
+            if (file.isFile()) {
+                deleteFile(file);
+            }
+        }
+    }
+
+    private static void deleteFile(File file) throws IOException {
+        if (file.exists() && !file.delete()) {
+            throw new IOException("Credential file could not be removed");
+        }
+    }
+
+    private static boolean isCredentialFileName(String name) {
+        if (!name.endsWith(CREDENTIAL_SUFFIX)
+                || name.length() != 64 + CREDENTIAL_SUFFIX.length()) {
+            return false;
+        }
+        return isLowerHex(name, 0, 64);
+    }
+
+    private static boolean isCredentialTemporaryFileName(String name) {
+        String marker = CREDENTIAL_SUFFIX + ".";
+        if (!name.endsWith(TEMPORARY_SUFFIX)
+                || name.length()
+                != 64 + marker.length() + 36 + TEMPORARY_SUFFIX.length()
+                || !isLowerHex(name, 0, 64)
+                || !name.regionMatches(64, marker, 0, marker.length())) {
+            return false;
+        }
+        int uuidStart = 64 + marker.length();
+        String uuid = name.substring(
+                uuidStart,
+                name.length() - TEMPORARY_SUFFIX.length());
+        try {
+            return UUID.fromString(uuid).toString().equals(uuid);
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
+    }
+
+    private static boolean isLowerHex(String value, int start, int end) {
+        for (int index = start; index < end; index++) {
+            char current = value.charAt(index);
+            if (!((current >= '0' && current <= '9')
+                    || (current >= 'a' && current <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static byte[] readBounded(File file) throws IOException {

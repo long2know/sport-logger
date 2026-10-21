@@ -15,6 +15,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -82,6 +87,16 @@ public class EndurainHttpsTransportTest {
     }
 
     @Test
+    public void rawUtf8EmojiInCreatedResponseRemainsDelivered() {
+        fixture.mode(EndurainTlsFixture.Mode.SUCCESS_RAW_EMOJI);
+
+        EndurainUploadResult result = upload(transport(1024), config());
+
+        assertEquals(EndurainUploadResult.State.DELIVERED, result.state());
+        assertEquals(41, result.remoteActivities().get(0).activityId());
+    }
+
+    @Test
     public void wrongScopeAndInvalidTcxAreDefinitiveFailures() {
         fixture.mode(EndurainTlsFixture.Mode.AUTH_FAILURE);
         EndurainUploadResult auth = upload(transport(1024), config());
@@ -99,16 +114,21 @@ public class EndurainHttpsTransportTest {
     }
 
     @Test
-    public void rateLimitHonorsRetryAfterWithoutAutomaticRetry() {
-        fixture.mode(EndurainTlsFixture.Mode.RATE_LIMITED);
+    public void lateRateLimitAfterAcceptedBodyIsUnknownAndNeverAutomatic() {
+        fixture.mode(EndurainTlsFixture.Mode.LATE_RATE_LIMITED);
         int before = fixture.uploadRequests();
 
         EndurainUploadResult result = upload(transport(1024), config());
 
-        assertEquals(EndurainUploadResult.State.RATE_LIMITED, result.state());
+        assertEquals(
+                EndurainUploadResult.State.UNKNOWN_DELIVERY,
+                result.state());
+        assertEquals(EndurainUploadResult.Reason.RATE_LIMITED, result.reason());
         assertEquals(Duration.ofSeconds(120), result.retryAfter());
         assertEquals(before + 1, fixture.uploadRequests());
-        assertTrue(result.mayRetryAutomatically());
+        assertTrue(fixture.multipartWasFaithful());
+        assertTrue(result.requiresManualReconciliation());
+        assertFalse(result.mayRetryAutomatically());
     }
 
     @Test
@@ -128,6 +148,103 @@ public class EndurainHttpsTransportTest {
                 EndurainUploadResult.Reason.PRE_TRANSMISSION_NETWORK_FAILURE,
                 result.reason());
         assertTrue(result.mayRetryAutomatically());
+    }
+
+    @Test(timeout = 8000)
+    public void overallDeadlineBeforeRequestIsRetryableAndCancelsConnection()
+            throws Exception {
+        fixture.mode(EndurainTlsFixture.Mode.STALL_BEFORE_REQUEST);
+        EndurainHttpsTransport bounded = deadlineTransport(
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(5),
+                Duration.ofMillis(800));
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        EndurainUploadResult result;
+        try {
+            Future<EndurainUploadResult> upload =
+                    executor.submit(() -> upload(bounded, config()));
+            assertTrue(fixture.awaitPreRequestStall(2, TimeUnit.SECONDS));
+            result = upload.get(3, TimeUnit.SECONDS);
+        } finally {
+            fixture.releaseStall();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertTrue(fixture.preRequestStallEntered());
+        assertEquals(EndurainUploadResult.State.RETRYABLE, result.state());
+        assertEquals(
+                EndurainUploadResult.Reason.PRE_TRANSMISSION_TIMEOUT,
+                result.reason());
+        assertTrue(result.mayRetryAutomatically());
+        assertEquals(0, EndurainHttpsTransport.pendingDeadlineTasksForTests());
+    }
+
+    @Test(timeout = 10000)
+    public void stalledRequestReaderHitsWriteDeadlineAsUnknownDelivery()
+            throws Exception {
+        fixture.mode(EndurainTlsFixture.Mode.STALL_REQUEST_BODY);
+        TcxUploadArtifact largeArtifact = createArtifact(
+                new File(workDirectory, "stalled-activity.tcx"),
+                24 * 1024 * 1024);
+        EndurainHttpsTransport bounded = deadlineTransport(
+                Duration.ofSeconds(5),
+                Duration.ofMillis(500),
+                Duration.ofSeconds(5));
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        EndurainUploadResult result;
+        try {
+            Future<EndurainUploadResult> upload =
+                    executor.submit(() -> upload(bounded, config(), largeArtifact));
+            assertTrue(fixture.awaitRequestBodyStall(2, TimeUnit.SECONDS));
+            result = upload.get(4, TimeUnit.SECONDS);
+        } finally {
+            fixture.releaseStall();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertTrue(fixture.requestBodyStallEntered());
+        assertEquals(
+                EndurainUploadResult.State.UNKNOWN_DELIVERY,
+                result.state());
+        assertEquals(
+                EndurainUploadResult.Reason.POST_TRANSMISSION_WRITE_TIMEOUT,
+                result.reason());
+        assertFalse(result.mayRetryAutomatically());
+        assertEquals(0, EndurainHttpsTransport.pendingDeadlineTasksForTests());
+    }
+
+    @Test(timeout = 10000)
+    public void drippedResponseHitsOverallDeadlineDespiteReadProgress()
+            throws Exception {
+        fixture.mode(EndurainTlsFixture.Mode.DRIP_CREATED_RESPONSE);
+        EndurainHttpsTransport bounded = deadlineTransport(
+                Duration.ofMillis(500),
+                Duration.ofSeconds(2),
+                Duration.ofMillis(1200));
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        EndurainUploadResult result;
+        try {
+            Future<EndurainUploadResult> upload =
+                    executor.submit(() -> upload(bounded, config()));
+            assertTrue(fixture.awaitDripResponse(2, TimeUnit.SECONDS));
+            result = upload.get(4, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertTrue(fixture.dripResponseStarted());
+        assertFalse(fixture.dripResponseCompleted());
+        assertEquals(
+                EndurainUploadResult.State.UNKNOWN_DELIVERY,
+                result.state());
+        assertEquals(
+                EndurainUploadResult.Reason.POST_TRANSMISSION_TIMEOUT,
+                result.reason());
+        assertFalse(result.mayRetryAutomatically());
+        assertEquals(0, EndurainHttpsTransport.pendingDeadlineTasksForTests());
     }
 
     @Test
@@ -258,21 +375,52 @@ public class EndurainHttpsTransportTest {
                 maxResponseBytes,
                 EndurainRetryPolicy.defaults(),
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                tls.pinnedCaSocketFactory());
+                tls.pinnedCaSocketFactory(),
+                tls.pinnedCaTrustManager());
+    }
+
+    private static EndurainHttpsTransport deadlineTransport(
+            Duration readTimeout,
+            Duration writeTimeout,
+            Duration overallTimeout) {
+        return new EndurainHttpsTransport(
+                Duration.ofSeconds(5),
+                readTimeout,
+                writeTimeout,
+                overallTimeout,
+                EndurainHttpsTransport.DEFAULT_MAX_TCX_BYTES,
+                1024,
+                EndurainRetryPolicy.defaults(),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                tls.pinnedCaSocketFactory(),
+                tls.pinnedCaTrustManager());
     }
 
     private static EndurainUploadResult upload(
             EndurainHttpsTransport transport,
             EndurainConnectionConfig config) {
+        return upload(transport, config, artifact);
+    }
+
+    private static EndurainUploadResult upload(
+            EndurainHttpsTransport transport,
+            EndurainConnectionConfig config,
+            TcxUploadArtifact uploadArtifact) {
         EndurainApiKey key = EndurainApiKey.from("fixture-key".toCharArray());
         try {
-            return transport.upload(config, artifact, key);
+            return transport.upload(config, uploadArtifact, key);
         } finally {
             key.close();
         }
     }
 
     private static TcxUploadArtifact createArtifact(File file) throws Exception {
+        return createArtifact(file, 0);
+    }
+
+    private static TcxUploadArtifact createArtifact(
+            File file,
+            int paddingBytes) throws Exception {
         File parent = file.getParentFile();
         if (!parent.isDirectory() && !parent.mkdirs()) {
             throw new IllegalStateException("Could not create artifact directory");
@@ -284,16 +432,27 @@ public class EndurainHttpsTransportTest {
                 + "<Id>2026-10-21T04:00:00Z</Id>"
                 + "</Activity></Activities></TrainingCenterDatabase>")
                 .getBytes(StandardCharsets.UTF_8);
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (FileOutputStream output = new FileOutputStream(file)) {
             output.write(bytes);
+            digest.update(bytes);
+            byte[] padding = new byte[16 * 1024];
+            Arrays.fill(padding, (byte) ' ');
+            int remaining = paddingBytes;
+            while (remaining > 0) {
+                int count = Math.min(remaining, padding.length);
+                output.write(padding, 0, count);
+                digest.update(padding, 0, count);
+                remaining -= count;
+            }
         }
         return new TcxUploadArtifact(
                 "artifact-test",
                 7,
                 file,
                 "activity.tcx",
-                bytes.length,
-                hex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+                bytes.length + (long) paddingBytes,
+                hex(digest.digest()));
     }
 
     private static String hex(byte[] bytes) {

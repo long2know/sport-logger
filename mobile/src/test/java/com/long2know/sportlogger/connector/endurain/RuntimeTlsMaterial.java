@@ -14,7 +14,9 @@ import java.util.List;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 
 final class RuntimeTlsMaterial implements AutoCloseable {
     private static final char[] STORE_PASSPHRASE = "fixture-pass".toCharArray();
@@ -22,14 +24,17 @@ final class RuntimeTlsMaterial implements AutoCloseable {
     private final File directory;
     private final SSLContext serverContext;
     private final SSLSocketFactory pinnedCaSocketFactory;
+    private final X509TrustManager pinnedCaTrustManager;
 
     private RuntimeTlsMaterial(
             File directory,
             SSLContext serverContext,
-            SSLSocketFactory pinnedCaSocketFactory) {
+            SSLSocketFactory pinnedCaSocketFactory,
+            X509TrustManager pinnedCaTrustManager) {
         this.directory = directory;
         this.serverContext = serverContext;
         this.pinnedCaSocketFactory = pinnedCaSocketFactory;
+        this.pinnedCaTrustManager = pinnedCaTrustManager;
     }
 
     static RuntimeTlsMaterial create(File directory) throws Exception {
@@ -135,13 +140,24 @@ final class RuntimeTlsMaterial implements AutoCloseable {
             TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(
                 TrustManagerFactory.getDefaultAlgorithm());
             trustManagers.init(trust);
+            X509TrustManager clientTrustManager = null;
+            for (TrustManager trustManager : trustManagers.getTrustManagers()) {
+                if (trustManager instanceof X509TrustManager) {
+                    clientTrustManager = (X509TrustManager) trustManager;
+                    break;
+                }
+            }
+            if (clientTrustManager == null) {
+                throw new IllegalStateException("Fixture X.509 trust manager is unavailable");
+            }
             SSLContext client = SSLContext.getInstance("TLS");
-            client.init(null, trustManagers.getTrustManagers(), null);
+            client.init(null, new TrustManager[]{clientTrustManager}, null);
 
             return new RuntimeTlsMaterial(
                 directory,
                 server,
-                client.getSocketFactory());
+                client.getSocketFactory(),
+                clientTrustManager);
         } catch (Exception error) {
             try {
                 deleteRecursively(directory);
@@ -158,6 +174,10 @@ final class RuntimeTlsMaterial implements AutoCloseable {
 
     SSLSocketFactory pinnedCaSocketFactory() {
         return pinnedCaSocketFactory;
+    }
+
+    X509TrustManager pinnedCaTrustManager() {
+        return pinnedCaTrustManager;
     }
 
     @Override

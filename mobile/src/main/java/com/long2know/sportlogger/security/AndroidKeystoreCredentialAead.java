@@ -8,6 +8,8 @@ import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
@@ -23,11 +25,22 @@ final class AndroidKeystoreCredentialAead implements CredentialAead {
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
     private static final int MAX_SEALED_BYTES = 8192;
+    private static final ConcurrentMap<String, Object> TRANSACTION_LOCKS =
+            new ConcurrentHashMap<>();
 
     private final String alias;
+    private final Object transactionLock;
 
     AndroidKeystoreCredentialAead(String alias) {
         this.alias = alias;
+        transactionLock = TRANSACTION_LOCKS.computeIfAbsent(
+                alias,
+                ignored -> new Object());
+    }
+
+    @Override
+    public Object transactionLock() {
+        return transactionLock;
     }
 
     @Override
