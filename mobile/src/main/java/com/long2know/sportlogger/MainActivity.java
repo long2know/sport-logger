@@ -15,6 +15,7 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
 import androidx.lifecycle.ViewModelProvider;
@@ -72,6 +73,21 @@ public final class MainActivity extends AppCompatActivity
 
         viewModel = new ViewModelProvider(this).get(PhoneActivityViewModel.class);
         viewModel.initialize(this);
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new OnBackPressedCallback(true) {
+                    @Override
+                    public void handleOnBackPressed() {
+                        if (currentState != null
+                                && currentState.getScreen()
+                                == PhoneActivityViewModel.Screen.DETAIL) {
+                            viewModel.showHistory();
+                            return;
+                        }
+                        setEnabled(false);
+                        getOnBackPressedDispatcher().onBackPressed();
+                    }
+                });
 
         String restoredSelection = savedInstanceState == null
                 ? null
@@ -109,16 +125,6 @@ public final class MainActivity extends AppCompatActivity
             outState.putString(STATE_SELECTED_ACTIVITY, selectedStorageId);
         }
         super.onSaveInstanceState(outState);
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (currentState != null
-                && currentState.getScreen() == PhoneActivityViewModel.Screen.DETAIL) {
-            viewModel.showHistory();
-            return;
-        }
-        super.onBackPressed();
     }
 
     @Override
