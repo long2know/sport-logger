@@ -43,26 +43,122 @@ Set `JAVA_HOME` to a JDK 17 installation and make SDK 36 available through
 `ANDROID_SDK_ROOT` or an uncommitted `local.properties` file.
 
 ```bash
-./gradlew :mobile:assembleDebug :wear:assembleDebug
+./gradlew :mobile:assembleSideload :wear:assembleSideload \
+  --no-daemon --max-workers=2
 ```
 
-The debug APKs are:
+The recommended manual-install APKs are:
 
-- `mobile/build/outputs/apk/debug/mobile-debug.apk`
-- `wear/build/outputs/apk/debug/wear-debug.apk`
+- `mobile/build/outputs/apk/sideload/mobile-sideload.apk`
+- `wear/build/outputs/apk/sideload/wear-sideload.apk`
 
 Install the phone and watch APKs on their corresponding devices:
 
 ```bash
-adb -s <phone-serial> install -r mobile/build/outputs/apk/debug/mobile-debug.apk
-adb -s <wear-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
+adb -s <phone-serial> install -r mobile/build/outputs/apk/sideload/mobile-sideload.apk
+adb -s <wear-serial> install -r wear/build/outputs/apk/sideload/wear-sideload.apk
 ```
 
+The `sideload` variants inherit release behavior, are non-debuggable, use production
+manifests, and reference the existing Gradle development signing identity. They are not
+production/Play-signed releases. The phone debug variant retains QA-only Health Connect
+read permissions and its consent-test activity; release APKs remain unsigned for the
+external signing process.
+
 The pinned CI workflow is `.github/workflows/android-build.yml`. It runs for pull requests
-and pushes targeting both `dev` and `main`.
+and pushes targeting both `dev` and `main`, validates the public sideload manifest and
+certificate properties, and uploads debug, sideload, and unsigned-release APKs.
 
 For device pairing, signing compatibility, and non-destructive upgrade instructions, see
 the [installation guide](installing.md).
+
+### Phone sideload device checkpoint
+
+On October 21, 2026, immutable integration head
+`6cba705594efc07b3b522d9d8365c0f068618133` passed an actual API 36 phone user-variant
+checkpoint:
+
+- normal `adb install -r`;
+- non-debuggable installed APK with zero Health Connect reads, eight production writes,
+  no debug consent activity, and the expected matching public certificate;
+- 7/7 existing `MainActivityComposeTest` cases against the sideload app;
+- 1/1 focused real-main-UI Health Connect publish and owned-delete flow with provider IDs,
+  persisted `UPSERTED` → `DELETED` receipts, and an empty granted-read set.
+
+The focused instrumentation probe was temporary and removed after capture. Production
+sources and manifests remained unchanged. This checkpoint proves the phone sideload path;
+the separately validated watch matrix is documented below, while physical and actual
+paired-device acceptance remain external.
+
+### Final watch source and device matrix
+
+Immutable watch source head `fb503a4a03eca9698fba9bd2b19fff8281e8abd6` is formally
+approved. It adds no new module, dependency, signing configuration, version, or application
+identity. Its final corrections are limited to the watch source and tests:
+
+- either heart-rate or activity-recognition access satisfies the health foreground
+  prerequisite; denied route/notification access is optional and permanent required denial
+  is exposed for settings recovery;
+- the public live snapshot uses nullable samples with provenance and quality, preserves real
+  zero values, does not fabricate missing zeroes, and hides unreliable or explicitly blocked
+  values;
+- missing canonical active duration remains absent instead of falling back to elapsed time;
+- ambient refresh compares both active and elapsed minute buckets, including pause offsets;
+- raw fallback values use the same presence, quality, and readiness gates.
+
+The final device lanes remain separate:
+
+| Lane | Current evidence |
+| --- | --- |
+| Phone sideload user flow | Passed: 7 existing main Compose tests plus 1 write-only Health Connect main-UI publish/delete test. |
+| Watch source/host tests | Passed: 164 Wear JVM tests in the final integrated build. |
+| Final watch debug QA components | Passed: matching debug app/test APKs, 12/12. |
+| Final watch sideload compatibility | Passed: normal `adb install -r`, same signer, non-debuggable package, and 3/3 legitimate Room migration/repository and activity-recreation tests. |
+| Final watch sideload launcher flow | Passed: single start, sourced live metrics, lap, pause/resume, direct paused finish, canonical summary, and offline retry. |
+
+Generic `ComponentActivity` fixtures are part of the debug-only test host and are
+intentionally absent from the sideload app. Their launch failure in that invalid lane is
+not a product crash and is not a substitute for the legitimate sideload tests.
+
+The final source-head gate used a synthetic 454×454 Wear OS 6 / API 36 device. With activity
+recognition granted and notifications, location, and heart-rate denied, one Start Running
+tap began recording without a permission loop. The service entered the foreground once.
+Distance and steps appeared with Health Services source labels, location stayed explicitly
+permission-denied, and missing values were not fabricated as zero. The final saved summary
+showed active `02:09`, elapsed `03:37`, distance `294 m`, `254` steps, `2` laps, and truthful
+offline retry. Filtered logs had zero critical fatal, ANR, database-lock/Room, command-
+rejection, or security matches.
+
+The evidence set contains 21 current PNG screenshots and 20 UI hierarchies with recorded
+checksums. It is synthetic emulator evidence only: it does not prove physical raw-hardware
+measurement, physical battery behavior, square hardware, or an actual paired-phone commit
+acknowledgement.
+
+The exact full CI command completed successfully after source alignment. JUnit XML totals
+were:
+
+| Module | Suites | Tests | Failures | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Mobile | 30 | 132 | 0 | 0 | 0 |
+| Wear | 36 | 164 | 0 | 0 | 0 |
+| Utilities | 4 | 22 | 0 | 0 | 0 |
+| **Total** | **70** | **318** | **0** | **0** | **0** |
+
+Debug lint XML contained 70 mobile, 17 Wear, and 3 utilities warnings, with no error or
+fatal findings.
+
+The same build produced and validated all six expected application APKs:
+
+| App | Debug QA | Manual sideload | Unsigned release |
+| --- | --- | --- | --- |
+| Phone | `mobile/build/outputs/apk/debug/mobile-debug.apk` | `mobile/build/outputs/apk/sideload/mobile-sideload.apk` | `mobile/build/outputs/apk/release/mobile-release-unsigned.apk` |
+| Watch | `wear/build/outputs/apk/debug/wear-debug.apk` | `wear/build/outputs/apk/sideload/wear-sideload.apk` | `wear/build/outputs/apk/release/wear-release-unsigned.apk` |
+
+The exact CI public-APK validation block passed against those files: both sideload APKs
+were non-debuggable and shared package/version/signing identity; phone min/target remained
+26/36 and watch 30/35; the phone sideload had zero Health Connect reads, eight writes, and
+no debug consent activity; watch production sensor/health permissions remained present;
+debug QA declarations remained present; and both release APKs remained unsigned.
 
 ## Canonical and legacy recording boundaries
 

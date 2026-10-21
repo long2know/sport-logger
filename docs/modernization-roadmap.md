@@ -7,6 +7,20 @@
 > **Requested by:** Stephen Long
 > **Supersedes:** the Cycle 2 artifact rejected by Fact Checker
 
+> **Implementation checkpoint — October 21, 2026:** this document remains the approved
+> historical design and sequencing record. The current implementation now includes the
+> JDK 17/API 36 build tuple, canonical protobuf and Room storage, capability-aware watch
+> recording backend, durable transfer/commit acknowledgement, the approved Compose phone
+> surface and its actual non-debuggable sideload validation, TCX save/share, Health Connect
+> publication, the Endurain TCX workflow, and formally approved watch Compose source with
+> corrected optional-permission degradation, live-value presence/provenance/quality,
+> unavailable active duration, ambient minute timing, and raw-fallback rendering. Its final
+> synthetic Wear API 36 device matrix passed separate 12/12 debug QA, 3/3 sideload
+> Room/recreation, and manual launcher-flow gates. Later sections that describe implemented
+> items as future work preserve the original plan rather than current product status.
+> Physical-device, live paired-device, disposable Endurain, Play, and production-signing
+> acceptance gates remain external.
+
 ## 0. Approval boundary
 
 This replacement revision preserves every accepted Cycle 2 correction to the 14 blocking groups
