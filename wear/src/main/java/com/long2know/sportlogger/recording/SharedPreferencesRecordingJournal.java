@@ -17,6 +17,7 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
     private static final String KEY_LEASE = "lease";
     private static final String KEY_STATE = "state";
     private static final String KEY_ACTIVITY_ID = "activity_id";
+    private static final String KEY_AUTHORITY = "authority";
     private static final String KEY_STARTED_AT = "started_at";
     private static final String KEY_ACTIVE_SINCE = "active_since";
     private static final String KEY_ACTIVE_SINCE_ELAPSED = "active_since_elapsed";
@@ -84,6 +85,16 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
                 throw new IllegalStateException(
                         "Active recording state has no activity identifier");
             }
+            RecordingAuthority authority;
+            try {
+                authority = RecordingAuthority.valueOf(preferences.getString(
+                        KEY_AUTHORITY,
+                        RecordingAuthority.LEGACY_COMPATIBILITY.name()));
+            } catch (RuntimeException error) {
+                throw new IllegalStateException(
+                        "Unknown durable recording authority",
+                        error);
+            }
 
             RecordingError recordingError = null;
             String errorCode = preferences.getString(KEY_ERROR_CODE, null);
@@ -102,6 +113,7 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
             return new PersistentRecording(
                     state,
                     activityId,
+                    authority,
                     preferences.getLong(KEY_STARTED_AT, 0L),
                     preferences.getLong(KEY_ACTIVE_SINCE, 0L),
                     preferences.getLong(KEY_ACTIVE_SINCE_ELAPSED, 0L),
@@ -128,6 +140,7 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
             SharedPreferences.Editor editor = preferences.edit()
                     .putString(KEY_STATE, recording.getState().name())
                     .putInt(KEY_ACTIVITY_ID, recording.getActivityId())
+                    .putString(KEY_AUTHORITY, recording.getAuthority().name())
                     .putLong(KEY_STARTED_AT, recording.getStartedAtMillis())
                     .putLong(KEY_ACTIVE_SINCE, recording.getActiveSinceMillis())
                     .putLong(

@@ -5,6 +5,7 @@ import java.util.Objects;
 public final class PersistentRecording {
     private final RecordingState state;
     private final int activityId;
+    private final RecordingAuthority authority;
     private final long startedAtMillis;
     private final long activeSinceMillis;
     private final long activeSinceElapsedRealtimeMillis;
@@ -26,6 +27,7 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 0L,
@@ -50,6 +52,7 @@ public final class PersistentRecording {
         this(
                 state,
                 activityId,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,
@@ -64,6 +67,7 @@ public final class PersistentRecording {
     public PersistentRecording(
             RecordingState state,
             int activityId,
+            RecordingAuthority authority,
             long startedAtMillis,
             long activeSinceMillis,
             long activeSinceElapsedRealtimeMillis,
@@ -75,6 +79,7 @@ public final class PersistentRecording {
             RecordingError error) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.authority = Objects.requireNonNull(authority);
         this.startedAtMillis = startedAtMillis;
         this.activeSinceMillis = activeSinceMillis;
         this.activeSinceElapsedRealtimeMillis =
@@ -100,6 +105,10 @@ public final class PersistentRecording {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public RecordingAuthority getAuthority() {
+        return authority;
     }
 
     public long getStartedAtMillis() {
@@ -221,6 +230,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 state,
                 activityId,
+                authority,
                 startedAtMillis,
                 state == RecordingState.RECORDING ? wallClockMillis : 0L,
                 state == RecordingState.RECORDING ? elapsedRealtimeMillis : 0L,
@@ -283,6 +293,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 nextState,
                 activityId,
+                authority,
                 startedAtMillis,
                 nextActiveSinceMillis,
                 nextActiveSinceElapsedRealtimeMillis,
@@ -298,6 +309,7 @@ public final class PersistentRecording {
         return new PersistentRecording(
                 state,
                 activityId,
+                authority,
                 startedAtMillis,
                 activeSinceMillis,
                 activeSinceElapsedRealtimeMillis,

@@ -5,6 +5,7 @@ import java.util.Objects;
 public final class RecordingSnapshot {
     private final RecordingState state;
     private final int activityId;
+    private final RecordingAuthority authority;
     private final long startedAtMillis;
     private final long durationMillis;
     private final long elapsedDurationMillis;
@@ -21,6 +22,7 @@ public final class RecordingSnapshot {
         this(
                 state,
                 activityId,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
                 0L,
                 durationMillis,
                 durationMillis,
@@ -40,8 +42,33 @@ public final class RecordingSnapshot {
             long elapsedSinceElapsedRealtimeMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                RecordingAuthority.LEGACY_COMPATIBILITY,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.authority = Objects.requireNonNull(authority);
         this.startedAtMillis = startedAtMillis;
         this.durationMillis = Math.max(0L, durationMillis);
         this.elapsedDurationMillis =
@@ -60,6 +87,10 @@ public final class RecordingSnapshot {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public RecordingAuthority getAuthority() {
+        return authority;
     }
 
     public long getDurationMillis() {
