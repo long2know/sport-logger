@@ -28,6 +28,8 @@
 # Local Copilot CLI MCP examples and overrides
 .copilot/
 
+/tools/device-smoke/__pycache__/
+
 # Disposable Android formatter evidence build, AVD, and probe output state
 /tools/android-formatter-evidence/.work/
 /tools/android-formatter-evidence/__pycache__/
