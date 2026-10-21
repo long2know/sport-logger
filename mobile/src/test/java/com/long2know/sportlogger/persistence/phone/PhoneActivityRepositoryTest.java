@@ -174,6 +174,9 @@ public class PhoneActivityRepositoryTest {
 
     @Test
     public void connectorLedgerRetainsEveryRemoteIdAndRequiresLeaseCAS() {
+        repository.acceptActivityTransfer(
+                transfer(TRANSFER_ID, activity(1L, sample(1L, 47D, -122D, 145D))),
+                900L);
         PhoneActivityRepository.ConnectorKey key =
                 new PhoneActivityRepository.ConnectorKey(
                         SESSION_ID,
