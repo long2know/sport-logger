@@ -219,7 +219,9 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 "phone_metadata",
                 "phone_tombstones",
                 "phone_tombstone_outbox",
-                "phone_tombstone_receipts") {
+                "phone_tombstone_receipts",
+                "connector_ledgers",
+                "connector_remote_ids") {
             @Override
             public void onInvalidated(Set<String> tables) {
                 executor.execute(listener);
