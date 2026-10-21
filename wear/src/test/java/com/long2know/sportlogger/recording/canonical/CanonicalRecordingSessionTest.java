@@ -16,6 +16,7 @@ import com.long2know.sportlogger.recording.RecordingLapRecorder;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
+import com.long2know.utilities.contract.CanonicalContractException;
 import com.long2know.utilities.contract.CanonicalPayload;
 import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.AckResult;
@@ -159,7 +160,8 @@ public class CanonicalRecordingSessionTest {
     }
 
     @Test
-    public void reservedCompletionRecoversWithStableIdentity() throws Exception {
+    public void pausedStoppingRecoveryAcceptsReservedFinalHealthServicesSample()
+            throws Exception {
         RecordingSnapshot recording = snapshot(
                 RecordingState.RECORDING,
                 0L,
@@ -168,25 +170,36 @@ public class CanonicalRecordingSessionTest {
                 70_000L);
         session.onRecordingSnapshot(recording);
         session.onAcceptedSample(heartRate(70_200_000_000L, 130D));
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.PAUSED,
+                200L,
+                300L,
+                0L,
+                70_300L));
         RecordingSnapshot stopping = snapshot(
                 RecordingState.STOPPING,
                 200L,
-                200L,
+                500L,
                 0L,
                 0L);
+        session.onRecordingSnapshot(stopping);
         awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
         CanonicalSessionJournal.State reserved = journal.read();
 
-        CanonicalRecordingSession replacement = new CanonicalRecordingSession(
+        session.close();
+        session = new CanonicalRecordingSession(
                 context,
                 repository,
                 journal,
                 (message, error) -> fatal.set(error));
-        replacement.updateCapabilities(Collections.singletonMap(
+        session.updateCapabilities(Collections.singletonMap(
                 ExerciseMetric.HEART_RATE_BPM,
                 supported(ExerciseMetric.HEART_RATE_BPM)));
-        replacement.onRecordingSnapshot(stopping);
-        awaitSuccess(callback -> replacement.reserveCompletion(stopping, callback));
+        session.onRecordingSnapshot(stopping);
+        session.onAcceptedSample(heartRate(70_400_000_000L, 199D));
+        assertEquals(1, repository.samples(reserved.sessionId).join().size());
+
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
         CanonicalSessionJournal.State recovered = journal.read();
 
         assertEquals(
@@ -195,7 +208,234 @@ public class CanonicalRecordingSessionTest {
         assertEquals(
                 reserved.completionRevision,
                 recovered.completionRevision);
-        replacement.close();
+        session.onAcceptedSample(rawPressure(70_450_000_000L, 1_020D));
+        session.onAcceptedSample(heartRate(70_500_000_000L, 152D));
+
+        List<com.long2know.utilities.contract.proto.MeasurementSample> samples =
+                repository.samples(reserved.sessionId).join();
+        assertEquals(2, samples.size());
+        assertEquals(152D, samples.get(1).getHeartRateBpm().getValue(), 0D);
+
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+        WatchActivityRepository.CompletedActivity completed =
+                repository.latestCompleted().join();
+        assertEquals(2L, completed.getActivity().getSummary().getSampleCount());
+        assertEquals(
+                WatchActivityRepository.OUTBOX_READY,
+                completed.getOutbox().getState());
+        assertNull(fatal.get());
+    }
+
+    @Test
+    public void pausedStopPersistsOnlyReservedFinalHealthServicesSample()
+            throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                105_000L,
+                105_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        session.onAcceptedSample(heartRate(105_200_000_000L, 140D));
+
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.PAUSED,
+                200L,
+                300L,
+                0L,
+                105_300L));
+        session.onAcceptedSample(heartRate(105_400_000_000L, 190D));
+        session.onAcceptedSample(rawPressure(105_500_000_000L, 1_010D));
+
+        RecordingSnapshot stopping = snapshot(
+                RecordingState.STOPPING,
+                200L,
+                1_000L,
+                0L,
+                0L);
+        session.onRecordingSnapshot(stopping);
+        session.onAcceptedSample(heartRate(105_600_000_000L, 191D));
+        assertEquals(1, repository.samples(state.sessionId).join().size());
+
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+        assertEquals(
+                WatchActivityRepository.LifecycleState.ENDING,
+                repository.session(state.sessionId).join().getState());
+        assertEquals(1, repository.samples(state.sessionId).join().size());
+
+        session.onAcceptedSample(rawPressure(105_700_000_000L, 1_020D));
+        session.onAcceptedSample(heartRate(106_000_000_000L, 150D));
+        List<com.long2know.utilities.contract.proto.MeasurementSample> samples =
+                repository.samples(state.sessionId).join();
+        assertEquals(2, samples.size());
+        assertEquals(150D, samples.get(1).getHeartRateBpm().getValue(), 0D);
+
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+
+        WatchActivityRepository.CompletedActivity completed =
+                repository.latestCompleted().join();
+        assertEquals(
+                WatchActivityRepository.LifecycleState.COMPLETED,
+                repository.session(state.sessionId).join().getState());
+        assertEquals(2L, completed.getActivity().getSummary().getSampleCount());
+        assertEquals(1, completed.getActivity().getLapsCount());
+        assertEquals(
+                1_000L,
+                completed.getActivity().getLaps(0).getElapsedDurationMs());
+        assertEquals(
+                200L,
+                completed.getActivity().getLaps(0).getActiveDurationMs());
+        WatchActivityRepository.OutboxItem outbox =
+                repository.readyOutbox(10).join().get(0);
+        assertEquals(WatchActivityRepository.OUTBOX_READY, outbox.getState());
+        com.long2know.utilities.contract.proto.ActivityRecord outboxActivity =
+                CanonicalPayload.parse(
+                        ActivityTransferFile.parseFrom(outbox.getPayload())
+                                .getActivityFile()
+                                .toByteArray())
+                        .getActivity();
+        assertEquals(2, outboxActivity.getSamplesCount());
+        assertEquals(
+                150D,
+                outboxActivity.getSamples(1).getHeartRateBpm().getValue(),
+                0D);
+        assertNull(fatal.get());
+    }
+
+    @Test
+    public void pauseDropsLateHealthAndRawSamplesThenResumeLapAndFinish()
+            throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                110_000L,
+                110_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        session.onAcceptedSample(heartRate(110_200_000_000L, 140D));
+
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.PAUSED,
+                200L,
+                300L,
+                0L,
+                110_300L));
+        session.onAcceptedSample(heartRate(110_400_000_000L, 190D));
+        session.onAcceptedSample(rawPressure(110_500_000_000L, 1_010D));
+
+        assertEquals(1, repository.samples(state.sessionId).join().size());
+        assertNull(fatal.get());
+
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.RECORDING,
+                200L,
+                600L,
+                110_600L,
+                110_600L));
+        session.onAcceptedSample(heartRate(110_700_000_000L, 145D));
+        RecordingLapRecorder.LapState lap = awaitLap(callback ->
+                session.recordManualLap(
+                        new RecordingLapRecorder.Boundary(
+                                recording.getActivityId(),
+                                1_700L,
+                                700L,
+                                300L),
+                        callback));
+        assertEquals(2, lap.getCurrentLapIndex());
+
+        RecordingSnapshot stopping = snapshot(
+                RecordingState.STOPPING,
+                500L,
+                1_000L,
+                0L,
+                0L);
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+        session.onAcceptedSample(heartRate(111_000_000_000L, 150D));
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+
+        WatchActivityRepository.CompletedActivity completed =
+                repository.latestCompleted().join();
+        assertEquals(3L, completed.getActivity().getSummary().getSampleCount());
+        assertEquals(2, completed.getActivity().getLapsCount());
+        assertEquals(700L,
+                completed.getActivity().getLaps(0).getElapsedDurationMs());
+        assertEquals(300L,
+                completed.getActivity().getLaps(0).getActiveDurationMs());
+        assertEquals(300L,
+                completed.getActivity().getLaps(1).getElapsedDurationMs());
+        assertEquals(200L,
+                completed.getActivity().getLaps(1).getActiveDurationMs());
+        assertNull(fatal.get());
+    }
+
+    @Test
+    public void repositoryPauseRaceDropsRejectedSampleWithoutStorageError() {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                120_000L,
+                120_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        repository.transition(
+                        state.sessionId,
+                        state.leaseToken,
+                        WatchActivityRepository.LifecycleState.PAUSED,
+                        state.bootId,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        1_300L)
+                .join();
+
+        session.onAcceptedSample(heartRate(120_300_000_000L, 175D));
+
+        assertTrue(repository.samples(state.sessionId).join().isEmpty());
+        assertNull(fatal.get());
+    }
+
+    @Test
+    public void reservedCompletionWriteRejectionRemainsVisible()
+            throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                125_000L,
+                125_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        RecordingSnapshot stopping = snapshot(
+                RecordingState.STOPPING,
+                300L,
+                500L,
+                0L,
+                0L);
+        session.onRecordingSnapshot(stopping);
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+
+        repository.transition(
+                        state.sessionId,
+                        state.leaseToken,
+                        WatchActivityRepository.LifecycleState.PAUSED,
+                        state.bootId,
+                        null,
+                        300L,
+                        null,
+                        null,
+                        1_600L)
+                .join();
+        session.onAcceptedSample(heartRate(125_500_000_000L, 155D));
+
+        assertTrue(repository.samples(state.sessionId).join().isEmpty());
+        assertTrue(fatal.get() instanceof CanonicalContractException);
+        assertEquals(
+                "SESSION_NOT_WRITABLE",
+                ((CanonicalContractException) fatal.get()).getCode());
     }
 
     @Test
@@ -549,6 +789,17 @@ public class CanonicalRecordingSessionTest {
                 value,
                 sequenceNanos,
                 MeasurementProvenance.HEALTH_SERVICES,
+                MeasurementSample.Quality.HIGH);
+    }
+
+    private static MeasurementSample<Double> rawPressure(
+            long sequenceNanos,
+            double value) {
+        return new MeasurementSample<>(
+                ExerciseMetric.PRESSURE,
+                value,
+                sequenceNanos,
+                MeasurementProvenance.RAW_PLATFORM,
                 MeasurementSample.Quality.HIGH);
     }
 
