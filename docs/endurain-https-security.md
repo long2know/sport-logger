@@ -143,6 +143,9 @@ JVM tests execute the real HTTPS code path and cover:
 - credential encryption, fresh IVs, scoped AAD, tamper, key loss, two-store store/reset-all
   serialization, recognized crash-temporary cleanup, scoped reset, and non-revealing filenames.
 
-An Android instrumentation test exercises the same credential store with the real
-`AndroidKeyStore`. It is compile-verified here and requires the parent-owned phone instrumentation
-lane to execute; no additional emulator is started by this change.
+On 2026-10-21, the reserved API 36 phone lane executed the targeted
+`EndurainCredentialStoreInstrumentedTest` against the real `AndroidKeyStore`: 2 tests passed in
+1.026 seconds. Coverage includes round-trip, tamper, key loss, reset, credential re-entry, and two
+separately constructed stores sharing one alias/reset boundary. Only synthetic aliases and files
+were used. The existing emulator was left running; no wipe, global adb action, or additional AVD
+was used. This is Android platform evidence, not external Endurain account/device acceptance.

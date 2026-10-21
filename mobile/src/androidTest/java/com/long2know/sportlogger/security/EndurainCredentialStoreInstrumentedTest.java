@@ -18,6 +18,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
 @RunWith(AndroidJUnit4.class)
 public class EndurainCredentialStoreInstrumentedTest {
@@ -25,6 +26,7 @@ public class EndurainCredentialStoreInstrumentedTest {
     private AndroidKeystoreCredentialAead aead;
     private EndurainCredentialStore store;
     private EndurainConnectionConfig config;
+    private String alias;
 
     @Before
     public void setUp() throws Exception {
@@ -33,8 +35,8 @@ public class EndurainCredentialStoreInstrumentedTest {
         directory = new File(
                 context.getNoBackupFilesDir(),
                 "endurain-credential-test-" + suffix);
-        aead = new AndroidKeystoreCredentialAead(
-                context.getPackageName() + ".endurain.test." + suffix);
+        alias = context.getPackageName() + ".endurain.test." + suffix;
+        aead = new AndroidKeystoreCredentialAead(alias);
         store = new EndurainCredentialStore(directory, aead);
         config = new EndurainConnectionConfig(
                 EndurainEndpoint.parse("https://localhost"),
@@ -75,6 +77,36 @@ public class EndurainCredentialStoreInstrumentedTest {
         assertEquals(
                 CredentialReadResult.State.NOT_CONFIGURED,
                 store.load(config).state());
+
+        store.store(config, "reentered-fixture-key".toCharArray());
+        try (CredentialReadResult reentered = store.load(config)) {
+            assertEquals(CredentialReadResult.State.AVAILABLE, reentered.state());
+        }
+    }
+
+    @Test
+    public void separateStoresShareAliasResetAndReentryBoundary()
+            throws Exception {
+        AndroidKeystoreCredentialAead secondAead =
+                new AndroidKeystoreCredentialAead(alias);
+        EndurainCredentialStore secondStore =
+                new EndurainCredentialStore(directory, secondAead);
+        assertSame(aead.transactionLock(), secondAead.transactionLock());
+
+        store.store(config, "two-store-fixture-key".toCharArray());
+        try (CredentialReadResult loaded = secondStore.load(config)) {
+            assertEquals(CredentialReadResult.State.AVAILABLE, loaded.state());
+        }
+
+        secondStore.resetAll();
+        assertEquals(
+                CredentialReadResult.State.NOT_CONFIGURED,
+                store.load(config).state());
+
+        store.store(config, "two-store-reentered-key".toCharArray());
+        try (CredentialReadResult reentered = secondStore.load(config)) {
+            assertEquals(CredentialReadResult.State.AVAILABLE, reentered.state());
+        }
     }
 
     private static byte[] read(File file) throws Exception {
