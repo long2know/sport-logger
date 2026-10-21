@@ -205,6 +205,36 @@ public class SharedPreferencesRecordingJournalTest {
         }
     }
 
+    @Test
+    public void monotonicAnchorAndBootIdentityRoundTripWithoutChangingLegacyKeys()
+            throws Exception {
+        BlockingPreferences preferences = new BlockingPreferences();
+        SharedPreferencesRecordingJournal journal =
+                new SharedPreferencesRecordingJournal(preferences.instance());
+        long lease = journal.acquireLease();
+        PersistentRecording recording = new PersistentRecording(
+                RecordingState.RECORDING,
+                7,
+                10_000L,
+                11_000L,
+                5_000L,
+                2_000L,
+                0L,
+                9,
+                null);
+
+        journal.write(lease, recording);
+        PersistentRecording restored = journal.read();
+
+        assertEquals(RecordingState.RECORDING, restored.getState());
+        assertEquals(11_000L, restored.getActiveSinceMillis());
+        assertEquals(5_000L, restored.getActiveSinceElapsedRealtimeMillis());
+        assertEquals(5_000L, restored.getElapsedSinceElapsedRealtimeMillis());
+        assertEquals(2_000L, restored.getAccumulatedMillis());
+        assertEquals(2_000L, restored.getAccumulatedElapsedMillis());
+        assertEquals(9, restored.getBootCount());
+    }
+
     private static PersistentRecording recording(RecordingState state) {
         if (state == RecordingState.IDLE) {
             return PersistentRecording.idle();

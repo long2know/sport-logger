@@ -20,6 +20,14 @@ public final class RecordingController {
 
     public interface Clock {
         long currentTimeMillis();
+
+        default long elapsedRealtimeMillis() {
+            return currentTimeMillis();
+        }
+
+        default int bootCount() {
+            return -1;
+        }
     }
 
     public interface Listener {
@@ -33,6 +41,7 @@ public final class RecordingController {
     private final RecordingJournal journal;
     private final RecordingStore store;
     private final RecordingExporter exporter;
+    private final RecordingSessionTerminator sessionTerminator;
     private final ScheduledExecutorService worker;
     private final Executor callbackExecutor;
     private final Clock clock;
@@ -47,7 +56,11 @@ public final class RecordingController {
     private ScheduledFuture<?> sampleFuture;
     private ScheduledFuture<?> retryFuture;
     private boolean exportInFlight;
+    private boolean terminationInFlight;
     private long exportToken;
+    private long terminationToken;
+    private int endedSessionActivityId;
+    private int finalSampleActivityId;
     private int retryAttempt;
     private long lease;
 
@@ -60,9 +73,32 @@ public final class RecordingController {
             Clock clock,
             Listener listener,
             RetryPolicy retryPolicy) {
+        this(
+                journal,
+                store,
+                exporter,
+                RecordingSessionTerminator.NO_OP,
+                worker,
+                callbackExecutor,
+                clock,
+                listener,
+                retryPolicy);
+    }
+
+    public RecordingController(
+            RecordingJournal journal,
+            RecordingStore store,
+            RecordingExporter exporter,
+            RecordingSessionTerminator sessionTerminator,
+            ScheduledExecutorService worker,
+            Executor callbackExecutor,
+            Clock clock,
+            Listener listener,
+            RetryPolicy retryPolicy) {
         this.journal = Objects.requireNonNull(journal);
         this.store = Objects.requireNonNull(store);
         this.exporter = Objects.requireNonNull(exporter);
+        this.sessionTerminator = Objects.requireNonNull(sessionTerminator);
         this.worker = Objects.requireNonNull(worker);
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor);
         this.clock = Objects.requireNonNull(clock);
@@ -94,6 +130,11 @@ public final class RecordingController {
         return submit(this::discardInternal);
     }
 
+    public boolean interrupt(RecordingError error) {
+        Objects.requireNonNull(error);
+        return submit(() -> interruptInternal(error));
+    }
+
     public RecordingSnapshot getSnapshot() {
         return snapshot;
     }
@@ -105,6 +146,7 @@ public final class RecordingController {
         callbackGeneration.incrementAndGet();
         cancel(sampleFuture);
         cancel(retryFuture);
+        terminationToken++;
         worker.shutdown();
     }
 
@@ -164,31 +206,78 @@ public final class RecordingController {
             return;
         }
 
-        publish(current);
+        if ((current.getState() == RecordingState.RECORDING
+                || current.getState() == RecordingState.PAUSED)
+                && current.isBootInterrupted(
+                clock.elapsedRealtimeMillis(),
+                clock.bootCount())) {
+            PersistentRecording interrupted = current.withState(
+                    RecordingState.INTERRUPTED,
+                    0L,
+                    0L,
+                    0L,
+                    current.getAccumulatedMillis(),
+                    current.getAccumulatedElapsedMillis(),
+                    0L,
+                    -1,
+                    new RecordingError(
+                            RecordingError.Code.BOOT_INTERRUPTION,
+                            "Recording was interrupted by a device restart"));
+            if (persist(interrupted)) {
+                current = interrupted;
+                publish(current);
+            }
+            return;
+        }
+
         switch (current.getState()) {
             case RECORDING:
-                scheduleSamples();
+            case PAUSED:
+                if (current.getElapsedSinceElapsedRealtimeMillis() == 0L
+                        || (current.getState() == RecordingState.RECORDING
+                        && current.getActiveSinceElapsedRealtimeMillis() == 0L)) {
+                    PersistentRecording checkpoint = current.checkpoint(
+                            clock.currentTimeMillis(),
+                            clock.elapsedRealtimeMillis(),
+                            clock.bootCount());
+                    if (!persist(checkpoint)) {
+                        return;
+                    }
+                    current = checkpoint;
+                }
+                publish(current);
+                if (current.getState() == RecordingState.RECORDING) {
+                    scheduleSamples();
+                }
                 break;
             case STOPPING:
             case EXPORT_PENDING:
             case EXPORT_QUEUED:
+                publish(current);
                 attemptFinalization();
                 break;
             case DISCARDING:
+                publish(current);
                 attemptDiscard();
                 break;
             case STARTING:
                 current = current.withState(
                         RecordingState.ERROR,
                         0L,
+                        0L,
+                        0L,
                         current.getAccumulatedMillis(),
+                        current.getAccumulatedElapsedMillis(),
                         current.getEndedAtMillis(),
+                        -1,
                         new RecordingError(
                                 RecordingError.Code.RECOVERY,
                                 "Interrupted start requires explicit recovery"));
+                persistBestEffort(current);
                 publish(current);
                 break;
             default:
+                publish(current);
                 break;
         }
     }
@@ -207,6 +296,10 @@ public final class RecordingController {
             exportInFlight = false;
             exportToken++;
         }
+        terminationInFlight = false;
+        terminationToken++;
+        endedSessionActivityId = 0;
+        finalSampleActivityId = 0;
         publish(new RecordingSnapshot(RecordingState.STARTING, 0, 0L, null));
         long now = clock.currentTimeMillis();
         int activityId;
@@ -216,7 +309,7 @@ public final class RecordingController {
             publish(new RecordingSnapshot(
                     current.getState(),
                     current.getActivityId(),
-                    current.durationAt(now),
+                    durationAtCurrentTime(),
                     failure(RecordingError.Code.STORAGE, "Could not create activity", error)));
             if (replacingQueued) {
                 scheduleFinalizationRetry();
@@ -224,13 +317,18 @@ public final class RecordingController {
             return;
         }
 
+        long elapsedNow = clock.elapsedRealtimeMillis();
         PersistentRecording started = new PersistentRecording(
                 RecordingState.RECORDING,
                 activityId,
                 now,
                 now,
+                elapsedNow,
+                elapsedNow,
                 0L,
                 0L,
+                0L,
+                clock.bootCount(),
                 null);
         if (!persist(started)) {
             try {
@@ -239,7 +337,7 @@ public final class RecordingController {
                 publish(new RecordingSnapshot(
                         current.getState(),
                         current.getActivityId(),
-                        current.durationAt(clock.currentTimeMillis()),
+                        durationAtCurrentTime(),
                         failure(
                                 RecordingError.Code.STORAGE,
                                 "Start rollback failed",
@@ -262,13 +360,20 @@ public final class RecordingController {
             reject("Cannot pause while recording state is " + current.getState());
             return;
         }
-        long now = clock.currentTimeMillis();
-        long accumulated = current.durationAt(now);
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long accumulated = current.durationAt(wallNow, elapsedNow, clock.bootCount());
+        long accumulatedElapsed =
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount());
         PersistentRecording paused = current.withState(
                 RecordingState.PAUSED,
                 0L,
-                accumulated,
                 0L,
+                elapsedNow,
+                accumulated,
+                accumulatedElapsed,
+                0L,
+                clock.bootCount(),
                 null);
         if (!persist(paused)) {
             return;
@@ -280,15 +385,26 @@ public final class RecordingController {
     }
 
     private void resumeInternal() {
-        if (current.getState() != RecordingState.PAUSED) {
+        if (current.getState() != RecordingState.PAUSED
+                && current.getState() != RecordingState.INTERRUPTED) {
             reject("Cannot resume while recording state is " + current.getState());
             return;
         }
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long accumulatedElapsed = current.elapsedDurationAt(
+                wallNow,
+                elapsedNow,
+                clock.bootCount());
         PersistentRecording resumed = current.withState(
                 RecordingState.RECORDING,
-                clock.currentTimeMillis(),
+                wallNow,
+                elapsedNow,
+                elapsedNow,
                 current.getAccumulatedMillis(),
+                accumulatedElapsed,
                 0L,
+                clock.bootCount(),
                 null);
         if (!persist(resumed)) {
             return;
@@ -300,17 +416,26 @@ public final class RecordingController {
 
     private void stopInternal() {
         RecordingState state = current.getState();
-        if (state != RecordingState.RECORDING && state != RecordingState.PAUSED) {
+        if (state != RecordingState.RECORDING
+                && state != RecordingState.PAUSED
+                && state != RecordingState.INTERRUPTED) {
             reject("Cannot stop while recording state is " + state);
             return;
         }
-        long now = clock.currentTimeMillis();
-        long accumulated = current.durationAt(now);
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long accumulated = current.durationAt(wallNow, elapsedNow, clock.bootCount());
+        long accumulatedElapsed =
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount());
         PersistentRecording stopping = current.withState(
                 RecordingState.STOPPING,
                 0L,
+                0L,
+                0L,
                 accumulated,
-                now,
+                accumulatedElapsed,
+                endTimestamp(accumulatedElapsed),
+                -1,
                 null);
         if (!persist(stopping)) {
             return;
@@ -325,16 +450,26 @@ public final class RecordingController {
 
     private void discardInternal() {
         RecordingState state = current.getState();
-        if (state != RecordingState.RECORDING && state != RecordingState.PAUSED) {
+        if (state != RecordingState.RECORDING
+                && state != RecordingState.PAUSED
+                && state != RecordingState.INTERRUPTED) {
             reject("Cannot discard while recording state is " + state);
             return;
         }
-        long now = clock.currentTimeMillis();
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long accumulated = current.durationAt(wallNow, elapsedNow, clock.bootCount());
+        long accumulatedElapsed =
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount());
         PersistentRecording discarding = current.withState(
                 RecordingState.DISCARDING,
                 0L,
-                current.durationAt(now),
-                now,
+                0L,
+                0L,
+                accumulated,
+                accumulatedElapsed,
+                endTimestamp(accumulatedElapsed),
+                -1,
                 null);
         if (!persist(discarding)) {
             return;
@@ -345,6 +480,32 @@ public final class RecordingController {
         retryAttempt = 0;
         publish(current);
         attemptDiscard();
+    }
+
+    private void interruptInternal(RecordingError error) {
+        RecordingState state = current.getState();
+        if (state != RecordingState.RECORDING && state != RecordingState.PAUSED) {
+            return;
+        }
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        PersistentRecording interrupted = current.withState(
+                RecordingState.INTERRUPTED,
+                0L,
+                0L,
+                0L,
+                current.durationAt(wallNow, elapsedNow, clock.bootCount()),
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount()),
+                0L,
+                -1,
+                error);
+        if (!persist(interrupted)) {
+            return;
+        }
+        current = interrupted;
+        cancel(sampleFuture);
+        sampleFuture = null;
+        publish(current);
     }
 
     private void scheduleSamples() {
@@ -363,12 +524,14 @@ public final class RecordingController {
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
             }
-            if (current.getError() != null) {
-                PersistentRecording recovered = current.withError(null);
-                if (persist(recovered)) {
-                    current = recovered;
-                }
+            PersistentRecording checkpoint = current.checkpoint(
+                    clock.currentTimeMillis(),
+                    clock.elapsedRealtimeMillis(),
+                    clock.bootCount()).withError(null);
+            if (!persist(checkpoint)) {
+                return;
             }
+            current = checkpoint;
         } catch (Exception error) {
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
@@ -388,6 +551,14 @@ public final class RecordingController {
         }
         try {
             if (current.getState() == RecordingState.STOPPING) {
+                if (endedSessionActivityId != current.getActivityId()) {
+                    requestSessionEnd(true);
+                    return;
+                }
+                if (finalSampleActivityId != current.getActivityId()) {
+                    store.writeSample(current.getActivityId());
+                    finalSampleActivityId = current.getActivityId();
+                }
                 store.finishActivity(current.getActivityId(), current.getEndedAtMillis());
                 if (closed.get() || !journal.isCurrent(lease)) {
                     return;
@@ -395,8 +566,12 @@ public final class RecordingController {
                 PersistentRecording exportPending = current.withState(
                         RecordingState.EXPORT_PENDING,
                         0L,
+                        0L,
+                        0L,
                         current.getAccumulatedMillis(),
+                        current.getAccumulatedElapsedMillis(),
                         current.getEndedAtMillis(),
+                        -1,
                         null);
                 if (!persist(exportPending)) {
                     scheduleFinalizationRetry();
@@ -483,8 +658,12 @@ public final class RecordingController {
                     PersistentRecording queued = current.withState(
                             RecordingState.EXPORT_QUEUED,
                             0L,
+                            0L,
+                            0L,
                             current.getAccumulatedMillis(),
+                            current.getAccumulatedElapsedMillis(),
                             current.getEndedAtMillis(),
+                            -1,
                             null);
                     if (persist(queued)) {
                         current = queued;
@@ -520,6 +699,10 @@ public final class RecordingController {
             return;
         }
         try {
+            if (endedSessionActivityId != current.getActivityId()) {
+                requestSessionEnd(false);
+                return;
+            }
             store.deleteActivity(current.getActivityId());
             if (closed.get() || !journal.isCurrent(lease)) {
                 return;
@@ -553,6 +736,87 @@ public final class RecordingController {
         retryFuture = worker.schedule(this::attemptDiscard, delay, TimeUnit.MILLISECONDS);
     }
 
+    private void requestSessionEnd(boolean preserveFinalData) {
+        if (terminationInFlight
+                || closed.get()
+                || !journal.isCurrent(lease)) {
+            return;
+        }
+        terminationInFlight = true;
+        long token = ++terminationToken;
+        int activityId = current.getActivityId();
+        try {
+            sessionTerminator.endSession(
+                    activityId,
+                    preserveFinalData,
+                    snapshot(current, current.getError()),
+                    new RecordingSessionTerminator.Callback() {
+                        @Override
+                        public void onComplete() {
+                            handleSessionEndCallback(token, activityId, null);
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            handleSessionEndCallback(token, activityId, error);
+                        }
+                    });
+        } catch (RuntimeException error) {
+            handleSessionEndCallback(token, activityId, error);
+        }
+    }
+
+    private void handleSessionEndCallback(
+            long token,
+            int activityId,
+            Throwable error) {
+        if (closed.get()) {
+            return;
+        }
+        try {
+            worker.execute(() -> {
+                if (closed.get()
+                        || token != terminationToken
+                        || !terminationInFlight
+                        || !journal.isCurrent(lease)
+                        || current.getActivityId() != activityId) {
+                    return;
+                }
+                terminationInFlight = false;
+                if (error != null) {
+                    current = current.withError(failure(
+                            RecordingError.Code.ACQUISITION,
+                            "Exercise acquisition could not be ended",
+                            error));
+                    persistBestEffort(current);
+                    publish(current);
+                    if (current.getState() == RecordingState.DISCARDING) {
+                        scheduleDiscardRetry();
+                    } else {
+                        scheduleFinalizationRetry();
+                    }
+                    return;
+                }
+                endedSessionActivityId = activityId;
+                if (current.getError() != null
+                        && current.getError().getCode() == RecordingError.Code.ACQUISITION) {
+                    PersistentRecording recovered = current.withError(null);
+                    if (persist(recovered)) {
+                        current = recovered;
+                        publish(current);
+                    }
+                }
+                if (current.getState() == RecordingState.DISCARDING) {
+                    attemptDiscard();
+                } else {
+                    attemptFinalization();
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            // A replacement controller will retry the durable terminal state.
+        }
+    }
+
     private boolean persist(PersistentRecording next) {
         try {
             journal.write(lease, next);
@@ -560,11 +824,7 @@ public final class RecordingController {
         } catch (Exception error) {
             RecordingError recordingError =
                     failure(RecordingError.Code.DURABILITY, "Recording state was not persisted", error);
-            publish(new RecordingSnapshot(
-                    current.getState(),
-                    current.getActivityId(),
-                    current.durationAt(clock.currentTimeMillis()),
-                    recordingError));
+            publish(snapshot(current, recordingError));
             return false;
         }
     }
@@ -575,28 +835,18 @@ public final class RecordingController {
         } catch (Exception error) {
             RecordingError durability =
                     failure(RecordingError.Code.DURABILITY, "Recording error was not persisted", error);
-            publish(new RecordingSnapshot(
-                    next.getState(),
-                    next.getActivityId(),
-                    next.durationAt(clock.currentTimeMillis()),
-                    durability));
+            publish(snapshot(next, durability));
         }
     }
 
     private void reject(String message) {
-        publish(new RecordingSnapshot(
-                current.getState(),
-                current.getActivityId(),
-                current.durationAt(clock.currentTimeMillis()),
+        publish(snapshot(
+                current,
                 new RecordingError(RecordingError.Code.COMMAND_REJECTED, message)));
     }
 
     private void publish(PersistentRecording recording) {
-        publish(new RecordingSnapshot(
-                recording.getState(),
-                recording.getActivityId(),
-                recording.durationAt(clock.currentTimeMillis()),
-                recording.getError()));
+        publish(snapshot(recording, recording.getError()));
     }
 
     private void publish(RecordingSnapshot next) {
@@ -646,5 +896,39 @@ public final class RecordingController {
         if (future != null) {
             future.cancel(false);
         }
+    }
+
+    private long durationAtCurrentTime() {
+        return current.durationAt(
+                clock.currentTimeMillis(),
+                clock.elapsedRealtimeMillis(),
+                clock.bootCount());
+    }
+
+    private RecordingSnapshot snapshot(
+            PersistentRecording recording,
+            RecordingError error) {
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        int currentBootCount = clock.bootCount();
+        return new RecordingSnapshot(
+                recording.getState(),
+                recording.getActivityId(),
+                recording.getStartedAtMillis(),
+                recording.durationAt(wallNow, elapsedNow, currentBootCount),
+                recording.elapsedDurationAt(wallNow, elapsedNow, currentBootCount),
+                recording.getActiveSinceElapsedRealtimeMillis(),
+                recording.getElapsedSinceElapsedRealtimeMillis(),
+                recording.getBootCount(),
+                error);
+    }
+
+    private long endTimestamp(long elapsedDurationMillis) {
+        long startedAt = current.getStartedAtMillis();
+        if (elapsedDurationMillis > 0L
+                && startedAt > Long.MAX_VALUE - elapsedDurationMillis) {
+            return Long.MAX_VALUE;
+        }
+        return startedAt + elapsedDurationMillis;
     }
 }

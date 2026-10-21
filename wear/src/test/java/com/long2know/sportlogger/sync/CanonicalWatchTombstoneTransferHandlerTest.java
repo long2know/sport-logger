@@ -36,7 +36,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class CanonicalWatchTombstoneTransferHandlerTest {
     private static final String NODE_ID = "phone-node";
     private static final String SESSION_ID = "a12f260c-a2d0-43bb-a57c-ddb8b4275461";
