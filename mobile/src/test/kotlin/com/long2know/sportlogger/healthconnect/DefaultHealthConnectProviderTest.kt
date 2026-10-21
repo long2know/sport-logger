@@ -61,6 +61,7 @@ class DefaultHealthConnectProviderTest {
                 gatewayFactory = { gateway },
                 mapper = HealthConnectRecordMapper(),
                 nowUtcMs = { clock.incrementAndGet() },
+                packageName = "com.long2know.sportlogger",
             )
     }
 
@@ -335,6 +336,48 @@ class DefaultHealthConnectProviderTest {
         )
     }
 
+    @Test
+    fun providerVerificationReadsCurrentOwnedRecordAndConfirmsDeleteAbsence() = runBlocking {
+        gateway.granted += allPermissions()
+        gateway.granted += HealthConnectReadPermission.EXERCISE_SESSION.androidPermission
+        accept(routeActivity(revision = 1))
+        assertEquals(
+            HealthConnectOperationState.SUCCEEDED,
+            provider.publish(HealthConnectTestData.SESSION_ID, 1).state,
+        )
+
+        val published =
+            provider.verifyOwnedExerciseSession(HealthConnectTestData.SESSION_ID, 1)
+        assertEquals(HealthConnectVerificationState.PRESENT, published.state)
+        assertEquals("com.long2know.sportlogger", published.providerDataOrigin)
+        assertEquals(2, published.providerRoutePointCount)
+        assertEquals(1L, published.clientRecordVersion)
+
+        activities.setMetadata(
+            HealthConnectTestData.SESSION_ID,
+            "Updated synthetic title",
+            null,
+            emptyList(),
+            clock.incrementAndGet(),
+        )
+        assertEquals(
+            HealthConnectOperationState.SUCCEEDED,
+            provider.update(HealthConnectTestData.SESSION_ID, 1).state,
+        )
+        val updated =
+            provider.verifyOwnedExerciseSession(HealthConnectTestData.SESSION_ID, 1)
+        assertEquals(HealthConnectVerificationState.PRESENT, updated.state)
+        assertEquals(2L, updated.clientRecordVersion)
+
+        assertEquals(
+            HealthConnectOperationState.SUCCEEDED,
+            provider.delete(HealthConnectTestData.SESSION_ID, 1).state,
+        )
+        val deleted =
+            provider.verifyOwnedExerciseSession(HealthConnectTestData.SESSION_ID, 1)
+        assertEquals(HealthConnectVerificationState.ABSENT, deleted.state)
+    }
+
     private fun accept(activity: ActivityRecord) {
         val transferId =
             UUID.nameUUIDFromBytes(
@@ -508,6 +551,40 @@ class DefaultHealthConnectProviderTest {
                 recordsByClientId.remove(clientId)
                 providerIdByClientId.remove(clientId)
             }
+        }
+
+        override suspend fun readExerciseSession(
+            providerRecordId: String,
+        ): HealthConnectExerciseSnapshot {
+            val clientId =
+                providerIdByClientId.entries.single { it.value == providerRecordId }.key
+            return snapshot(clientId)
+        }
+
+        override suspend fun readOwnedExerciseSessions(
+            startTime: java.time.Instant,
+            endTime: java.time.Instant,
+            packageName: String,
+        ): List<HealthConnectExerciseSnapshot> =
+            recordsByClientId
+                .filterValues { it is ExerciseSessionRecord }
+                .keys
+                .map(::snapshot)
+
+        private fun snapshot(clientId: String): HealthConnectExerciseSnapshot {
+            val record = recordsByClientId.getValue(clientId) as ExerciseSessionRecord
+            return HealthConnectExerciseSnapshot(
+                providerRecordId = providerIdByClientId.getValue(clientId),
+                clientRecordId = clientId,
+                clientRecordVersion = record.metadata.clientRecordVersion,
+                dataOriginPackageName = "com.long2know.sportlogger",
+                routePointCount =
+                    when (val route = record.exerciseRouteResult) {
+                        is ExerciseRouteResult.Data -> route.exerciseRoute.route.size
+                        is ExerciseRouteResult.NoData -> 0
+                        else -> null
+                    },
+            )
         }
     }
 
