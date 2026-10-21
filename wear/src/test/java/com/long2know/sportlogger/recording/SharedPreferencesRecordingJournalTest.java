@@ -3,6 +3,7 @@ package com.long2know.sportlogger.recording;
 import android.content.SharedPreferences;
 
 import com.long2know.utilities.models.SportActivity;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import org.junit.Test;
 
@@ -215,9 +216,12 @@ public class SharedPreferencesRecordingJournalTest {
         PersistentRecording recording = new PersistentRecording(
                 RecordingState.RECORDING,
                 7,
+                ActivityType.ACTIVITY_TYPE_HIKING,
                 10_000L,
                 11_000L,
                 5_000L,
+                5_000L,
+                2_000L,
                 2_000L,
                 0L,
                 9,
@@ -227,6 +231,7 @@ public class SharedPreferencesRecordingJournalTest {
         PersistentRecording restored = journal.read();
 
         assertEquals(RecordingState.RECORDING, restored.getState());
+        assertEquals(ActivityType.ACTIVITY_TYPE_HIKING, restored.getActivityType());
         assertEquals(11_000L, restored.getActiveSinceMillis());
         assertEquals(5_000L, restored.getActiveSinceElapsedRealtimeMillis());
         assertEquals(5_000L, restored.getElapsedSinceElapsedRealtimeMillis());

@@ -39,6 +39,7 @@ import com.long2know.sportlogger.persistence.watch.LegacyWatchMigrator;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
 import com.long2know.sportlogger.recording.AndroidRecordingClock;
 import com.long2know.sportlogger.recording.RecordingController;
+import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
 import com.long2know.sportlogger.recording.RecordingError;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
@@ -48,8 +49,10 @@ import com.long2know.sportlogger.recording.SqlRecordingStore;
 import com.long2know.sportlogger.recording.WearDataLayerExporter;
 import com.long2know.sportlogger.recording.canonical.CanonicalRecordingSession;
 import com.long2know.utilities.models.SharedData;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -262,6 +265,16 @@ public final class SportLoggerService extends Service {
     }
 
     public boolean startNewActivity() {
+        return startNewActivity(ActivityType.ACTIVITY_TYPE_RUNNING);
+    }
+
+    public boolean startNewActivity(ActivityType activityType) {
+        if (!RecordingActivityTypePolicy.isSupported(activityType)) {
+            reportError(
+                    RecordingError.Code.COMMAND_REJECTED.name(),
+                    "Unsupported activity type " + activityType);
+            return false;
+        }
         if (healthServicesManager != null
                 && healthServicesManager.getSnapshot().getOwnership()
                 == HealthServicesExerciseSnapshot.Ownership.OWNED_BY_OTHER_APP) {
@@ -274,13 +287,17 @@ public final class SportLoggerService extends Service {
             return false;
         }
         mainHandler.removeCallbacks(idleStop);
-        boolean accepted = recordingController.start();
+        boolean accepted = recordingController.start(activityType);
         if (!accepted) {
             reportError(
                     RecordingError.Code.COMMAND_REJECTED.name(),
                     "Recording worker is unavailable");
         }
         return accepted;
+    }
+
+    public Set<ActivityType> getSupportedActivityTypes() {
+        return RecordingActivityTypePolicy.supportedTypes();
     }
 
     public boolean pauseActivity() {
@@ -614,6 +631,7 @@ public final class SportLoggerService extends Service {
                     || previousActivityId != activityId) {
                 healthServicesManager.startOrRecoverAsync(
                         activityId,
+                        snapshot.getActivityType(),
                         previousState == null,
                         false);
             }
@@ -621,6 +639,7 @@ public final class SportLoggerService extends Service {
             if (previousState == null) {
                 healthServicesManager.startOrRecoverAsync(
                         activityId,
+                        snapshot.getActivityType(),
                         true,
                         true);
             } else if (previousState == RecordingState.RECORDING) {

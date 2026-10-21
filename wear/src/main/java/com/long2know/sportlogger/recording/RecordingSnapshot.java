@@ -1,10 +1,13 @@
 package com.long2know.sportlogger.recording;
 
+import com.long2know.utilities.contract.proto.ActivityType;
+
 import java.util.Objects;
 
 public final class RecordingSnapshot {
     private final RecordingState state;
     private final int activityId;
+    private final ActivityType activityType;
     private final long startedAtMillis;
     private final long durationMillis;
     private final long elapsedDurationMillis;
@@ -21,6 +24,7 @@ public final class RecordingSnapshot {
         this(
                 state,
                 activityId,
+                defaultActivityType(activityId),
                 0L,
                 durationMillis,
                 durationMillis,
@@ -40,8 +44,33 @@ public final class RecordingSnapshot {
             long elapsedSinceElapsedRealtimeMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                defaultActivityType(activityId),
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
+        this.activityType = Objects.requireNonNull(activityType);
         this.startedAtMillis = startedAtMillis;
         this.durationMillis = Math.max(0L, durationMillis);
         this.elapsedDurationMillis =
@@ -60,6 +89,10 @@ public final class RecordingSnapshot {
 
     public int getActivityId() {
         return activityId;
+    }
+
+    public ActivityType getActivityType() {
+        return activityType;
     }
 
     public long getDurationMillis() {
@@ -97,5 +130,11 @@ public final class RecordingSnapshot {
                 || state == RecordingState.STOPPING
                 || state == RecordingState.DISCARDING
                 || state == RecordingState.EXPORT_PENDING;
+    }
+
+    private static ActivityType defaultActivityType(int activityId) {
+        return activityId > 0
+                ? ActivityType.ACTIVITY_TYPE_RUNNING
+                : ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
     }
 }

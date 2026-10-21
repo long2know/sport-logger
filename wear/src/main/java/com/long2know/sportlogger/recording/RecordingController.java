@@ -1,6 +1,7 @@
 package com.long2know.sportlogger.recording;
 
 import com.long2know.utilities.models.SportActivity;
+import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -111,7 +112,13 @@ public final class RecordingController {
     }
 
     public boolean start() {
-        return submit(this::startInternal);
+        return start(ActivityType.ACTIVITY_TYPE_RUNNING);
+    }
+
+    public boolean start(ActivityType activityType) {
+        ActivityType supported =
+                RecordingActivityTypePolicy.requireSupported(activityType);
+        return submit(() -> startInternal(supported));
     }
 
     public boolean pause() {
@@ -282,7 +289,7 @@ public final class RecordingController {
         }
     }
 
-    private void startInternal() {
+    private void startInternal(ActivityType activityType) {
         RecordingState previousState = current.getState();
         boolean replacingQueued = previousState == RecordingState.EXPORT_QUEUED;
         if (previousState != RecordingState.IDLE && !replacingQueued) {
@@ -300,7 +307,17 @@ public final class RecordingController {
         terminationToken++;
         endedSessionActivityId = 0;
         finalSampleActivityId = 0;
-        publish(new RecordingSnapshot(RecordingState.STARTING, 0, 0L, null));
+        publish(new RecordingSnapshot(
+                RecordingState.STARTING,
+                0,
+                activityType,
+                0L,
+                0L,
+                0L,
+                0L,
+                0L,
+                -1,
+                null));
         long now = clock.currentTimeMillis();
         int activityId;
         try {
@@ -321,6 +338,7 @@ public final class RecordingController {
         PersistentRecording started = new PersistentRecording(
                 RecordingState.RECORDING,
                 activityId,
+                activityType,
                 now,
                 now,
                 elapsedNow,
@@ -914,6 +932,7 @@ public final class RecordingController {
         return new RecordingSnapshot(
                 recording.getState(),
                 recording.getActivityId(),
+                recording.getActivityType(),
                 recording.getStartedAtMillis(),
                 recording.durationAt(wallNow, elapsedNow, currentBootCount),
                 recording.elapsedDurationAt(wallNow, elapsedNow, currentBootCount),
