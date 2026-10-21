@@ -1,0 +1,327 @@
+syntax = "proto3";
+
+package sportlogger.core.v1;
+
+option java_package = "com.long2know.utilities.contract.proto";
+option java_multiple_files = true;
+option optimize_for = LITE_RUNTIME;
+
+message ActivityFile {
+  uint32 schema_version = 1;
+  ActivityRecord activity = 2;
+
+  reserved 3 to 9;
+  reserved "json_payload", "serialized_activity";
+}
+
+message ActivityRecord {
+  string session_id = 1;
+  uint64 watch_revision = 2;
+  ActivityType activity_type = 3;
+  int64 start_time_utc_ms = 4;
+  int64 end_time_utc_ms = 5;
+  int64 elapsed_duration_ms = 6;
+  optional int64 active_duration_ms = 7;
+  ActivitySummary summary = 8;
+  repeated Lap laps = 9;
+  repeated ActiveInterval active_intervals = 10;
+  repeated MeasurementSample samples = 11;
+  SourceMetadata source = 12;
+  LegacyIdentity legacy_identity = 13;
+  optional string recorded_name = 14;
+  optional string recorded_description = 15;
+  optional string time_zone_id = 16;
+  optional sint32 utc_offset_minutes_at_start = 17;
+
+  reserved 18 to 24;
+  reserved "pace", "phone_title", "phone_notes";
+}
+
+message ActivitySummary {
+  DoubleMeasurement distance_m = 1;
+  DoubleMeasurement calories_kcal = 2;
+  LongMeasurement steps = 3;
+  DoubleMeasurement elevation_gain_m = 4;
+  DoubleMeasurement elevation_loss_m = 5;
+  DoubleMeasurement floors = 6;
+  DoubleMeasurement average_heart_rate_bpm = 7;
+  DoubleMeasurement maximum_heart_rate_bpm = 8;
+  optional uint64 sample_count = 9;
+  optional uint64 route_point_count = 10;
+  optional uint64 heart_rate_sample_count = 11;
+
+  reserved 12 to 19;
+}
+
+message Lap {
+  string lap_id = 1;
+  uint32 index = 2;
+  int64 start_time_utc_ms = 3;
+  int64 end_time_utc_ms = 4;
+  int64 elapsed_duration_ms = 5;
+  optional int64 active_duration_ms = 6;
+  ActivitySummary summary = 7;
+  optional LapIntensity intensity = 8;
+  optional LapTrigger trigger = 9;
+
+  reserved 10 to 19;
+}
+
+message ActiveInterval {
+  uint32 index = 1;
+  int64 start_time_utc_ms = 2;
+  int64 end_time_utc_ms = 3;
+  int64 active_duration_ms = 4;
+
+  reserved 5 to 9;
+}
+
+message MeasurementSample {
+  uint64 sequence = 1;
+  int64 timestamp_utc_ms = 2;
+  optional int64 monotonic_time_ms = 3;
+  optional string boot_id = 4;
+  optional int64 session_elapsed_duration_ms = 5;
+  optional int64 session_active_duration_ms = 6;
+  PositionMeasurement location = 7;
+  DoubleMeasurement heart_rate_bpm = 8;
+  LongMeasurement steps = 9;
+  LongMeasurement steps_total = 10;
+  LongMeasurement cadence_steps_per_minute = 11;
+  DoubleMeasurement distance_m = 12;
+  DoubleMeasurement distance_total_m = 13;
+  DoubleMeasurement pace_ms_per_km = 14;
+  DoubleMeasurement speed_mps = 15;
+  DoubleMeasurement absolute_elevation_m = 16;
+  DoubleMeasurement elevation_gain_m = 17;
+  DoubleMeasurement elevation_gain_total_m = 18;
+  DoubleMeasurement elevation_loss_m = 19;
+  DoubleMeasurement elevation_loss_total_m = 20;
+  DoubleMeasurement calories_kcal = 21;
+  DoubleMeasurement calories_total_kcal = 22;
+  DoubleMeasurement floors = 23;
+  DoubleMeasurement floors_total = 24;
+  DoubleMeasurement vo2_max_ml_per_kg_min = 25;
+  LongMeasurement swimming_strokes = 26;
+  LongMeasurement swimming_strokes_total = 27;
+  LongMeasurement swimming_lap_count = 28;
+  LongMeasurement repetition_count = 29;
+  LongMeasurement repetition_count_total = 30;
+  DoubleMeasurement pressure_hpa = 31;
+
+  reserved 32 to 49;
+  reserved "oxygen_saturation_percent", "skin_temperature_celsius";
+}
+
+message DoubleMeasurement {
+  optional double value = 1;
+  MeasurementStatus status = 2;
+
+  reserved 3 to 9;
+}
+
+message LongMeasurement {
+  optional sint64 value = 1;
+  MeasurementStatus status = 2;
+
+  reserved 3 to 9;
+}
+
+message PositionMeasurement {
+  Position value = 1;
+  MeasurementStatus status = 2;
+
+  reserved 3 to 9;
+}
+
+message Position {
+  double latitude_degrees = 1;
+  double longitude_degrees = 2;
+  optional double altitude_m = 3;
+  optional double accuracy_m = 4;
+  optional double bearing_degrees = 5;
+
+  reserved 6 to 9;
+}
+
+message MeasurementStatus {
+  string metric_identifier = 1;
+  string public_unit = 2;
+  AggregationSemantics aggregation = 3;
+  CapabilityState exercise_capability = 4;
+  PermissionState runtime_permission = 5;
+  CapabilityState raw_hardware = 6;
+  CapabilityState vendor_capability = 7;
+  LiveAvailability live_availability = 8;
+  SourceMetadata source = 9;
+  Quality quality = 10;
+  optional double platform_accuracy = 11;
+
+  reserved 12 to 19;
+}
+
+message SourceMetadata {
+  SourceKind kind = 1;
+  optional string provider = 2;
+  optional string manufacturer = 3;
+  optional string model = 4;
+  optional string device_id = 5;
+  uint32 app_contract_version = 6;
+
+  reserved 7 to 14;
+  reserved "credential", "api_key";
+}
+
+message LegacyIdentity {
+  LegacySourceKind kind = 1;
+  string source_identity = 2;
+  optional string database_name = 3;
+  optional sint64 activity_id = 4;
+  optional string source_row_sha256 = 5;
+  optional string raw_payload_sha256 = 6;
+
+  reserved 7 to 14;
+}
+
+message ActivityTransferFile {
+  uint32 schema_version = 1;
+  string transfer_id = 2;
+  string session_id = 3;
+  uint64 session_revision = 4;
+  bytes activity_file = 5;
+  bytes payload_sha256 = 6;
+  uint64 payload_length = 7;
+
+  reserved 8 to 14;
+  reserved "payload_json";
+}
+
+message TombstoneRecord {
+  uint32 schema_version = 1;
+  string transfer_id = 2;
+  string session_id = 3;
+  uint64 delete_revision = 4;
+  uint64 covered_session_revision = 5;
+  TombstoneOrigin origin = 6;
+  int64 deleted_at_utc_ms = 7;
+
+  reserved 8 to 14;
+}
+
+message CommitAck {
+  uint32 schema_version = 1;
+  string transfer_id = 2;
+  string session_id = 3;
+  uint64 accepted_session_revision = 4;
+  bytes payload_sha256 = 5;
+  AckResult result = 6;
+  optional uint64 delete_revision = 7;
+  optional TombstoneOrigin tombstone_origin = 8;
+  optional string error_code = 9;
+  optional string error_message = 10;
+
+  reserved 11 to 19;
+}
+
+enum ActivityType {
+  ACTIVITY_TYPE_UNSPECIFIED = 0;
+  ACTIVITY_TYPE_RUNNING = 1;
+  ACTIVITY_TYPE_WALKING = 2;
+  ACTIVITY_TYPE_CYCLING = 3;
+  ACTIVITY_TYPE_HIKING = 4;
+  ACTIVITY_TYPE_SWIMMING = 5;
+  ACTIVITY_TYPE_STRENGTH = 6;
+  ACTIVITY_TYPE_OTHER = 7;
+}
+
+enum LapIntensity {
+  LAP_INTENSITY_UNSPECIFIED = 0;
+  LAP_INTENSITY_ACTIVE = 1;
+  LAP_INTENSITY_RESTING = 2;
+}
+
+enum LapTrigger {
+  LAP_TRIGGER_UNSPECIFIED = 0;
+  LAP_TRIGGER_MANUAL = 1;
+  LAP_TRIGGER_DISTANCE = 2;
+  LAP_TRIGGER_LOCATION = 3;
+  LAP_TRIGGER_TIME = 4;
+  LAP_TRIGGER_HEART_RATE = 5;
+}
+
+enum AggregationSemantics {
+  AGGREGATION_SEMANTICS_UNSPECIFIED = 0;
+  AGGREGATION_SEMANTICS_INSTANTANEOUS = 1;
+  AGGREGATION_SEMANTICS_DELTA = 2;
+  AGGREGATION_SEMANTICS_CUMULATIVE = 3;
+}
+
+enum CapabilityState {
+  CAPABILITY_STATE_UNSPECIFIED = 0;
+  CAPABILITY_STATE_UNKNOWN = 1;
+  CAPABILITY_STATE_SUPPORTED = 2;
+  CAPABILITY_STATE_UNSUPPORTED = 3;
+}
+
+enum PermissionState {
+  PERMISSION_STATE_UNSPECIFIED = 0;
+  PERMISSION_STATE_UNKNOWN = 1;
+  PERMISSION_STATE_NOT_REQUIRED = 2;
+  PERMISSION_STATE_GRANTED = 3;
+  PERMISSION_STATE_DENIED = 4;
+  PERMISSION_STATE_DENIED_PERMANENTLY = 5;
+}
+
+enum LiveAvailability {
+  LIVE_AVAILABILITY_UNSPECIFIED = 0;
+  LIVE_AVAILABILITY_UNKNOWN = 1;
+  LIVE_AVAILABILITY_AVAILABLE = 2;
+  LIVE_AVAILABILITY_ACQUIRING = 3;
+  LIVE_AVAILABILITY_UNAVAILABLE = 4;
+  LIVE_AVAILABILITY_UNAVAILABLE_DEVICE_OFF_BODY = 5;
+  LIVE_AVAILABILITY_UNAVAILABLE_NO_GNSS = 6;
+  LIVE_AVAILABILITY_UNAVAILABLE_PERMISSION = 7;
+}
+
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_HEALTH_SERVICES = 1;
+  SOURCE_KIND_RAW_PLATFORM = 2;
+  SOURCE_KIND_VENDOR = 3;
+  SOURCE_KIND_LEGACY_SQLITE = 4;
+  SOURCE_KIND_LEGACY_SERIALIZED = 5;
+  SOURCE_KIND_USER = 6;
+  SOURCE_KIND_DERIVED = 7;
+}
+
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  QUALITY_UNKNOWN = 1;
+  QUALITY_VALID = 2;
+  QUALITY_ESTIMATED = 3;
+  QUALITY_DEGRADED = 4;
+  QUALITY_INVALID = 5;
+}
+
+enum LegacySourceKind {
+  LEGACY_SOURCE_KIND_UNSPECIFIED = 0;
+  LEGACY_SOURCE_KIND_WATCH_SQLITE = 1;
+  LEGACY_SOURCE_KIND_PHONE_SERIALIZED_INBOX = 2;
+}
+
+enum TombstoneOrigin {
+  TOMBSTONE_ORIGIN_UNSPECIFIED = 0;
+  TOMBSTONE_ORIGIN_WATCH = 1;
+  TOMBSTONE_ORIGIN_PHONE = 2;
+}
+
+enum AckResult {
+  ACK_RESULT_UNSPECIFIED = 0;
+  ACK_RESULT_ACCEPTED = 1;
+  ACK_RESULT_DUPLICATE = 2;
+  ACK_RESULT_STALE = 3;
+  ACK_RESULT_TOMBSTONED = 4;
+  ACK_RESULT_REJECTED_CORRUPT = 5;
+  ACK_RESULT_REJECTED_UNSUPPORTED = 6;
+  ACK_RESULT_PROTOCOL_ERROR = 7;
+}

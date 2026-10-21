@@ -1,0 +1,838 @@
+package com.long2know.sportlogger.persistence.watch;
+
+import android.content.Context;
+
+import com.long2know.utilities.contract.CanonicalActivityValidator;
+import com.long2know.utilities.contract.CanonicalContractException;
+import com.long2know.utilities.contract.CanonicalIds;
+import com.long2know.utilities.contract.CanonicalPayload;
+import com.long2know.utilities.contract.CanonicalTransfers;
+import com.long2know.utilities.contract.proto.ActivityRecord;
+import com.long2know.utilities.contract.proto.ActivityTransferFile;
+import com.long2know.utilities.contract.proto.ActivityType;
+import com.long2know.utilities.contract.proto.MeasurementSample;
+import com.long2know.utilities.contract.proto.TombstoneRecord;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public final class WatchActivityRepository implements AutoCloseable {
+    public static final String OUTBOX_READY = "READY";
+    public static final String OUTBOX_SENDING = "SENDING";
+    public static final String OUTBOX_AWAITING_COMMIT_ACK = "AWAITING_COMMIT_ACK";
+    public static final String OUTBOX_COMMITTED = "COMMITTED";
+    public static final String OUTBOX_RETRYABLE = "RETRYABLE";
+
+    private final WatchDatabase database;
+    private final WatchDao dao;
+    private final Executor writeExecutor;
+    private final boolean ownsDatabase;
+    private final ExecutorService ownedExecutor;
+
+    public WatchActivityRepository(
+            WatchDatabase database,
+            Executor writeExecutor) {
+        this(database, writeExecutor, false);
+    }
+
+    private WatchActivityRepository(
+            WatchDatabase database,
+            Executor writeExecutor,
+            boolean ownsDatabase) {
+        this.database = Objects.requireNonNull(database);
+        this.dao = database.watchDao();
+        this.writeExecutor = Objects.requireNonNull(writeExecutor);
+        this.ownsDatabase = ownsDatabase;
+        this.ownedExecutor = ownsDatabase && writeExecutor instanceof ExecutorService
+                ? (ExecutorService) writeExecutor
+                : null;
+    }
+
+    public static WatchActivityRepository open(Context context) {
+        return new WatchActivityRepository(
+                WatchDatabase.open(context),
+                Executors.newSingleThreadExecutor(),
+                true);
+    }
+
+    public CompletableFuture<SessionSnapshot> startSession(StartRequest request) {
+        Objects.requireNonNull(request);
+        return CompletableFuture.supplyAsync(() -> {
+            CanonicalIds.requireUuid(request.sessionId, "Session identifier");
+            if (request.leaseToken == 0L) {
+                throw new CanonicalContractException(
+                        "LEASE_REQUIRED",
+                        "A non-zero recording lease is required");
+            }
+            WatchSessionEntity session = new WatchSessionEntity();
+            session.sessionId = request.sessionId;
+            session.watchRevision = 0L;
+            session.state = LifecycleState.RECORDING.name();
+            session.activityType = request.activityType.getNumber();
+            session.startedAtUtcMs = request.startedAtUtcMs;
+            session.timeZoneId = request.timeZoneId;
+            session.utcOffsetMinutes = request.utcOffsetMinutes;
+            session.bootId = request.bootId;
+            session.monotonicAnchorMs = request.monotonicAnchorMs;
+            session.activeSinceMonotonicMs = request.monotonicAnchorMs;
+            session.accumulatedActiveMs = request.accumulatedActiveMs;
+            session.leaseToken = request.leaseToken;
+            session.legacySourceKey = request.legacySourceKey;
+            session.legacyActivityId = request.legacyActivityId;
+            session.createdAtUtcMs = request.startedAtUtcMs;
+            session.updatedAtUtcMs = request.startedAtUtcMs;
+            dao.insertSession(session);
+            return snapshot(session);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<Boolean> writeSample(
+            String sessionId,
+            long leaseToken,
+            MeasurementSample sample) {
+        return CompletableFuture.supplyAsync(() ->
+                database.runInTransaction(() -> writeSampleInternal(
+                        sessionId,
+                        leaseToken,
+                        sample)), writeExecutor);
+    }
+
+    public CompletableFuture<SessionSnapshot> transition(
+            String sessionId,
+            long leaseToken,
+            LifecycleState state,
+            String bootId,
+            Long activeSinceMonotonicMs,
+            long accumulatedActiveMs,
+            String errorCode,
+            String errorMessage,
+            long updatedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() -> {
+            int updated = dao.updateLifecycle(
+                    CanonicalIds.requireUuid(sessionId, "Session identifier"),
+                    requireLease(leaseToken),
+                    Objects.requireNonNull(state).name(),
+                    bootId,
+                    activeSinceMonotonicMs,
+                    accumulatedActiveMs,
+                    errorCode,
+                    errorMessage,
+                    updatedAtUtcMs);
+            if (updated != 1) {
+                throw new CanonicalContractException(
+                        "SESSION_FENCE_REJECTED",
+                        "Session transition was rejected by its lease or terminal state");
+            }
+            return snapshot(requireSession(sessionId));
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<CompletionResult> finishSession(
+            String sessionId,
+            long leaseToken,
+            ActivityRecord activity,
+            String transferId,
+            long completedAtUtcMs) {
+        return CompletableFuture.supplyAsync(() ->
+                database.runInTransaction(() -> finishInternal(
+                        sessionId,
+                        leaseToken,
+                        activity,
+                        transferId,
+                        completedAtUtcMs,
+                        false,
+                        null,
+                        null)), writeExecutor);
+    }
+
+    public CompletableFuture<SessionSnapshot> session(String sessionId) {
+        return CompletableFuture.supplyAsync(
+                () -> snapshot(requireSession(
+                        CanonicalIds.requireUuid(sessionId, "Session identifier"))),
+                writeExecutor);
+    }
+
+    public CompletableFuture<List<OutboxItem>> readyOutbox(int limit) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (limit < 1 || limit > 1_000) {
+                throw new IllegalArgumentException("Outbox limit must be between 1 and 1000");
+            }
+            List<OutboxItem> items = new ArrayList<>();
+            for (WatchOutboxEntity entity : dao.readyOutbox(limit)) {
+                items.add(outbox(entity));
+            }
+            return Collections.unmodifiableList(items);
+        }, writeExecutor);
+    }
+
+    public CompletableFuture<OutboxItem> transitionOutbox(
+            String transferId,
+            String expectedState,
+            String nextState,
+            Long attemptedAtUtcMs,
+            String failureCode,
+            String failureMessage) {
+        return CompletableFuture.supplyAsync(() -> database.runInTransaction(() -> {
+            CanonicalIds.requireUuid(transferId, "Transfer identifier");
+            WatchOutboxEntity entity = dao.outbox(transferId);
+            if (entity == null) {
+                throw new CanonicalContractException(
+                        "OUTBOX_NOT_FOUND",
+                        "Activity outbox transfer does not exist");
+            }
+            if (!entity.state.equals(expectedState)) {
+                throw new CanonicalContractException(
+                        "OUTBOX_CAS_REJECTED",
+                        "Activity outbox transition was rejected by its state");
+            }
+            entity.state = nextState;
+            if (attemptedAtUtcMs != null) {
+                entity.lastAttemptAtUtcMs = attemptedAtUtcMs;
+                entity.attemptCount++;
+            }
+            entity.lastFailureCode = failureCode;
+            entity.lastFailureMessage = failureMessage;
+            if (dao.updateOutbox(entity) != 1) {
+                throw new CanonicalContractException(
+                        "OUTBOX_UPDATE_FAILED",
+                        "Activity outbox transition did not update exactly one row");
+            }
+            return outbox(entity);
+        }), writeExecutor);
+    }
+
+    public CompletableFuture<Void> discardSession(
+            String sessionId,
+            long leaseToken,
+            TombstoneRecord tombstone,
+            long createdAtUtcMs) {
+        return CompletableFuture.runAsync(() -> database.runInTransaction(() -> {
+            WatchSessionEntity session = requireSession(
+                    CanonicalIds.requireUuid(sessionId, "Session identifier"));
+            if (session.leaseToken != requireLease(leaseToken)) {
+                throw new CanonicalContractException(
+                        "SESSION_FENCE_REJECTED",
+                        "Discard was rejected by its recording lease");
+            }
+            if (!session.sessionId.equals(tombstone.getSessionId())) {
+                throw new CanonicalContractException(
+                        "TOMBSTONE_IDENTITY_MISMATCH",
+                        "Tombstone session does not match the discarded session");
+            }
+            byte[] bytes = tombstone.toByteArray();
+            String hash = sha256Hex(bytes);
+            WatchTombstoneEntity stored = tombstoneEntity(tombstone, bytes, hash);
+            dao.putTombstone(stored);
+            WatchTombstoneOutboxEntity outbox = new WatchTombstoneOutboxEntity();
+            outbox.transferId = tombstone.getTransferId();
+            outbox.sessionId = tombstone.getSessionId();
+            outbox.deleteRevision = tombstone.getDeleteRevision();
+            outbox.coveredSessionRevision = tombstone.getCoveredSessionRevision();
+            outbox.origin = tombstone.getOriginValue();
+            outbox.payload = bytes;
+            outbox.payloadSha256 = hash;
+            outbox.payloadLength = bytes.length;
+            outbox.state = OUTBOX_READY;
+            outbox.createdAtUtcMs = createdAtUtcMs;
+            dao.insertTombstoneOutbox(outbox);
+            session.state = LifecycleState.DISCARDED.name();
+            session.leaseToken = 0L;
+            session.updatedAtUtcMs = createdAtUtcMs;
+            if (dao.updateSession(session) != 1) {
+                throw new CanonicalContractException(
+                        "SESSION_UPDATE_FAILED",
+                        "Discarded session was not updated");
+            }
+        }), writeExecutor);
+    }
+
+    CompletionResult importCompletedSession(
+            ActivityRecord activity,
+            String transferId,
+            long completedAtUtcMs,
+            String legacySourceKey,
+            long legacyActivityId) {
+        return database.runInTransaction(() -> finishInternal(
+                activity.getSessionId(),
+                0L,
+                activity,
+                transferId,
+                completedAtUtcMs,
+                true,
+                legacySourceKey,
+                legacyActivityId));
+    }
+
+    WatchMigrationReceiptEntity migrationReceipt(String receiptId) {
+        return dao.migrationReceipt(receiptId);
+    }
+
+    void insertMigrationReceipt(WatchMigrationReceiptEntity receipt) {
+        dao.insertMigrationReceipt(receipt);
+    }
+
+    void quarantine(WatchMigrationQuarantineEntity quarantine) {
+        dao.insertQuarantine(quarantine);
+    }
+
+    long quarantineCount(String sourceKey) {
+        return dao.quarantineCount(sourceKey);
+    }
+
+    private CompletionResult finishInternal(
+            String sessionId,
+            long leaseToken,
+            ActivityRecord activity,
+            String transferId,
+            long completedAtUtcMs,
+            boolean legacyImport,
+            String legacySourceKey,
+            Long legacyActivityId) {
+        CanonicalActivityValidator.validateCompleted(activity);
+        CanonicalIds.requireUuid(sessionId, "Session identifier");
+        CanonicalIds.requireUuid(transferId, "Transfer identifier");
+        if (!sessionId.equals(activity.getSessionId())) {
+            throw new CanonicalContractException(
+                    "SESSION_IDENTITY_MISMATCH",
+                    "Completion activity does not match the requested session");
+        }
+        CanonicalPayload payload = CanonicalPayload.create(activity);
+        ActivityTransferFile transfer = CanonicalTransfers.activityTransfer(transferId, payload);
+        byte[] transferBytes = transfer.toByteArray();
+        String transferHash = sha256Hex(transferBytes);
+        WatchOutboxEntity existingOutbox = dao.outbox(transferId);
+        if (existingOutbox != null) {
+            if (!MessageDigest.isEqual(existingOutbox.payload, transferBytes)) {
+                throw new CanonicalContractException(
+                        "TRANSFER_ID_REUSED",
+                        "Transfer identifier already has different bytes");
+            }
+            WatchSessionEntity existing = requireSession(sessionId);
+            return new CompletionResult(snapshot(existing), outbox(existingOutbox), false);
+        }
+
+        WatchSessionEntity session = dao.session(sessionId);
+        if (session == null) {
+            if (!legacyImport) {
+                throw new CanonicalContractException(
+                        "SESSION_NOT_FOUND",
+                        "Session must be started before completion");
+            }
+            session = new WatchSessionEntity();
+            session.sessionId = sessionId;
+            session.createdAtUtcMs = activity.getStartTimeUtcMs();
+            session.legacySourceKey = legacySourceKey;
+            session.legacyActivityId = legacyActivityId;
+            dao.insertSession(sessionFromActivity(session, activity, payload, completedAtUtcMs));
+            session = requireSession(sessionId);
+        } else {
+            if (!legacyImport && session.leaseToken != requireLease(leaseToken)) {
+                throw new CanonicalContractException(
+                        "SESSION_FENCE_REJECTED",
+                        "Completion was rejected by its recording lease");
+            }
+            if (activity.getWatchRevision() <= session.watchRevision) {
+                throw new CanonicalContractException(
+                        "REVISION_STALE",
+                        "Completion revision must increase");
+            }
+            for (MeasurementSample sample : activity.getSamplesList()) {
+                writeSampleInternal(sessionId, leaseToken, sample, legacyImport);
+            }
+            sessionFromActivity(session, activity, payload, completedAtUtcMs);
+            if (dao.updateSession(session) != 1) {
+                throw new CanonicalContractException(
+                        "SESSION_UPDATE_FAILED",
+                        "Completed session was not updated");
+            }
+        }
+
+        if (legacyImport) {
+            for (MeasurementSample sample : activity.getSamplesList()) {
+                writeSampleInternal(sessionId, 0L, sample, true);
+            }
+        }
+        session = requireSession(sessionId);
+        session.sampleCount = activity.getSamplesCount();
+        long routeCount = 0L;
+        long heartRateCount = 0L;
+        for (MeasurementSample sample : activity.getSamplesList()) {
+            if (sample.hasLocation() && sample.getLocation().hasValue()) {
+                routeCount++;
+            }
+            if (sample.hasHeartRateBpm() && sample.getHeartRateBpm().hasValue()) {
+                heartRateCount++;
+            }
+        }
+        session.routePointCount = routeCount;
+        session.heartRateSampleCount = heartRateCount;
+        if (dao.updateSession(session) != 1) {
+            throw new CanonicalContractException(
+                    "SESSION_UPDATE_FAILED",
+                    "Completed session counts were not updated");
+        }
+
+        WatchOutboxEntity outbox = new WatchOutboxEntity();
+        outbox.transferId = transferId;
+        outbox.sessionId = sessionId;
+        outbox.sessionRevision = activity.getWatchRevision();
+        outbox.payload = transferBytes;
+        outbox.payloadSha256 = transferHash;
+        outbox.payloadLength = transferBytes.length;
+        outbox.state = OUTBOX_READY;
+        outbox.createdAtUtcMs = completedAtUtcMs;
+        dao.insertOutbox(outbox);
+        return new CompletionResult(snapshot(session), outbox(outbox), true);
+    }
+
+    private WatchSessionEntity sessionFromActivity(
+            WatchSessionEntity session,
+            ActivityRecord activity,
+            CanonicalPayload payload,
+            long completedAtUtcMs) {
+        session.watchRevision = activity.getWatchRevision();
+        session.state = LifecycleState.COMPLETED.name();
+        session.activityType = activity.getActivityTypeValue();
+        session.startedAtUtcMs = activity.getStartTimeUtcMs();
+        session.endedAtUtcMs = activity.getEndTimeUtcMs();
+        session.elapsedDurationMs = activity.getElapsedDurationMs();
+        session.activeDurationMs =
+                activity.hasActiveDurationMs() ? activity.getActiveDurationMs() : null;
+        session.timeZoneId = activity.hasTimeZoneId() ? activity.getTimeZoneId() : null;
+        session.utcOffsetMinutes = activity.hasUtcOffsetMinutesAtStart()
+                ? activity.getUtcOffsetMinutesAtStart()
+                : null;
+        session.leaseToken = 0L;
+        session.payload = payload.getExactBytes();
+        session.payloadSha256 = payload.sha256Hex();
+        session.updatedAtUtcMs = completedAtUtcMs;
+        return session;
+    }
+
+    private boolean writeSampleInternal(
+            String sessionId,
+            long leaseToken,
+            MeasurementSample sample) {
+        return writeSampleInternal(sessionId, leaseToken, sample, false);
+    }
+
+    private boolean writeSampleInternal(
+            String sessionId,
+            long leaseToken,
+            MeasurementSample sample,
+            boolean legacyImport) {
+        CanonicalIds.requireUuid(sessionId, "Session identifier");
+        CanonicalActivityValidator.validateSample(sample);
+        WatchSessionEntity session = requireSession(sessionId);
+        if (!legacyImport && session.leaseToken != requireLease(leaseToken)) {
+            throw new CanonicalContractException(
+                    "SESSION_FENCE_REJECTED",
+                    "Sample was rejected by its recording lease");
+        }
+        if (!legacyImport
+                && !LifecycleState.RECORDING.name().equals(session.state)
+                && !LifecycleState.ENDING.name().equals(session.state)) {
+            throw new CanonicalContractException(
+                    "SESSION_NOT_WRITABLE",
+                    "Samples can only be appended while recording or ending");
+        }
+        byte[] bytes = sample.toByteArray();
+        String hash = sha256Hex(bytes);
+        WatchSampleEntity existing = dao.sample(sessionId, sample.getSequence());
+        if (existing != null) {
+            if (!existing.payloadSha256.equals(hash)
+                    || !MessageDigest.isEqual(existing.payload, bytes)) {
+                throw new CanonicalContractException(
+                        "SAMPLE_SEQUENCE_CONFLICT",
+                        "Sample sequence already stores different bytes");
+            }
+            return false;
+        }
+        WatchSampleEntity entity = new WatchSampleEntity();
+        entity.sessionId = sessionId;
+        entity.sequence = sample.getSequence();
+        entity.timestampUtcMs = sample.getTimestampUtcMs();
+        entity.monotonicTimeMs =
+                sample.hasMonotonicTimeMs() ? sample.getMonotonicTimeMs() : null;
+        entity.sessionActiveDurationMs = sample.hasSessionActiveDurationMs()
+                ? sample.getSessionActiveDurationMs()
+                : null;
+        entity.hasLocation = sample.hasLocation() && sample.getLocation().hasValue();
+        entity.hasHeartRate =
+                sample.hasHeartRateBpm() && sample.getHeartRateBpm().hasValue();
+        entity.payload = bytes;
+        entity.payloadSha256 = hash;
+        dao.insertSample(entity);
+        return true;
+    }
+
+    private WatchSessionEntity requireSession(String sessionId) {
+        WatchSessionEntity session = dao.session(sessionId);
+        if (session == null) {
+            throw new CanonicalContractException(
+                    "SESSION_NOT_FOUND",
+                    "Session " + sessionId + " does not exist");
+        }
+        return session;
+    }
+
+    private static long requireLease(long leaseToken) {
+        if (leaseToken == 0L) {
+            throw new CanonicalContractException(
+                    "LEASE_REQUIRED",
+                    "A non-zero recording lease is required");
+        }
+        return leaseToken;
+    }
+
+    private static SessionSnapshot snapshot(WatchSessionEntity entity) {
+        return new SessionSnapshot(
+                entity.sessionId,
+                entity.watchRevision,
+                LifecycleState.valueOf(entity.state),
+                entity.leaseToken,
+                entity.startedAtUtcMs,
+                entity.endedAtUtcMs,
+                entity.accumulatedActiveMs,
+                entity.bootId,
+                entity.sampleCount,
+                entity.routePointCount,
+                entity.heartRateSampleCount,
+                entity.payload == null ? null : entity.payload.clone(),
+                entity.payloadSha256);
+    }
+
+    private static OutboxItem outbox(WatchOutboxEntity entity) {
+        return new OutboxItem(
+                entity.transferId,
+                entity.sessionId,
+                entity.sessionRevision,
+                entity.payload.clone(),
+                entity.payloadSha256,
+                entity.payloadLength,
+                entity.state,
+                entity.attemptCount);
+    }
+
+    private static WatchTombstoneEntity tombstoneEntity(
+            TombstoneRecord tombstone,
+            byte[] bytes,
+            String hash) {
+        WatchTombstoneEntity entity = new WatchTombstoneEntity();
+        entity.sessionId = tombstone.getSessionId();
+        entity.deleteRevision = tombstone.getDeleteRevision();
+        entity.coveredSessionRevision = tombstone.getCoveredSessionRevision();
+        entity.origin = tombstone.getOriginValue();
+        entity.transferId = tombstone.getTransferId();
+        entity.deletedAtUtcMs = tombstone.getDeletedAtUtcMs();
+        entity.payload = bytes;
+        entity.payloadSha256 = hash;
+        return entity;
+    }
+
+    static String sha256Hex(byte[] bytes) {
+        try {
+            return CanonicalPayload.hex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException error) {
+            throw new IllegalStateException("SHA-256 is unavailable", error);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (ownedExecutor != null) {
+            ownedExecutor.shutdown();
+        }
+        if (ownsDatabase) {
+            database.close();
+        }
+    }
+
+    public enum LifecycleState {
+        STARTING,
+        RECORDING,
+        PAUSED,
+        ENDING,
+        ERROR,
+        COMPLETED,
+        DISCARDED
+    }
+
+    public static final class StartRequest {
+        private final String sessionId;
+        private final long leaseToken;
+        private final ActivityType activityType;
+        private final long startedAtUtcMs;
+        private final String timeZoneId;
+        private final Integer utcOffsetMinutes;
+        private final String bootId;
+        private final Long monotonicAnchorMs;
+        private final long accumulatedActiveMs;
+        private final String legacySourceKey;
+        private final Long legacyActivityId;
+
+        private StartRequest(Builder builder) {
+            sessionId = builder.sessionId;
+            leaseToken = builder.leaseToken;
+            activityType = builder.activityType;
+            startedAtUtcMs = builder.startedAtUtcMs;
+            timeZoneId = builder.timeZoneId;
+            utcOffsetMinutes = builder.utcOffsetMinutes;
+            bootId = builder.bootId;
+            monotonicAnchorMs = builder.monotonicAnchorMs;
+            accumulatedActiveMs = builder.accumulatedActiveMs;
+            legacySourceKey = builder.legacySourceKey;
+            legacyActivityId = builder.legacyActivityId;
+        }
+
+        public static Builder builder(String sessionId, long leaseToken, long startedAtUtcMs) {
+            return new Builder(sessionId, leaseToken, startedAtUtcMs);
+        }
+
+        public static final class Builder {
+            private final String sessionId;
+            private final long leaseToken;
+            private final long startedAtUtcMs;
+            private ActivityType activityType = ActivityType.ACTIVITY_TYPE_UNSPECIFIED;
+            private String timeZoneId;
+            private Integer utcOffsetMinutes;
+            private String bootId;
+            private Long monotonicAnchorMs;
+            private long accumulatedActiveMs;
+            private String legacySourceKey;
+            private Long legacyActivityId;
+
+            private Builder(String sessionId, long leaseToken, long startedAtUtcMs) {
+                this.sessionId = sessionId;
+                this.leaseToken = leaseToken;
+                this.startedAtUtcMs = startedAtUtcMs;
+            }
+
+            public Builder activityType(ActivityType value) {
+                activityType = Objects.requireNonNull(value);
+                return this;
+            }
+
+            public Builder timeZone(String id, int offsetMinutes) {
+                timeZoneId = id;
+                utcOffsetMinutes = offsetMinutes;
+                return this;
+            }
+
+            public Builder monotonicAnchor(String valueBootId, long valueMonotonicMs) {
+                bootId = valueBootId;
+                monotonicAnchorMs = valueMonotonicMs;
+                return this;
+            }
+
+            public Builder accumulatedActiveMs(long value) {
+                accumulatedActiveMs = value;
+                return this;
+            }
+
+            public Builder legacyIdentity(String sourceKey, long activityId) {
+                legacySourceKey = sourceKey;
+                legacyActivityId = activityId;
+                return this;
+            }
+
+            public StartRequest build() {
+                return new StartRequest(this);
+            }
+        }
+    }
+
+    public static final class SessionSnapshot {
+        private final String sessionId;
+        private final long watchRevision;
+        private final LifecycleState state;
+        private final long leaseToken;
+        private final long startedAtUtcMs;
+        private final Long endedAtUtcMs;
+        private final long accumulatedActiveMs;
+        private final String bootId;
+        private final long sampleCount;
+        private final long routePointCount;
+        private final long heartRateSampleCount;
+        private final byte[] payload;
+        private final String payloadSha256;
+
+        private SessionSnapshot(
+                String sessionId,
+                long watchRevision,
+                LifecycleState state,
+                long leaseToken,
+                long startedAtUtcMs,
+                Long endedAtUtcMs,
+                long accumulatedActiveMs,
+                String bootId,
+                long sampleCount,
+                long routePointCount,
+                long heartRateSampleCount,
+                byte[] payload,
+                String payloadSha256) {
+            this.sessionId = sessionId;
+            this.watchRevision = watchRevision;
+            this.state = state;
+            this.leaseToken = leaseToken;
+            this.startedAtUtcMs = startedAtUtcMs;
+            this.endedAtUtcMs = endedAtUtcMs;
+            this.accumulatedActiveMs = accumulatedActiveMs;
+            this.bootId = bootId;
+            this.sampleCount = sampleCount;
+            this.routePointCount = routePointCount;
+            this.heartRateSampleCount = heartRateSampleCount;
+            this.payload = payload;
+            this.payloadSha256 = payloadSha256;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public long getWatchRevision() {
+            return watchRevision;
+        }
+
+        public LifecycleState getState() {
+            return state;
+        }
+
+        public long getLeaseToken() {
+            return leaseToken;
+        }
+
+        public long getStartedAtUtcMs() {
+            return startedAtUtcMs;
+        }
+
+        public Long getEndedAtUtcMs() {
+            return endedAtUtcMs;
+        }
+
+        public long getAccumulatedActiveMs() {
+            return accumulatedActiveMs;
+        }
+
+        public String getBootId() {
+            return bootId;
+        }
+
+        public long getSampleCount() {
+            return sampleCount;
+        }
+
+        public long getRoutePointCount() {
+            return routePointCount;
+        }
+
+        public long getHeartRateSampleCount() {
+            return heartRateSampleCount;
+        }
+
+        public byte[] getPayload() {
+            return payload == null ? null : payload.clone();
+        }
+
+        public String getPayloadSha256() {
+            return payloadSha256;
+        }
+    }
+
+    public static final class OutboxItem {
+        private final String transferId;
+        private final String sessionId;
+        private final long sessionRevision;
+        private final byte[] payload;
+        private final String payloadSha256;
+        private final long payloadLength;
+        private final String state;
+        private final long attemptCount;
+
+        private OutboxItem(
+                String transferId,
+                String sessionId,
+                long sessionRevision,
+                byte[] payload,
+                String payloadSha256,
+                long payloadLength,
+                String state,
+                long attemptCount) {
+            this.transferId = transferId;
+            this.sessionId = sessionId;
+            this.sessionRevision = sessionRevision;
+            this.payload = payload;
+            this.payloadSha256 = payloadSha256;
+            this.payloadLength = payloadLength;
+            this.state = state;
+            this.attemptCount = attemptCount;
+        }
+
+        public String getTransferId() {
+            return transferId;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public long getSessionRevision() {
+            return sessionRevision;
+        }
+
+        public byte[] getPayload() {
+            return payload.clone();
+        }
+
+        public String getPayloadSha256() {
+            return payloadSha256;
+        }
+
+        public long getPayloadLength() {
+            return payloadLength;
+        }
+
+        public String getState() {
+            return state;
+        }
+
+        public long getAttemptCount() {
+            return attemptCount;
+        }
+    }
+
+    public static final class CompletionResult {
+        private final SessionSnapshot session;
+        private final OutboxItem outbox;
+        private final boolean created;
+
+        private CompletionResult(
+                SessionSnapshot session,
+                OutboxItem outbox,
+                boolean created) {
+            this.session = session;
+            this.outbox = outbox;
+            this.created = created;
+        }
+
+        public SessionSnapshot getSession() {
+            return session;
+        }
+
+        public OutboxItem getOutbox() {
+            return outbox;
+        }
+
+        public boolean isCreated() {
+            return created;
+        }
+    }
+}
