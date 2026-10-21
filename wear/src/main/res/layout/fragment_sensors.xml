@@ -11,14 +11,30 @@
     tools:deviceIds="wear"
     android:padding="15dp">
 
-    <FrameLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:orientation="vertical"
         android:padding="5dp">
+
+        <TextView
+            android:id="@+id/routeStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:background="#663F2B00"
+            android:gravity="center"
+            android:padding="4dp"
+            android:textColor="#FFFFCC80"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="Route unavailable — recording continues"
+            tools:visibility="visible" />
 
     <TableLayout xmlns:android="http://schemas.android.com/apk/res/android"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:stretchColumns="1,2">
 
         <TableRow android:layout_width="fill_parent">
@@ -133,5 +149,5 @@
                 android:text="0" />
         </TableRow>
     </TableLayout>
-    </FrameLayout>
+    </LinearLayout>
 </androidx.wear.widget.BoxInsetLayout>

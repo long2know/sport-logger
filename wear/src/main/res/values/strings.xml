@@ -8,6 +8,13 @@
     <string name="recording_notification_text">Tap to return to the current workout.</string>
     <string name="recording_permissions_limited">Some measurements are unavailable until their permissions are granted.</string>
     <string name="recording_service_unavailable">Recording service is not ready.</string>
+    <string name="route_status_acquiring">Finding route… recording continues</string>
+    <string name="route_status_location_disabled">Route unavailable: turn on Location</string>
+    <string name="route_status_permission_denied">Route unavailable: allow precise location</string>
+    <string name="route_status_approximate_only">Route unavailable: precise location is required</string>
+    <string name="route_status_no_gnss">Route unavailable: this watch has no GNSS</string>
+    <string name="route_status_no_provider">Route unavailable: no compatible provider</string>
+    <string name="route_status_unavailable">Route unavailable — recording continues</string>
     <!--
     This string is used for square devices and overridden by hello_world in
     values-round/strings.xml for round devices.
