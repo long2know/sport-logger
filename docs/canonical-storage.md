@@ -74,12 +74,14 @@ canonical start API. The current legacy integer activity ID remains a separate m
 
 ## Watch database and writer API
 
-`sportlogger_watch_v1.db` is a new Room version-1 database. It does not claim to migrate or replace
+`sportlogger_watch_v1.db` is a separately named Room database. Schema version 2 adds durable laps
+through an explicit validated v1→v2 migration; it does not claim to migrate or replace
 `GPSLOGGERDB_LONG2KNOW`. Its schema stores:
 
 - active/completed session state, lease, boot/monotonic anchors, accumulated active duration, and
   exact canonical payload;
 - exact per-sample protobuf bytes;
+- ordered open/closed lap boundaries with UUID, wall, elapsed, and active timing;
 - immutable activity outbox files and retry state;
 - legacy migration receipts and typed quarantine rows;
 - tombstones, tombstone outbox, and exact tombstone receipts.
@@ -90,6 +92,9 @@ The compiled integration boundary is `WatchActivityRepository`:
 startSession(StartRequest)
 writeSample(sessionId, leaseToken, MeasurementSample)
 transition(sessionId, leaseToken, lifecycle fields...)
+recordManualLap(sessionId, leaseToken, wall, elapsed, active)
+closeFinalLap(sessionId, leaseToken, wall, elapsed, active)
+laps(sessionId) / currentLap(sessionId)
 reserveCompletion(sessionId, leaseToken, revision, transferId, updatedAt)
 samples(sessionId)
 finishSessionFromPersistedSamples(sessionId, leaseToken, finalMetadata, completedAt)
@@ -100,7 +105,8 @@ outbox(transferId) / pendingOutbox(limit) / reclaimPendingOutbox(limit, now)
 transitionOutbox(transferId, expectedState, nextState, attempt/failure fields...)
 acceptCommitAck(exactAckBytes, committedAt)
 pendingTombstoneOutbox / transitionTombstoneOutbox / acceptTombstoneCommitAck
-observeOutbox(Executor, Runnable)
+latestCompleted() / recentCompleted(limit)
+observeChanges(Executor, Runnable)
 ```
 
 Writes return `CompletableFuture` on the caller-supplied executor. Session/sample/lifecycle writes
@@ -120,10 +126,25 @@ outbox through `outboxForSessionRevision`.
 
 `startSession` is replay-safe across the insert/observer crash window. Repeating the same session
 UUID, lease, and immutable start metadata returns the existing current snapshot; any conflicting
-replay is rejected.
+replay is rejected. A supported, non-unspecified `ActivityType` is required and is returned from
+`SessionSnapshot` after recovery.
 
-Trinity owns adapting the existing controller/journal to persist the UUID and call this API. This
-change does not alter `PersistentRecording`, recording services, `SqlLogger`, or legacy models.
+The repository creates the first open lap atomically with session start. A manual lap is accepted
+only while recording, closes the current lap, and opens the next in one transaction. Repeating the
+same boundary returns the exact existing lap UUIDs. Pause never creates a lap. STOP closes the final
+partial lap idempotently before canonical completion; `finishSessionFromPersistedSamples` also
+enforces that close and injects every persisted closed lap into `ActivityRecord`. DISCARD removes
+all open/completed lap rows in the tombstone transaction. `SessionSnapshot` exposes current lap
+index plus last completed elapsed/active duration for service callbacks after rebind.
+
+`latestCompleted` and `recentCompleted` return the exact payload-backed completed `ActivityRecord`
+joined to its matching outbox across READY, SENDING, AWAITING_COMMIT_ACK, RETRYABLE, and COMMITTED.
+The existing Room invalidation observer now covers sessions, laps, and outboxes so UI integration
+does not need DAO access or polling.
+
+Trinity owns service/controller actions, valid-state command results, selected activity type
+journaling, and callback/snapshot mapping. Switch consumes only those service callbacks and the
+read-only completed presentation API; UI does not own clocks, lap counters, or direct Room access.
 
 ## Phone database and read/receipt API
 

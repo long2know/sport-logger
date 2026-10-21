@@ -382,6 +382,7 @@ public class WatchSyncRunnerTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(sessionId, 91L, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.discardSession(
@@ -438,6 +439,7 @@ public class WatchSyncRunnerTest {
         repository.startSession(
                         WatchActivityRepository.StartRequest
                                 .builder(sessionId, 92L, 1_000L)
+                                .activityType(ActivityType.ACTIVITY_TYPE_RUNNING)
                                 .build())
                 .join();
         repository.discardSession(
