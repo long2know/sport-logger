@@ -708,6 +708,19 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 nowUtcMs) == 1;
     }
 
+    public boolean recoverExpiredConnectorClaimAsUnknown(
+            ConnectorKey key,
+            long nowUtcMs) {
+        validateConnectorKey(key);
+        return dao.recoverExpiredConnectorClaimAsUnknown(
+                key.sessionId,
+                key.revision,
+                key.connectorId,
+                key.normalizedInstanceUrl,
+                key.connectionIdentity,
+                nowUtcMs) == 1;
+    }
+
     public void transitionConnectorDelivery(
             ConnectorKey key,
             long leaseToken,
@@ -1162,6 +1175,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 ledger.credentialReference,
                 Collections.unmodifiableList(new ArrayList<>(remoteIds)),
                 ledger.retryNotBeforeUtcMs,
+                ledger.lastFailureCode,
+                ledger.lastFailureMessage,
                 ledger.deleteUnsupported);
     }
 
@@ -1789,6 +1804,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
         private final String credentialReference;
         private final List<Long> remoteIds;
         private final Long retryNotBeforeUtcMs;
+        private final String lastFailureCode;
+        private final String lastFailureMessage;
         private final boolean deleteUnsupported;
 
         private ConnectorDelivery(
@@ -1799,6 +1816,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
                 String credentialReference,
                 List<Long> remoteIds,
                 Long retryNotBeforeUtcMs,
+                String lastFailureCode,
+                String lastFailureMessage,
                 boolean deleteUnsupported) {
             this.key = key;
             this.state = state;
@@ -1807,6 +1826,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
             this.credentialReference = credentialReference;
             this.remoteIds = remoteIds;
             this.retryNotBeforeUtcMs = retryNotBeforeUtcMs;
+            this.lastFailureCode = lastFailureCode;
+            this.lastFailureMessage = lastFailureMessage;
             this.deleteUnsupported = deleteUnsupported;
         }
 
@@ -1836,6 +1857,14 @@ public final class PhoneActivityRepository implements AutoCloseable {
 
         public Long getRetryNotBeforeUtcMs() {
             return retryNotBeforeUtcMs;
+        }
+
+        public String getLastFailureCode() {
+            return lastFailureCode;
+        }
+
+        public String getLastFailureMessage() {
+            return lastFailureMessage;
         }
 
         public boolean isDeleteUnsupported() {
