@@ -53,8 +53,10 @@ QA debug pair.
 The existing Gradle debug signing identity can differ between development computers and
 CI runners, and CI identities can differ between runs. A matching phone/watch pair from
 one build has the same certificate, but that does not make it compatible with an app
-installed from a different identity. For repeat upgrades, build in the same trusted
-environment that produced the installed pair or retain the matching CI artifact.
+installed from a different identity. **Every future in-place upgrade must use the same
+signing identity as the installed app.** A retained CI artifact lets you reproduce or
+reinstall that exact build; it does not make a newer build from a different CI identity
+upgrade-compatible.
 
 You can inspect and compare only the public certificates without opening private key
 material:
@@ -67,9 +69,10 @@ APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
   wear/build/outputs/apk/sideload/wear-sideload.apk
 ```
 
-The reported signer certificate SHA-256 digest must match for the pair. Do not commit,
-copy, inspect, or share private keystores, key passwords, endpoint credentials, or device
-pairing codes.
+The reported signer certificate SHA-256 digest must match for the pair. Private-key
+generation, storage, secure external backup, and recovery are outside this repository.
+Never put a private key, keystore, key password, endpoint credential, or device pairing
+code in the repository, build logs, CI artifacts, issues, or pull requests.
 
 ## Connect the installation computer
 
@@ -109,26 +112,30 @@ Install only the phone APK on the phone and only the Wear APK on the watch. Do n
 the instrumentation-test APK as the application.
 
 If installation reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the existing app has a
-different signing identity. Rebuild in the original trusted environment or recover a
-matching artifact before upgrading. **Do not make uninstalling the automatic fix for a
-signing mismatch:** uninstalling removes app-private recordings and migration sources.
-Export or back up important data before any deliberate removal. The migration's raw-source
-retention cannot protect files after an OS-level uninstall.
+different signing identity. Produce the newer APK through the original trusted signing
+environment; an older retained artifact can only reinstall its own build. **Do not make
+uninstalling the automatic fix for a signing mismatch:** uninstalling removes app-private
+recordings and migration sources. Export or back up important data before any deliberate
+removal. The migration's raw-source retention cannot protect files after an OS-level
+uninstall.
 
 An older-SDK error means the selected APK is not supported by that device. Do not use a
 manifest override to force Health Services onto an unsupported watch.
 
 ## First use and transfer state
 
-Open SportLogger on both devices. Grant only the permissions needed for the measurements
-and optional integrations you choose. Location is not required for an indoor workout;
-missing location, sensor capability, and denied permissions are different states.
+Open SportLogger on both devices. On the watch, choose an activity and review its
+capability and permission readiness before starting. Grant only the permissions needed
+for the measurements and optional integrations you choose. Location is not required for
+an indoor workout; missing location, sensor capability, off-body state, and denied
+permissions are different states.
 
 Record a short disposable workout before relying on a new installation. Pause, resume,
-and stop it, then check the phone and watch together. A local completion, queued file, or
-successful send is not proof that the phone committed the activity. Canonical synchronization
-becomes committed only after the phone stores the verified activity and the watch accepts
-the matching commit acknowledgement.
+save a manual lap, and finish it, then review the canonical watch summary and the phone
+history/detail/status screens. A local completion, queued file, or successful send is not
+proof that the phone committed the activity. Canonical synchronization becomes committed
+only after the phone stores the verified activity and the watch accepts the matching
+commit acknowledgement.
 
 Keep queued workouts on the watch while the phone is unavailable. Health Connect permission
 and publishing are separate from watch pairing. An Endurain connection also needs its own
@@ -146,5 +153,6 @@ location verifies application behavior, not physical sensor accuracy, off-body h
 battery life, or successful pairing with a particular watch model.
 
 Release signing, Play declarations, and physical-device acceptance are separate from
-building and manually installing these development APKs. Successful packaging also does
-not establish that prototype phone or watch UI work is finished.
+building and manually installing these development APKs. API 36 emulator evidence does
+not prove physical heart-rate or GNSS accuracy, battery life, square-watch hardware,
+live paired-device acknowledgement, or third-party production service acceptance.

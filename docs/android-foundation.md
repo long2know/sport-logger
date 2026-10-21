@@ -43,23 +43,31 @@ Set `JAVA_HOME` to a JDK 17 installation and make SDK 36 available through
 `ANDROID_SDK_ROOT` or an uncommitted `local.properties` file.
 
 ```bash
-./gradlew :mobile:assembleDebug :wear:assembleDebug
+./gradlew :mobile:assembleSideload :wear:assembleSideload \
+  --no-daemon --max-workers=2
 ```
 
-The debug APKs are:
+The recommended manual-install APKs are:
 
-- `mobile/build/outputs/apk/debug/mobile-debug.apk`
-- `wear/build/outputs/apk/debug/wear-debug.apk`
+- `mobile/build/outputs/apk/sideload/mobile-sideload.apk`
+- `wear/build/outputs/apk/sideload/wear-sideload.apk`
 
 Install the phone and watch APKs on their corresponding devices:
 
 ```bash
-adb -s <phone-serial> install -r mobile/build/outputs/apk/debug/mobile-debug.apk
-adb -s <wear-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
+adb -s <phone-serial> install -r mobile/build/outputs/apk/sideload/mobile-sideload.apk
+adb -s <wear-serial> install -r wear/build/outputs/apk/sideload/wear-sideload.apk
 ```
 
+The `sideload` variants inherit release behavior, are non-debuggable, use production
+manifests, and reference the existing Gradle development signing identity. They are not
+production/Play-signed releases. The phone debug variant retains QA-only Health Connect
+read permissions and its consent-test activity; release APKs remain unsigned for the
+external signing process.
+
 The pinned CI workflow is `.github/workflows/android-build.yml`. It runs for pull requests
-and pushes targeting both `dev` and `main`.
+and pushes targeting both `dev` and `main`, validates the public sideload manifest and
+certificate properties, and uploads debug, sideload, and unsigned-release APKs.
 
 For device pairing, signing compatibility, and non-destructive upgrade instructions, see
 the [installation guide](installing.md).
