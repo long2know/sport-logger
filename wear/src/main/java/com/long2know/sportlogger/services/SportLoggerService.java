@@ -22,8 +22,9 @@ import androidx.core.content.ContextCompat;
 
 import com.long2know.sportlogger.MainActivity;
 import com.long2know.sportlogger.R;
-import com.long2know.sportlogger.acquisition.LegacyMeasurementBridge;
 import com.long2know.sportlogger.acquisition.ExerciseMetric;
+import com.long2know.sportlogger.acquisition.LegacyMeasurementBridge;
+import com.long2know.sportlogger.acquisition.LiveMeasurementSnapshot;
 import com.long2know.sportlogger.acquisition.MeasurementSample;
 import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
 import com.long2know.sportlogger.acquisition.RouteStatus;
@@ -285,7 +286,7 @@ public final class SportLoggerService extends Service {
         }
         client.onLatestCompletedChanged(latestCompletedSnapshot);
         client.onRouteStatusChanged(routeStatus.get());
-        client.onLoggerUpdate(SharedData.getInstance());
+        client.onLoggerUpdate(currentLiveMeasurementSnapshot());
     }
 
     public void unregisterClient(ISportLoggerServiceClient client) {
@@ -422,9 +423,11 @@ public final class SportLoggerService extends Service {
         SharedData sharedData = SharedData.getInstance();
         if (state == RecordingState.RECORDING
                 && snapshot.getActivityId() > 0
-                && sharedData.getActivityId() != snapshot.getActivityId()) {
+                && measurementBridge.getLiveSnapshot().getActivityId()
+                != snapshot.getActivityId()) {
             sharedData.resetMeasurements();
-            measurementBridge.beginSession();
+            measurementBridge.beginSession(snapshot.getActivityId());
+            dispatchLiveMeasurementSnapshot();
         }
         if (canonicalRecordingSession != null
                 && snapshot.getAuthority() == RecordingAuthority.CANONICAL) {
@@ -499,8 +502,20 @@ public final class SportLoggerService extends Service {
         }
         mainHandler.postDelayed(() -> {
             measurementDispatchScheduled.set(false);
-            clients.dispatch(client -> client.onLoggerUpdate(SharedData.getInstance()));
+            dispatchLiveMeasurementSnapshot();
         }, MEASUREMENT_UI_DELAY_MILLIS);
+    }
+
+    private LiveMeasurementSnapshot currentLiveMeasurementSnapshot() {
+        LegacyMeasurementBridge bridge = measurementBridge;
+        return bridge == null
+                ? LiveMeasurementSnapshot.empty(0)
+                : bridge.getLiveSnapshot();
+    }
+
+    private void dispatchLiveMeasurementSnapshot() {
+        LiveMeasurementSnapshot snapshot = currentLiveMeasurementSnapshot();
+        clients.dispatch(client -> client.onLoggerUpdate(snapshot));
     }
 
     private void reportResourceFailure(ResourceFailure failure) {

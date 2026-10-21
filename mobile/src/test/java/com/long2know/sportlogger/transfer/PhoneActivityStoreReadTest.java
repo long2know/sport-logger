@@ -7,8 +7,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import com.long2know.sportlogger.history.LegacyInboxActivityDataSource;
-import com.long2know.sportlogger.history.PhoneActivityDataSource;
 import com.long2know.utilities.models.SportActivity;
 import com.long2know.utilities.models.SportTrackPoint;
 
@@ -85,7 +83,7 @@ public final class PhoneActivityStoreReadTest {
     }
 
     @Test
-    public void corruptPayloadDoesNotHideReadableHistory() throws Exception {
+    public void corruptPayloadDoesNotHideReadableStoredActivity() throws Exception {
         PhoneActivityStore store = new PhoneActivityStore(directory);
         SportActivity activity = activity(9, 3_000L, "Synthetic ride");
         store.persist(
@@ -97,13 +95,24 @@ public final class PhoneActivityStoreReadTest {
             output.write(new byte[]{0x01, 0x02, 0x03});
         }
 
-        PhoneActivityDataSource.HistoryResult result =
-                new LegacyInboxActivityDataSource(store).loadHistory(20);
-
-        assertEquals(1, result.getActivities().size());
-        assertEquals("Synthetic ride", result.getActivities().get(0).getName());
-        assertEquals(1, result.getCorruptCount());
-        assertEquals(1, result.getUnavailableCount());
+        int readable = 0;
+        int corrupt = 0;
+        for (PhoneActivityStore.StoredActivityFile file :
+                store.listStoredActivities(20).getActivities()) {
+            try {
+                SportActivity loaded =
+                        store.loadStoredActivity(file.getStorageId());
+                assertEquals("Synthetic ride", loaded.Name);
+                readable++;
+            } catch (PhoneActivityStore.ActivityReadException error) {
+                assertEquals(
+                        PhoneActivityStore.ReadFailure.CORRUPT,
+                        error.getFailure());
+                corrupt++;
+            }
+        }
+        assertEquals(1, readable);
+        assertEquals(1, corrupt);
     }
 
     @Test

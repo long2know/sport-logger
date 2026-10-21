@@ -4,9 +4,8 @@
 
 SportLogger records workouts on Wear OS, preserves them in canonical local storage, transfers
 them durably to an Android phone, and provides phone history, export, and optional publishing
-workflows. The approved recording backend treats routes as optional and canonical storage
-preserves optional measurement presence; the final watch UI paths for degraded permissions and
-live missing-versus-zero presentation are still under correction.
+workflows. Routes are optional. The approved watch source carries nullable live values with
+provenance and quality, so no sample remains different from an actually recorded zero.
 
 [![Android build](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/android-build.yml)
 [![SQLite compatibility](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml/badge.svg?branch=main)](https://github.com/long2know/sport-logger/actions/workflows/sqlite-exact-compat.yml)
@@ -18,21 +17,21 @@ live missing-versus-zero presentation are still under correction.
 
 > **Current acceptance status:** the phone companion UI and actual non-debuggable phone
 > `sideload` user variant are approved with API 36 device and host-test evidence, and the
-> canonical watch recording/storage/sync backend remains approved. The current watch Compose
-> revision is **not ship-approved**; an independent replacement must correct degraded
-> optional-permission handling, live measurement presence, unavailable active duration
-> presentation, and ambient minute timing. The `sideload` packaging is unchanged, but the final
-> distributable pair must use the corrected watch UI. Production/Play signing and declarations,
-> physical sensors and battery, square-watch hardware, and an actual paired-device commit
-> acknowledgement remain separate release gates.
+> final watch Compose source is formally approved. The integrated host build passes all 318 JVM
+> tests (132 phone, 164 watch, 22 utilities) with zero failures, errors, or skips. The final
+> corrected watch head still needs its actual API 36 device gate: the separate 12-test debug QA
+> component lane and the sideload user-flow lane have not yet been reported as passing.
+> Production/Play signing and declarations, physical sensors and battery, square-watch hardware,
+> and an actual paired-device commit acknowledgement remain separate release gates.
 
 ## Features
 
 | Capability | Current behavior |
 |---|---|
-| Watch recording core | The approved backend supports Running, Walking, Cycling, Hiking, Strength, Pool swimming, and Other; durable start/pause/resume/lap/finish/discard transitions; offscreen foreground-service continuity; and canonical summaries. |
-| Watch UI acceptance | Final claims about optional-permission degradation, permanent-denial presentation, live missing-versus-zero values, unavailable active duration, and ambient minute updates are held until the replacement Compose head passes independent review. |
-| Measurement truth | Canonical records and saved summaries preserve optional-value presence. The current live watch UI revision is not approved as proof that every missing measurement is distinguished from a recorded zero. |
+| Watch recording | Choose Running, Walking, Cycling, Hiking, Strength, Pool swimming, or Other. The source-approved flow provides capability/permission readiness, durable start/pause/resume/lap/finish/discard transitions, offscreen foreground-service continuity, and canonical summaries. |
+| Permission degradation | Either heart-rate or activity-recognition access satisfies the health foreground prerequisite. Denied route or notification access remains optional; permanent required denial is surfaced without another request and offers app-settings recovery. |
+| Workout timing | Live active and elapsed time remain distinct through pause/resume and manual laps. A missing canonical active duration stays unavailable instead of copying elapsed time. Ambient refresh compares both active- and elapsed-minute buckets. |
+| Measurement truth | Nullable public live snapshots preserve sample presence, provenance, and quality. Real zero values, including `0,0` coordinates, remain visible; absent or unreliable samples do not become fabricated zeroes, and explicit denied/off-body/unavailable states still hide values. |
 | Durable transfer | Canonical protobuf records, Room storage, and an outbox expose queued, transferring, acknowledged, and retryable states. Saved or queued on the watch is not labeled synced until the phone commit acknowledgement is accepted. |
 | Phone companion | Material 3 Compose history, activity detail, phone-owned title/notes, measurement availability, bounded route preview, laps, 12-week trends, storage/recovery status, and phone-to-watch deletion retry state. |
 | TCX portability | Stream a selected canonical activity to a user-chosen document through Android's Storage Access Framework, or share only the generated TCX file. Export warnings identify missing required values; measured data is not fabricated. |
@@ -40,15 +39,17 @@ live missing-versus-zero presentation are still under correction.
 | Endurain | Configure an HTTPS endpoint and scoped API key, prepare and queue canonical TCX, retry eligible failures, repair artifacts, reconcile unknown delivery with retained positive remote IDs, or explicitly confirm a duplicate-risk retry. Remote edit and delete are truthfully unsupported in API-key TCX mode. |
 | Legacy recovery | Existing watch data and the immutable phone legacy inbox remain available for idempotent migration and recovery; corrupt or partial inputs are surfaced without rewriting their source payloads. |
 
-## Approved phone screens
+## Product screens
 
-These synthetic API 36 emulator results are from the approved immutable phone UI. Watch
-screens are intentionally withheld until the replacement Compose head is independently
-accepted.
+These synthetic API 36 emulator results show the approved phone UI and the watch UI surface.
+The watch screenshots predate the final source corrections and are visual examples, not proof
+that the pending final debug/sideload device matrix passed.
 
-| Persisted phone history | Phone activity detail and bounded route preview |
+| Persisted phone history | Watch readiness and activity selection |
 |---|---|
-| <img alt="Synthetic Material 3 persisted activity history" src="https://github.com/user-attachments/assets/7efd99bc-f1c0-4a30-953f-fff78e3ae998" width="360"> | <img alt="Synthetic activity detail with recorded metrics and bounded route preview" src="https://github.com/user-attachments/assets/47be4f4e-bec6-4a05-badd-3b945f7d5300" width="360"> |
+| <img alt="Synthetic Material 3 persisted activity history" src="https://github.com/user-attachments/assets/7efd99bc-f1c0-4a30-953f-fff78e3ae998" width="360"> | <img alt="Synthetic round Wear OS readiness and Running selection" src="https://github.com/user-attachments/assets/229a3e09-190e-4222-b65d-7f55e4a2a7d4" width="280"> |
+| **Phone activity detail and bounded route preview** | **Watch canonical summary and offline retry** |
+| <img alt="Synthetic activity detail with recorded metrics and bounded route preview" src="https://github.com/user-attachments/assets/47be4f4e-bec6-4a05-badd-3b945f7d5300" width="360"> | <img alt="Synthetic saved watch workout showing transfer retry without a phone acknowledgement" src="https://github.com/user-attachments/assets/41fc1322-fca4-41e9-b308-f5f7a05809f7" width="280"> |
 
 ### Actual phone sideload acceptance
 
@@ -72,13 +73,23 @@ unchanged.
 
 ## Use SportLogger
 
-### Watch workflow status
+### Record on the watch
 
-The approved recording backend supports the listed activity types, start, pause/resume,
-durable manual laps, finish/discard, canonical summary storage, and durable phone transfer. Final
-end-user watch instructions are held until the replacement UI corrects the four bounded
-presentation and permission defects listed above. Existing watch screenshots and the prior
-Compose artifact must not be treated as ship approval.
+The following source behavior is formally approved; the final corrected-head device gate is
+still pending.
+
+1. Choose an activity and review capability and permission status.
+2. Grant at least one health prerequisite: heart rate or activity recognition. Route and
+   notification permissions are optional; a permanently denied required permission directs
+   you to app settings rather than repeating the request.
+3. Start recording. Live values appear only after a usable sample exists, retain their actual
+   source, and preserve real zeroes. Denied, off-body, no-location, and unavailable states stay
+   explicit.
+4. Pause, resume, or save a durable manual lap. Active and elapsed clocks remain distinct,
+   including ambient minute updates.
+5. Finish from the active or paused state, or explicitly discard. Review the canonical summary.
+   If the phone is unavailable, the workout remains queued; only a commit acknowledgement is
+   shown as synced.
 
 ### Review and export on the phone
 
@@ -237,14 +248,13 @@ docs/         Architecture, operating guides, roadmap, and research
 The [Cycle 3 modernization roadmap](docs/modernization-roadmap.md) is the historical staged
 design and acceptance plan. Its core implementation milestones now exist: the JDK 17/API 36
 toolchain, canonical protobuf and Room storage, capability-aware recording, durable Data Layer
-transfer and commit acknowledgement, the approved Compose phone experience, TCX save/share,
-Health Connect publication, and the Endurain TCX publishing workflow. The watch Compose
-integration exists but is not yet a ship-approved product surface.
+transfer and commit acknowledgement, approved Compose phone/watch source, TCX save/share,
+Health Connect publication, and the Endurain TCX publishing workflow.
 
 Remaining release acceptance is deliberately narrower and evidence-based:
 
-- independently correct and approve the watch UI's optional-permission, live-presence,
-  unavailable-active-duration, and ambient-minute behavior;
+- complete the final corrected watch device matrix: 12 debug QA component tests and the
+  separate sideload user flows;
 - exercise a real paired phone/watch commit-acknowledgement path;
 - validate physical heart-rate, GNSS, off-body, battery, and square-watch behavior;
 - validate against a disposable supported Endurain deployment;

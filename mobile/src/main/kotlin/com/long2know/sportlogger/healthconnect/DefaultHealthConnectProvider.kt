@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.time.Instant
 import java.util.concurrent.Executor
 
 object HealthConnectProviderFactory {
@@ -32,6 +33,7 @@ object HealthConnectProviderFactory {
             },
             mapper = HealthConnectRecordMapper(),
             nowUtcMs = System::currentTimeMillis,
+            packageName = applicationContext.packageName,
         )
     }
 }
@@ -44,6 +46,7 @@ internal class DefaultHealthConnectProvider(
     private val gatewayFactory: () -> HealthConnectGateway,
     private val mapper: HealthConnectRecordMapper,
     private val nowUtcMs: () -> Long,
+    private val packageName: String,
 ) : HealthConnectProvider {
     private val operationMutex = Mutex()
     private var healthConnectGateway: HealthConnectGateway? = null
@@ -98,6 +101,14 @@ internal class DefaultHealthConnectProvider(
                 HealthConnectOperationKind.DELETE ->
                     deleteLocked(token.sessionId, token.revision)
             }
+        }
+
+    override suspend fun verifyOwnedExerciseSession(
+        sessionId: String,
+        revision: Long,
+    ): HealthConnectVerificationResult =
+        exclusive {
+            verifyOwnedExerciseSessionLocked(sessionId, revision)
         }
 
     override fun observeCanonicalChanges(
@@ -164,11 +175,26 @@ internal class DefaultHealthConnectProvider(
                     grantedAndroidPermissions = grantedPermissions,
                 )
             }
+        val readPermissionStatus =
+            if (grantedPermissions == null) {
+                HealthConnectReadPermissionStatus(
+                    grant = HealthConnectPermissionGrant.UNAVAILABLE,
+                    required = HealthConnectReadPermission.entries.toSet(),
+                    granted = emptySet(),
+                    missing = HealthConnectReadPermission.entries.toSet(),
+                )
+            } else {
+                HealthConnectPermissions.readStatus(
+                    availability = availability,
+                    grantedAndroidPermissions = grantedPermissions,
+                )
+            }
         return HealthConnectSessionStatus(
             sessionId = sessionId,
             revision = revision,
             availability = availability,
             permissions = permissionStatus,
+            readPermissions = readPermissionStatus,
             presentRecordTypes = fullPlan?.presentRecordTypes.orEmpty(),
             routePresent = fullPlan?.routePresent == true,
             lastOperation =
@@ -179,6 +205,240 @@ internal class DefaultHealthConnectProvider(
                 ),
         )
     }
+
+    private suspend fun verifyOwnedExerciseSessionLocked(
+        sessionId: String,
+        revision: Long,
+    ): HealthConnectVerificationResult {
+        recoverInterrupted(sessionId)
+        val providerAvailability = availability()
+        if (!providerAvailability.isAvailable) {
+            return verificationBlocked(
+                sessionId,
+                revision,
+                HealthConnectFailure(
+                    HealthConnectErrorCode.PROVIDER_UNAVAILABLE,
+                    "Health Connect is not available",
+                    retryable = true,
+                ),
+            )
+        }
+        val requestedDetail =
+            activities.detail(sessionId, revision)
+                ?: return verificationBlocked(
+                    sessionId,
+                    revision,
+                    HealthConnectFailure(
+                        HealthConnectErrorCode.ACTIVITY_NOT_FOUND,
+                        "The canonical activity revision is unavailable",
+                        retryable = false,
+                    ),
+                )
+        val granted =
+            try {
+                gateway().grantedPermissions()
+            } catch (error: Exception) {
+                return verificationFailed(sessionId, revision, classify(error))
+            }
+        if (
+            HealthConnectReadPermission.EXERCISE_SESSION.androidPermission !in granted
+        ) {
+            return verificationBlocked(
+                sessionId,
+                revision,
+                HealthConnectFailure(
+                    HealthConnectErrorCode.PERMISSION_DENIED,
+                    "Exercise session read permission is required for provider verification",
+                    retryable = true,
+                ),
+            )
+        }
+        val exerciseRecords =
+            ledger.ownedRecordsForSession(sessionId)
+                .filter {
+                    it.key.recordType ==
+                        HealthConnectRecordMapper.PROVIDER_EXERCISE_SESSION
+                }
+        val target =
+            exerciseRecords
+                .filter { it.key.revision == revision }
+                .maxByOrNull { it.clientRecordVersion }
+                ?: return verificationBlocked(
+                    sessionId,
+                    revision,
+                    HealthConnectFailure(
+                        HealthConnectErrorCode.PROVIDER_VERIFICATION,
+                        "No owned Health Connect exercise receipt exists for this revision",
+                        retryable = false,
+                    ),
+                )
+        return try {
+            if (
+                exerciseRecords.isNotEmpty() &&
+                    exerciseRecords.all {
+                        it.state == HealthConnectLedgerRepository.RecordState.DELETED
+                    }
+            ) {
+                val details =
+                    exerciseRecords
+                        .mapNotNull { activities.detail(sessionId, it.key.revision) }
+                        .ifEmpty { listOf(requestedDetail) }
+                val start =
+                    Instant.ofEpochMilli(
+                        details.minOf { it.activity.startTimeUtcMs }
+                    ).minusMillis(1)
+                val end =
+                    Instant.ofEpochMilli(
+                        details.maxOf { it.activity.endTimeUtcMs }
+                    ).plusMillis(1)
+                val clientIds = exerciseRecords.mapTo(hashSetOf()) { it.clientRecordId }
+                val providerIds =
+                    exerciseRecords
+                        .flatMap {
+                            it.ownedProviderRecordIds +
+                                listOfNotNull(it.providerRecordId)
+                        }
+                        .toHashSet()
+                val remaining =
+                    gateway().readOwnedExerciseSessions(start, end, packageName)
+                        .filter {
+                            it.clientRecordId in clientIds ||
+                                it.providerRecordId in providerIds
+                        }
+                if (remaining.isEmpty()) {
+                    verificationResult(
+                        sessionId,
+                        revision,
+                        HealthConnectVerificationState.ABSENT,
+                        target,
+                        providerDataOrigin = null,
+                        providerRoutePointCount = null,
+                        failure = null,
+                    )
+                } else {
+                    verificationResult(
+                        sessionId,
+                        revision,
+                        HealthConnectVerificationState.MISMATCH,
+                        target,
+                        providerDataOrigin =
+                            remaining.first().dataOriginPackageName,
+                        providerRoutePointCount =
+                            remaining.first().routePointCount,
+                        failure =
+                            HealthConnectFailure(
+                                HealthConnectErrorCode.PROVIDER_VERIFICATION,
+                                "An app-owned Health Connect exercise record remains after delete",
+                                retryable = true,
+                            ),
+                    )
+                }
+            } else {
+                val providerRecordId = target.providerRecordId
+                if (
+                    target.state != HealthConnectLedgerRepository.RecordState.UPSERTED ||
+                        providerRecordId.isNullOrEmpty()
+                ) {
+                    return verificationBlocked(
+                        sessionId,
+                        revision,
+                        HealthConnectFailure(
+                            HealthConnectErrorCode.PROVIDER_VERIFICATION,
+                            "The exercise record has not completed a provider upsert",
+                            retryable = true,
+                        ),
+                    )
+                }
+                val providerRecord =
+                    gateway().readExerciseSession(providerRecordId)
+                val matches =
+                    providerRecord.providerRecordId == providerRecordId &&
+                        providerRecord.clientRecordId == target.clientRecordId &&
+                        providerRecord.clientRecordVersion ==
+                        target.clientRecordVersion &&
+                        providerRecord.dataOriginPackageName == packageName
+                verificationResult(
+                    sessionId,
+                    revision,
+                    if (matches) {
+                        HealthConnectVerificationState.PRESENT
+                    } else {
+                        HealthConnectVerificationState.MISMATCH
+                    },
+                    target,
+                    providerDataOrigin =
+                        providerRecord.dataOriginPackageName,
+                    providerRoutePointCount = providerRecord.routePointCount,
+                    failure =
+                        if (matches) {
+                            null
+                        } else {
+                            HealthConnectFailure(
+                                HealthConnectErrorCode.PROVIDER_VERIFICATION,
+                                "Health Connect read-back does not match the owned receipt",
+                                retryable = false,
+                            )
+                        },
+                )
+            }
+        } catch (error: Exception) {
+            verificationFailed(sessionId, revision, classify(error), target)
+        }
+    }
+
+    private fun verificationBlocked(
+        sessionId: String,
+        revision: Long,
+        failure: HealthConnectFailure,
+    ): HealthConnectVerificationResult =
+        HealthConnectVerificationResult(
+            sessionId = sessionId,
+            revision = revision,
+            state = HealthConnectVerificationState.BLOCKED,
+            clientRecordId = null,
+            clientRecordVersion = null,
+            providerRecordId = null,
+            providerDataOrigin = null,
+            providerRoutePointCount = null,
+            failure = failure,
+        )
+
+    private fun verificationFailed(
+        sessionId: String,
+        revision: Long,
+        failure: HealthConnectFailure,
+        record: HealthConnectLedgerRepository.LedgerRecord? = null,
+    ): HealthConnectVerificationResult =
+        verificationResult(
+            sessionId = sessionId,
+            revision = revision,
+            state = HealthConnectVerificationState.FAILED,
+            record = record,
+            providerDataOrigin = null,
+            providerRoutePointCount = null,
+            failure = failure,
+        )
+
+    private fun verificationResult(
+        sessionId: String,
+        revision: Long,
+        state: HealthConnectVerificationState,
+        record: HealthConnectLedgerRepository.LedgerRecord?,
+        providerDataOrigin: String?,
+        providerRoutePointCount: Int?,
+        failure: HealthConnectFailure?,
+    ): HealthConnectVerificationResult =
+        HealthConnectVerificationResult(
+            sessionId = sessionId,
+            revision = revision,
+            state = state,
+            clientRecordId = record?.clientRecordId,
+            clientRecordVersion = record?.clientRecordVersion,
+            providerRecordId = record?.providerRecordId,
+            providerDataOrigin = providerDataOrigin,
+            providerRoutePointCount = providerRoutePointCount,
+            failure = failure,
+        )
 
     private suspend fun upsertLocked(
         requestedKind: HealthConnectOperationKind,

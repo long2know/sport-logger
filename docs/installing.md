@@ -6,10 +6,9 @@ existing Gradle debug signing configuration so Android can install it. That cert
 is a development identity for manual installation, not a production or Play signing
 identity.
 
-The packaging guidance is complete, but the current watch Compose UI revision is not
-ship-approved. Build the final user-facing pair only after the independently corrected
-watch head is integrated and validated. No signing or packaging change is required for
-that UI replacement.
+The final watch Compose source and packaging are approved. Its final corrected-head API 36
+device gate is still pending: do not report the separate 12-test debug QA component lane or
+the sideload user-flow lane as passed until their final results are available.
 
 The debug APKs remain QA artifacts. In particular, the phone debug APK intentionally
 includes verification-only Health Connect `READ_*` permissions and a debug consent-test
@@ -42,7 +41,27 @@ from `UPSERTED` to `DELETED`, and the granted read-permission set stayed empty. 
 test-only probe was removed afterward; no production source or permission change was needed.
 
 This proves the phone user variant, not only a debug harness. It does not approve the current
-watch Compose revision or replace the external Play/signing and physical-device gates.
+watch device gate or replace the external Play/signing and physical-device gates.
+
+## Watch source and device boundary
+
+Immutable watch source head `fb503a4a03eca9698fba9bd2b19fff8281e8abd6` is formally
+approved. It corrects optional-permission start behavior, permanent-denial recovery,
+nullable live-value presence/provenance/quality, missing active-duration presentation,
+ambient active/elapsed minute updates, and raw-fallback live rendering.
+
+Historical sideload evidence from its accepted predecessor covered ordinary and partial/
+zero-health permission paths, settings recovery, start, lap, pause/resume, direct paused
+finish, and offline summary/retry. That evidence is not the final corrected-head device
+gate. The final matrix remains:
+
+- **Debug QA component lane:** 12 tests, result pending.
+- **Sideload user-flow lane:** result pending.
+
+Generic `ComponentActivity` fixtures belong to the debug-only test host and are intentionally
+absent from the sideload user app. Attempting those fixtures in the sideload lane is an
+invalid test configuration, not evidence of a product crash, and does not replace the real
+sideload flows.
 
 Watch-to-phone transfer uses Google Play services. Both apps must have the same package
 name and signing certificate; SportLogger intentionally uses `com.long2know.sportlogger`
@@ -146,17 +165,17 @@ manifest override to force Health Services onto an unsupported watch.
 ## First use and transfer state
 
 Open SportLogger on both devices. Grant only the permissions needed for the measurements
-and optional integrations you choose. The approved recording backend treats location as
-optional for indoor workouts, but final watch instructions for degraded optional-permission
-handling, live missing-value presentation, unavailable active duration, and ambient
-updates are intentionally held until the corrected UI head is approved.
+and optional integrations you choose. Either heart-rate or activity-recognition access can
+satisfy the health foreground prerequisite. Location and notifications remain optional;
+permanently denied required access is surfaced with app-settings recovery.
 
 Record a short disposable workout before relying on a new installation. Pause, resume,
-save a manual lap, and finish it, then review the canonical watch summary and the phone
-history/detail/status screens. A local completion, queued file, or successful send is not
-proof that the phone committed the activity. Canonical synchronization becomes committed
-only after the phone stores the verified activity and the watch accepts the matching
-commit acknowledgement.
+save a manual lap, and finish from active or paused state, then review the canonical watch
+summary and the phone history/detail/status screens. Live values should appear only after
+usable samples exist and should retain source/availability truth, including actual zeroes.
+A local completion, queued file, or successful send is not proof that the phone committed
+the activity. Canonical synchronization becomes committed only after the phone stores the
+verified activity and the watch accepts the matching commit acknowledgement.
 
 Keep queued workouts on the watch while the phone is unavailable. Health Connect permission
 and publishing are separate from watch pairing. An Endurain connection also needs its own
@@ -176,5 +195,5 @@ battery life, or successful pairing with a particular watch model.
 Release signing, Play declarations, and physical-device acceptance are separate from
 building and manually installing these development APKs. API 36 emulator evidence does
 not prove physical heart-rate or GNSS accuracy, battery life, square-watch hardware,
-live paired-device acknowledgement, third-party production service acceptance, or final
-approval of the current unapproved watch Compose revision.
+live paired-device acknowledgement, third-party production service acceptance, or the
+still-pending final corrected-head watch device matrix.

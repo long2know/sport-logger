@@ -87,7 +87,63 @@ checkpoint:
 
 The focused instrumentation probe was temporary and removed after capture. Production
 sources and manifests remained unchanged. This checkpoint proves the phone sideload path;
-the replacement watch UI and the final combined pair retain their separate acceptance gates.
+the final watch device matrix and combined pair retain their separate acceptance gates.
+
+### Final watch source and device matrix
+
+Immutable watch source head `fb503a4a03eca9698fba9bd2b19fff8281e8abd6` is formally
+approved. It adds no new module, dependency, signing configuration, version, or application
+identity. Its final corrections are limited to the watch source and tests:
+
+- either heart-rate or activity-recognition access satisfies the health foreground
+  prerequisite; denied route/notification access is optional and permanent required denial
+  is exposed for settings recovery;
+- the public live snapshot uses nullable samples with provenance and quality, preserves real
+  zero values, does not fabricate missing zeroes, and hides unreliable or explicitly blocked
+  values;
+- missing canonical active duration remains absent instead of falling back to elapsed time;
+- ambient refresh compares both active and elapsed minute buckets, including pause offsets;
+- raw fallback values use the same presence, quality, and readiness gates.
+
+The final device lanes remain separate:
+
+| Lane | Current evidence |
+| --- | --- |
+| Phone sideload user flow | Passed: 7 existing main Compose tests plus 1 write-only Health Connect main-UI publish/delete test. |
+| Watch source/host tests | Passed: 164 Wear JVM tests in the final integrated build. |
+| Historical predecessor sideload flows | Passed ordinary, partial/zero-health, settings, start/lap/pause/resume/direct-finish, offline-summary, and retry paths; not the final corrected-head gate. |
+| Final watch debug QA components | 12-test result pending; do not claim passed. |
+| Final watch sideload user flows | Result pending; do not claim passed. |
+
+Generic `ComponentActivity` fixtures are part of the debug-only test host and are
+intentionally absent from the sideload app. Their launch failure in that invalid lane is
+not a product crash and is not a substitute for the final sideload user-flow result.
+
+The exact full CI command completed successfully after source alignment. JUnit XML totals
+were:
+
+| Module | Suites | Tests | Failures | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Mobile | 30 | 132 | 0 | 0 | 0 |
+| Wear | 36 | 164 | 0 | 0 | 0 |
+| Utilities | 4 | 22 | 0 | 0 | 0 |
+| **Total** | **70** | **318** | **0** | **0** | **0** |
+
+Debug lint XML contained 70 mobile, 17 Wear, and 3 utilities warnings, with no error or
+fatal findings.
+
+The same build produced and validated all six expected application APKs:
+
+| App | Debug QA | Manual sideload | Unsigned release |
+| --- | --- | --- | --- |
+| Phone | `mobile/build/outputs/apk/debug/mobile-debug.apk` | `mobile/build/outputs/apk/sideload/mobile-sideload.apk` | `mobile/build/outputs/apk/release/mobile-release-unsigned.apk` |
+| Watch | `wear/build/outputs/apk/debug/wear-debug.apk` | `wear/build/outputs/apk/sideload/wear-sideload.apk` | `wear/build/outputs/apk/release/wear-release-unsigned.apk` |
+
+The exact CI public-APK validation block passed against those files: both sideload APKs
+were non-debuggable and shared package/version/signing identity; phone min/target remained
+26/36 and watch 30/35; the phone sideload had zero Health Connect reads, eight writes, and
+no debug consent activity; watch production sensor/health permissions remained present;
+debug QA declarations remained present; and both release APKs remained unsigned.
 
 ## Canonical and legacy recording boundaries
 
