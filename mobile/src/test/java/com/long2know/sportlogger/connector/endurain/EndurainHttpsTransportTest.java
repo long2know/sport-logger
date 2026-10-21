@@ -191,6 +191,7 @@ public class EndurainHttpsTransportTest {
                 Duration.ofSeconds(5),
                 Duration.ofMillis(500),
                 Duration.ofSeconds(5));
+        assertEquals(500, bounded.okhttpWriteTimeoutMillisForTests());
         ExecutorService executor = Executors.newSingleThreadExecutor();
         EndurainUploadResult result;
         try {
@@ -210,6 +211,41 @@ public class EndurainHttpsTransportTest {
                 result.state());
         assertEquals(
                 EndurainUploadResult.Reason.POST_TRANSMISSION_WRITE_TIMEOUT,
+                result.reason());
+        assertFalse(result.mayRetryAutomatically());
+        assertEquals(0, EndurainHttpsTransport.pendingDeadlineTasksForTests());
+    }
+
+    @Test(timeout = 10000)
+    public void stalledRequestReaderHitsOverallBeforeLongerWriteDeadline()
+            throws Exception {
+        fixture.mode(EndurainTlsFixture.Mode.STALL_REQUEST_BODY);
+        TcxUploadArtifact largeArtifact = createArtifact(
+                new File(workDirectory, "overall-stalled-activity.tcx"),
+                24 * 1024 * 1024);
+        EndurainHttpsTransport bounded = deadlineTransport(
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(5),
+                Duration.ofMillis(800));
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        EndurainUploadResult result;
+        try {
+            Future<EndurainUploadResult> upload =
+                    executor.submit(() -> upload(bounded, config(), largeArtifact));
+            assertTrue(fixture.awaitRequestBodyStall(2, TimeUnit.SECONDS));
+            result = upload.get(4, TimeUnit.SECONDS);
+        } finally {
+            fixture.releaseStall();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertTrue(fixture.requestBodyStallEntered());
+        assertEquals(
+                EndurainUploadResult.State.UNKNOWN_DELIVERY,
+                result.state());
+        assertEquals(
+                EndurainUploadResult.Reason.POST_TRANSMISSION_TIMEOUT,
                 result.reason());
         assertFalse(result.mayRetryAutomatically());
         assertEquals(0, EndurainHttpsTransport.pendingDeadlineTasksForTests());

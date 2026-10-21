@@ -16,9 +16,12 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -32,8 +35,10 @@ import javax.net.ssl.X509TrustManager;
 import javax.net.SocketFactory;
 
 import okhttp3.ConnectionPool;
+import okhttp3.EventListener;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
+import okhttp3.Protocol;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
@@ -57,7 +62,7 @@ public final class EndurainHttpsTransport {
     private final EndurainRetryPolicy retryPolicy;
     private final Clock clock;
     private final OkHttpClient client;
-    private final TrackingSocketFactory rawSocketFactory;
+    private final SocketFactory rawSocketDelegate;
 
     public EndurainHttpsTransport() {
         this(
@@ -124,6 +129,32 @@ public final class EndurainHttpsTransport {
             Clock clock,
             SSLSocketFactory testSocketFactory,
             X509TrustManager testTrustManager) {
+        this(
+                connectTimeout,
+                readTimeout,
+                writeTimeout,
+                overallTimeout,
+                maxTcxBytes,
+                maxResponseBytes,
+                retryPolicy,
+                clock,
+                testSocketFactory,
+                testTrustManager,
+                null);
+    }
+
+    EndurainHttpsTransport(
+            Duration connectTimeout,
+            Duration readTimeout,
+            Duration writeTimeout,
+            Duration overallTimeout,
+            long maxTcxBytes,
+            int maxResponseBytes,
+            EndurainRetryPolicy retryPolicy,
+            Clock clock,
+            SSLSocketFactory testSocketFactory,
+            X509TrustManager testTrustManager,
+            EventListener testEventListener) {
         int connectTimeoutMillis = timeoutMillis(connectTimeout, "connectTimeout");
         int readTimeoutMillis = timeoutMillis(readTimeout, "readTimeout");
         writeTimeoutMillis = timeoutMillis(writeTimeout, "writeTimeout");
@@ -146,17 +177,20 @@ public final class EndurainHttpsTransport {
         this.retryPolicy = Objects.requireNonNull(retryPolicy, "retryPolicy");
         this.clock = Objects.requireNonNull(clock, "clock");
 
-        rawSocketFactory = new TrackingSocketFactory(SocketFactory.getDefault());
+        rawSocketDelegate = SocketFactory.getDefault();
         OkHttpClient.Builder builder = new OkHttpClient.Builder()
                 .connectTimeout(connectTimeoutMillis, TimeUnit.MILLISECONDS)
                 .readTimeout(readTimeoutMillis, TimeUnit.MILLISECONDS)
+                .writeTimeout(writeTimeoutMillis, TimeUnit.MILLISECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .retryOnConnectionFailure(false)
-                .connectionPool(new ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
-                .socketFactory(rawSocketFactory);
+                .protocols(Collections.singletonList(Protocol.HTTP_1_1));
         if (testSocketFactory != null) {
             builder.sslSocketFactory(testSocketFactory, testTrustManager);
+        }
+        if (testEventListener != null) {
+            builder.eventListener(testEventListener);
         }
         client = builder.build();
     }
@@ -170,9 +204,14 @@ public final class EndurainHttpsTransport {
                 .header("Connection", "close")
                 .build();
         DeadlineController deadline =
-                rawSocketFactory.begin(overallTimeoutMillis);
+                new DeadlineController(overallTimeoutMillis);
         try {
-            try (Response response = client.newCall(request).execute()) {
+            try (Response response = executeCall(request, deadline)) {
+                if (deadline.expired()) {
+                    return EndurainProbeResult.of(
+                            EndurainProbeResult.State.RETRYABLE,
+                            null);
+                }
                 int status = response.code();
                 if (status == HttpURLConnection.HTTP_OK) {
                     if (!isJson(response.header("Content-Type"))) {
@@ -195,6 +234,11 @@ public final class EndurainHttpsTransport {
                         return EndurainProbeResult.of(
                                 EndurainProbeResult.State.INCOMPATIBLE_RESPONSE,
                                 status);
+                    }
+                    if (deadline.expired()) {
+                        return EndurainProbeResult.of(
+                                EndurainProbeResult.State.RETRYABLE,
+                                null);
                     }
                     return EndurainProbeResult.available(about.version());
                 }
@@ -237,7 +281,7 @@ public final class EndurainHttpsTransport {
                     EndurainProbeResult.State.RETRYABLE,
                     null);
         } finally {
-            rawSocketFactory.end(deadline);
+            deadline.close();
         }
     }
 
@@ -290,7 +334,7 @@ public final class EndurainHttpsTransport {
         AtomicReference<TransmissionPhase> phase =
                 new AtomicReference<>(TransmissionPhase.PRE_TRANSMISSION);
         DeadlineController deadline =
-                rawSocketFactory.begin(overallTimeoutMillis);
+                new DeadlineController(overallTimeoutMillis);
         try {
             RequestBody body = new StreamingMultipartBody(
                     boundary,
@@ -309,7 +353,7 @@ public final class EndurainHttpsTransport {
                     .header("Connection", "close");
             apiKey.applyTo(request);
 
-            try (Response response = client.newCall(request.build()).execute()) {
+            try (Response response = executeCall(request.build(), deadline)) {
                 return classifyResponse(config, response, deadline);
             }
         } catch (SSLException error) {
@@ -329,15 +373,31 @@ public final class EndurainHttpsTransport {
         } catch (IOException error) {
             return classifyNetworkFailure(error, phase.get(), deadline);
         } finally {
-            rawSocketFactory.end(deadline);
+            deadline.close();
         }
+    }
+
+    private Response executeCall(
+            Request request,
+            DeadlineController deadline) throws IOException {
+        OkHttpClient callClient = client.newBuilder()
+                .connectionPool(new ConnectionPool(
+                        0,
+                        1,
+                        TimeUnit.NANOSECONDS))
+                .socketFactory(new TrackingSocketFactory(
+                        rawSocketDelegate,
+                        deadline))
+                .build();
+        return callClient.newCall(request).execute();
     }
 
     private EndurainUploadResult classifyNetworkFailure(
             IOException error,
             TransmissionPhase phase,
             DeadlineController deadline) {
-        DeadlineExpiration expiration = deadline.expiration();
+        DeadlineExpiration expiration =
+                deadline.timeoutExpiration(phase, error);
         boolean timedOut = expiration != DeadlineExpiration.NONE
                 || isTimeout(error);
         if (phase == TransmissionPhase.PRE_TRANSMISSION) {
@@ -367,6 +427,12 @@ public final class EndurainHttpsTransport {
             Response response,
             DeadlineController deadline) {
         int status = response.code();
+        EndurainUploadResult expired = expiredUploadResult(
+                deadline.expiration(),
+                status);
+        if (expired != null) {
+            return expired;
+        }
         if (status == HttpURLConnection.HTTP_CREATED) {
             return parseCreatedResponse(config, response, status, deadline);
         }
@@ -449,11 +515,20 @@ public final class EndurainHttpsTransport {
             for (long id : ids) {
                 remoteActivities.add(config.remoteActivity(id));
             }
+            EndurainUploadResult expired = expiredUploadResult(
+                    deadline.expiration(),
+                    status);
+            if (expired != null) {
+                return expired;
+            }
             return EndurainUploadResult.delivered(remoteActivities);
         } catch (IOException
                 | EndurainResponseParser.ParseException
                 | ResponseTooLargeException error) {
-            DeadlineExpiration expiration = deadline.expiration();
+            DeadlineExpiration expiration =
+                    deadline.timeoutExpiration(
+                            TransmissionPhase.WRITE_COMPLETE,
+                            error);
             return EndurainUploadResult.failure(
                     EndurainUploadResult.State.UNKNOWN_DELIVERY,
                     expiration == DeadlineExpiration.WRITE
@@ -464,6 +539,20 @@ public final class EndurainHttpsTransport {
                             : EndurainUploadResult.Reason.MALFORMED_SUCCESS_RESPONSE,
                     status);
         }
+    }
+
+    private static EndurainUploadResult expiredUploadResult(
+            DeadlineExpiration expiration,
+            int status) {
+        if (expiration == DeadlineExpiration.NONE) {
+            return null;
+        }
+        return EndurainUploadResult.failure(
+                EndurainUploadResult.State.UNKNOWN_DELIVERY,
+                expiration == DeadlineExpiration.WRITE
+                        ? EndurainUploadResult.Reason.POST_TRANSMISSION_WRITE_TIMEOUT
+                        : EndurainUploadResult.Reason.POST_TRANSMISSION_TIMEOUT,
+                status);
     }
 
     private boolean verifyArtifact(
@@ -590,6 +679,10 @@ public final class EndurainHttpsTransport {
         return Duration.ofMillis(Math.min(combined, Integer.MAX_VALUE));
     }
 
+    int okhttpWriteTimeoutMillisForTests() {
+        return client.writeTimeoutMillis();
+    }
+
     static int pendingDeadlineTasksForTests() {
         DEADLINE_EXECUTOR.purge();
         return DEADLINE_EXECUTOR.getQueue().size();
@@ -623,30 +716,13 @@ public final class EndurainHttpsTransport {
 
     private static final class TrackingSocketFactory extends SocketFactory {
         private final SocketFactory delegate;
-        private final ThreadLocal<DeadlineController> activeDeadline =
-                new ThreadLocal<>();
+        private final DeadlineController deadline;
 
-        private TrackingSocketFactory(SocketFactory delegate) {
+        private TrackingSocketFactory(
+                SocketFactory delegate,
+                DeadlineController deadline) {
             this.delegate = delegate;
-        }
-
-        private DeadlineController begin(int overallTimeoutMillis) {
-            if (activeDeadline.get() != null) {
-                throw new IllegalStateException(
-                        "Nested Endurain network operations are unsupported");
-            }
-            DeadlineController deadline =
-                    new DeadlineController(overallTimeoutMillis);
-            activeDeadline.set(deadline);
-            return deadline;
-        }
-
-        private void end(DeadlineController deadline) {
-            try {
-                deadline.close();
-            } finally {
-                activeDeadline.remove();
-            }
+            this.deadline = deadline;
         }
 
         @Override
@@ -692,10 +768,7 @@ public final class EndurainHttpsTransport {
         }
 
         private Socket track(Socket socket) {
-            DeadlineController deadline = activeDeadline.get();
-            if (deadline != null) {
-                deadline.register(socket);
-            }
+            deadline.register(socket);
             return socket;
         }
     }
@@ -703,36 +776,45 @@ public final class EndurainHttpsTransport {
     private static final class DeadlineController implements AutoCloseable {
         private final AtomicReference<DeadlineExpiration> expiration =
                 new AtomicReference<>(DeadlineExpiration.NONE);
-        private final AtomicReference<Socket> rawSocket = new AtomicReference<>();
+        private final Set<Socket> rawSockets =
+                ConcurrentHashMap.newKeySet();
         private final AtomicBoolean closed = new AtomicBoolean();
+        private final long overallDeadlineNanos;
         private final ScheduledFuture<?> overallDeadline;
+        private volatile boolean writeActive;
+        private volatile long writeDeadlineNanos;
         private volatile ScheduledFuture<?> writeDeadline;
 
         private DeadlineController(int overallTimeoutMillis) {
+            overallDeadlineNanos = deadlineNanos(overallTimeoutMillis);
             overallDeadline = schedule(
                     DeadlineExpiration.OVERALL,
                     overallTimeoutMillis);
         }
 
         private void register(Socket socket) {
-            Socket previous = rawSocket.getAndSet(socket);
-            if (previous != null && previous != socket) {
-                closeSocket(previous);
-            }
-            if (closed.get() || expired()) {
+            rawSockets.add(socket);
+            if ((closed.get() || expired())
+                    && rawSockets.remove(socket)) {
                 closeSocket(socket);
             }
         }
 
         private void startWrite(int writeTimeoutMillis) {
+            writeDeadlineNanos = deadlineNanos(writeTimeoutMillis);
+            writeActive = true;
             writeDeadline = schedule(
                     DeadlineExpiration.WRITE,
                     writeTimeoutMillis);
+            if (closed.get() || expired()) {
+                cancel(writeDeadline);
+            }
         }
 
         private void finishWrite() {
             cancel(writeDeadline);
             writeDeadline = null;
+            writeActive = false;
         }
 
         private boolean expired() {
@@ -741,6 +823,43 @@ public final class EndurainHttpsTransport {
 
         private DeadlineExpiration expiration() {
             return expiration.get();
+        }
+
+        private DeadlineExpiration timeoutExpiration(
+                TransmissionPhase phase,
+                Throwable error) {
+            DeadlineExpiration observed = expiration();
+            if (observed == DeadlineExpiration.NONE
+                    && !isTimeout(error)) {
+                return DeadlineExpiration.NONE;
+            }
+            if (observed == DeadlineExpiration.WRITE) {
+                return DeadlineExpiration.WRITE;
+            }
+
+            long now = System.nanoTime();
+            boolean writeCandidate =
+                    phase == TransmissionPhase.WRITE_STARTED
+                            && writeActive;
+            boolean writeDue = writeCandidate
+                    && hasReached(now, writeDeadlineNanos);
+            boolean overallDue = hasReached(now, overallDeadlineNanos);
+            if (writeDue
+                    && (!overallDue
+                    || noLaterThan(
+                            writeDeadlineNanos,
+                            overallDeadlineNanos))) {
+                return DeadlineExpiration.WRITE;
+            }
+            if (overallDue) {
+                return DeadlineExpiration.OVERALL;
+            }
+            if (observed != DeadlineExpiration.NONE) {
+                return observed;
+            }
+            return writeCandidate
+                    ? DeadlineExpiration.WRITE
+                    : DeadlineExpiration.OVERALL;
         }
 
         private ScheduledFuture<?> schedule(
@@ -757,7 +876,7 @@ public final class EndurainHttpsTransport {
                     || !expiration.compareAndSet(DeadlineExpiration.NONE, value)) {
                 return;
             }
-            closeSocket(rawSocket.get());
+            closeRawSockets();
         }
 
         @Override
@@ -767,7 +886,28 @@ public final class EndurainHttpsTransport {
             }
             cancel(writeDeadline);
             cancel(overallDeadline);
-            rawSocket.set(null);
+            writeActive = false;
+            closeRawSockets();
+            rawSockets.clear();
+        }
+
+        private void closeRawSockets() {
+            for (Socket socket : rawSockets) {
+                closeSocket(socket);
+            }
+        }
+
+        private static long deadlineNanos(int timeoutMillis) {
+            return System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        }
+
+        private static boolean hasReached(long now, long deadline) {
+            return now - deadline >= 0;
+        }
+
+        private static boolean noLaterThan(long first, long second) {
+            return first - second <= 0;
         }
 
         private static void cancel(ScheduledFuture<?> future) {
@@ -859,6 +999,7 @@ public final class EndurainHttpsTransport {
                             decodeSha256(artifact.sha256()))) {
                 throw new IOException("TCX artifact changed during upload");
             }
+            sink.flush();
             phase.set(TransmissionPhase.WRITE_COMPLETE);
             deadline.finishWrite();
         }
