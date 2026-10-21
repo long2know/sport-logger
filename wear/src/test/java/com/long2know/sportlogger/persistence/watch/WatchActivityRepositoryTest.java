@@ -44,7 +44,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 26)
+@Config(sdk = 30)
 public class WatchActivityRepositoryTest {
     private static final String SESSION_ID = "9923d605-7902-5f86-ab5a-7924a4104ae5";
     private static final String TRANSFER_ID = "d3c6f7da-c7d3-4e50-b3dc-18ddcc2a4322";

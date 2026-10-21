@@ -227,7 +227,7 @@ public class PhoneTombstoneSyncRunnerTest {
                 "ACK_IDENTITY_MISMATCH",
                 () -> ackHandler().receive(
                         valid.toBuilder()
-                                .setDeleteRevision(2L)
+                                .setDeleteRevision(3L)
                                 .build()
                                 .toByteArray(),
                         12_000L));
@@ -264,7 +264,7 @@ public class PhoneTombstoneSyncRunnerTest {
     private PhoneActivityRepository.TombstoneOutboxItem deletedActivity() {
         repository.deleteLocal(
                 SESSION_ID,
-                1L,
+                2L,
                 1L,
                 TRANSFER_ID,
                 2_000L);

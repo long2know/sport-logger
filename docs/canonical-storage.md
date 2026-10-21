@@ -153,11 +153,28 @@ detail(sessionId, acceptedRevision)
 pointPage(sessionId, revision, afterSequence, limit, CancellationSignal)
 metadata(sessionId) / setMetadata(...)
 observeChanges(Executor, Runnable)
+deleteLocal(sessionId, expectedAcceptedRevision, deletedAt)
 ```
 
 Summaries are paged and sorted without materializing point graphs. Details are immutable
 session/revision snapshots. Point queries are cancellable, copy ordered protobuf samples into an
 immutable page, and close the SQLite cursor before returning.
+
+The three-argument `deleteLocal` is the only UI deletion boundary. In one Room transaction it:
+
+- compares the caller's expected accepted revision with the current head;
+- covers the actual accepted head revision;
+- allocates one delete revision above the unsigned maximum of that head and the winning tombstone;
+- generates one transfer UUID only for a newly committed operation;
+- persists the exact phone-origin tombstone, outbox, and deleted head; and
+- returns `LocalDeleteResult` containing those exact persisted values.
+
+If completion was ambiguous, replay with the same expected head returns the existing phone-origin
+tombstone/outbox with `isCreated=false`; it does not allocate another revision or UUID. A newer head
+fails with `DELETE_HEAD_CHANGED`, unsigned overflow fails with `DELETE_REVISION_EXHAUSTED`, and a
+watch-origin deletion is reported as already deleted rather than misclassified as local replay.
+The deprecated five-argument method remains only for protocol fixtures and validates head coverage
+and delete ordering.
 
 Production repository and backfill calls are synchronous Room/file I/O and belong on a background
 executor. A repository opened with `PhoneActivityRepository.open(context)` may be retained by a
