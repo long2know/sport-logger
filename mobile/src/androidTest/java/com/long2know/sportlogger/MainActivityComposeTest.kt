@@ -259,6 +259,16 @@ class MainActivityComposeTest {
         )
         compose.onNodeWithText(context.getString(R.string.endurain_reconcile))
             .performClick()
+        checkNotNull(scenario).onActivity { activity ->
+            val reconcile = checkNotNull(
+                ViewModelProvider(activity)[ComposePhoneViewModel::class.java]
+                    .state
+                    .value
+                    .endurainReconcile,
+            )
+            assertEquals(unknownDelivery.key, reconcile.deliveryKey)
+        }
+        waitForTag("endurain_remote_ids")
         compose.onNodeWithTag("endurain_remote_ids")
             .performTextReplacement("41,bad,-2")
         compose.onNodeWithTag("endurain_reconcile_save").performClick()
