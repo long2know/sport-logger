@@ -65,10 +65,7 @@ class MainActivity :
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             updatePermissionState()
             service?.refreshAcquisitionState()
-            pendingStart?.let { choice ->
-                pendingStart = null
-                startSelectedActivity(choice)
-            }
+            tryStartPendingActivity()
         }
 
     private val serviceConnection = object : ServiceConnection {
@@ -96,6 +93,7 @@ class MainActivity :
                 ),
             )
             connected.refreshAcquisitionState()
+            tryStartPendingActivity()
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
@@ -263,8 +261,16 @@ class MainActivity :
             } else {
                 uiState.confirmation
             },
-            errorCode = recording.errorCode ?: uiState.errorCode,
-            errorMessage = recording.errorMessage ?: uiState.errorMessage,
+            errorCode = recording.errorCode ?: uiState.errorCode
+                ?.takeUnless {
+                    it == "SERVICE_COMMAND_REJECTED" &&
+                        snapshot.state != RecordingState.ERROR
+                },
+            errorMessage = recording.errorMessage ?: uiState.errorMessage
+                ?.takeUnless {
+                    uiState.errorCode == "SERVICE_COMMAND_REJECTED" &&
+                        snapshot.state != RecordingState.ERROR
+                },
         )
     }
 
@@ -369,6 +375,16 @@ class MainActivity :
             permissionLauncher.launch(missing.toTypedArray())
             return
         }
+        pendingStart = null
+        startSelectedActivity(choice)
+    }
+
+    private fun tryStartPendingActivity() {
+        val choice = pendingStart ?: return
+        if (service == null || missingPermissions().isNotEmpty()) {
+            return
+        }
+        pendingStart = null
         startSelectedActivity(choice)
     }
 
