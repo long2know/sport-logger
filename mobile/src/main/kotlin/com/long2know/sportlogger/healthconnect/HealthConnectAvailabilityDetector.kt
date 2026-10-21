@@ -56,8 +56,8 @@ internal class HealthConnectAvailabilityDetector(
         }
         return try {
             @Suppress("DEPRECATION")
-            val info = context.packageManager.getApplicationInfo(PROVIDER_PACKAGE, 0)
-            info.enabled
+            context.packageManager.getApplicationInfo(PROVIDER_PACKAGE, 0)
+            true
         } catch (_: PackageManager.NameNotFoundException) {
             false
         }

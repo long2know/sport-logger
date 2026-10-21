@@ -799,13 +799,25 @@ internal class DefaultHealthConnectProvider(
         val state =
             when {
                 relevant.any {
-                    it.state == HealthConnectLedgerRepository.RecordState.IN_FLIGHT ||
-                        it.state == HealthConnectLedgerRepository.RecordState.PENDING
+                    it.state == HealthConnectLedgerRepository.RecordState.IN_FLIGHT
                 } -> HealthConnectOperationState.IN_PROGRESS
                 relevant.any {
                     it.state == HealthConnectLedgerRepository.RecordState.FAILED ||
                         it.state == HealthConnectLedgerRepository.RecordState.DELETE_PENDING
                 } -> HealthConnectOperationState.PARTIAL
+                missingPermissions.isNotEmpty() -> HealthConnectOperationState.PARTIAL
+                relevant.any {
+                    it.state == HealthConnectLedgerRepository.RecordState.PENDING
+                } ->
+                    if (
+                        relevant.any {
+                            it.state == HealthConnectLedgerRepository.RecordState.UPSERTED
+                        }
+                    ) {
+                        HealthConnectOperationState.PARTIAL
+                    } else {
+                        HealthConnectOperationState.NOT_STARTED
+                    }
                 relevant.isNotEmpty() -> HealthConnectOperationState.SUCCEEDED
                 else -> HealthConnectOperationState.NOT_STARTED
             }
