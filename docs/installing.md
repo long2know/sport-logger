@@ -1,14 +1,23 @@
 # Install SportLogger on a phone and watch
 
-This guide covers manually installing the development APKs. It does not turn an unsigned
-release APK into a signed app or imply that a Play Store release has been configured.
+This guide covers manually installing the matching `sideload` APK pair. The sideload
+variant uses release behavior and production manifests, is non-debuggable, and uses the
+existing Gradle debug signing configuration so Android can install it. That certificate
+is a development identity for manual installation, not a production or Play signing
+identity.
+
+The debug APKs remain QA artifacts. In particular, the phone debug APK intentionally
+includes verification-only Health Connect `READ_*` permissions and a debug consent-test
+activity. The phone sideload APK excludes those additions while keeping the production
+Health Connect write permissions. The watch sideload APK keeps its genuine production
+health, activity-recognition, body-sensor, and location permissions.
 
 ## Requirements
 
-| Device | App minimum | APK |
-| --- | --- | --- |
-| Android phone | Android 8 / API 26 | `mobile-debug.apk` |
-| Wear OS watch | Wear OS 3 / API 30 | `wear-debug.apk` |
+| Device | App minimum | Target API | APK |
+| --- | --- | --- | --- |
+| Android phone | Android 8 / API 26 | 36 | `mobile-sideload.apk` |
+| Wear OS watch | Wear OS 3 / API 30 | 35 | `wear-sideload.apk` |
 
 Use a phone/watch combination supported by the watch manufacturer's companion app. Pair
 the watch with the phone through that companion before testing SportLogger synchronization.
@@ -24,23 +33,43 @@ See Android's [Data Layer security requirements](https://developer.android.com/t
 Follow the [build setup](../README.md#get-started), then build both apps in one checkout:
 
 ```bash
-./gradlew :mobile:assembleDebug :wear:assembleDebug
+./gradlew :mobile:assembleSideload :wear:assembleSideload \
+  --no-daemon --max-workers=2
 ```
 
 The resulting files are:
 
 ```text
-mobile/build/outputs/apk/debug/mobile-debug.apk
-wear/build/outputs/apk/debug/wear-debug.apk
+mobile/build/outputs/apk/sideload/mobile-sideload.apk
+wear/build/outputs/apk/sideload/wear-sideload.apk
 ```
 
 Successful Android CI runs also publish a `sport-logger-apks` artifact. Keep the phone and
-watch APKs from the same artifact together. Files ending in `release-unsigned.apk` cannot
-be installed until they are signed; use the debug pair for these instructions.
+watch sideload APKs from the same artifact together. Files ending in
+`release-unsigned.apk` remain unsigned for the external release-signing process and cannot
+be installed as produced. Use the sideload pair for these instructions rather than the
+QA debug pair.
 
-Debug signing identities can differ between CI runs. For repeat installations, use the
-same local keystore or a configured stable release-signing process. Do not commit a
-keystore, key password, endpoint credential, or device pairing code.
+The existing Gradle debug signing identity can differ between development computers and
+CI runners, and CI identities can differ between runs. A matching phone/watch pair from
+one build has the same certificate, but that does not make it compatible with an app
+installed from a different identity. For repeat upgrades, build in the same trusted
+environment that produced the installed pair or retain the matching CI artifact.
+
+You can inspect and compare only the public certificates without opening private key
+material:
+
+```bash
+APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+"$APKSIGNER" verify --print-certs \
+  mobile/build/outputs/apk/sideload/mobile-sideload.apk
+"$APKSIGNER" verify --print-certs \
+  wear/build/outputs/apk/sideload/wear-sideload.apk
+```
+
+The reported signer certificate SHA-256 digest must match for the pair. Do not commit,
+copy, inspect, or share private keystores, key passwords, endpoint credentials, or device
+pairing codes.
 
 ## Connect the installation computer
 
@@ -72,19 +101,19 @@ emulators are connected.
 From the repository root:
 
 ```bash
-adb -s PHONE_SERIAL install -r mobile/build/outputs/apk/debug/mobile-debug.apk
-adb -s WATCH_SERIAL install -r wear/build/outputs/apk/debug/wear-debug.apk
+adb -s PHONE_SERIAL install -r mobile/build/outputs/apk/sideload/mobile-sideload.apk
+adb -s WATCH_SERIAL install -r wear/build/outputs/apk/sideload/wear-sideload.apk
 ```
 
 Install only the phone APK on the phone and only the Wear APK on the watch. Do not install
 the instrumentation-test APK as the application.
 
 If installation reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the existing app has a
-different signing identity. Rebuild with the original key or resolve the signing mismatch
-before upgrading. **Do not uninstall an existing app just to bypass the error:** uninstalling
-removes its app-private recordings and migration sources. Export or back up important data
-before deliberately removing an installation. The migration's raw-source retention cannot
-protect files after an OS-level uninstall.
+different signing identity. Rebuild in the original trusted environment or recover a
+matching artifact before upgrading. **Do not make uninstalling the automatic fix for a
+signing mismatch:** uninstalling removes app-private recordings and migration sources.
+Export or back up important data before any deliberate removal. The migration's raw-source
+retention cannot protect files after an OS-level uninstall.
 
 An older-SDK error means the selected APK is not supported by that device. Do not use a
 manifest override to force Health Services onto an unsupported watch.
@@ -117,4 +146,5 @@ location verifies application behavior, not physical sensor accuracy, off-body h
 battery life, or successful pairing with a particular watch model.
 
 Release signing, Play declarations, and physical-device acceptance are separate from
-building and manually installing these development APKs.
+building and manually installing these development APKs. Successful packaging also does
+not establish that prototype phone or watch UI work is finished.
