@@ -347,7 +347,7 @@ public class WatchActivityRepositoryTest {
                 .setAcceptedSessionRevision(0L)
                 .setPayloadSha256(ByteString.copyFrom(hexBytes(
                         tombstone.getPayloadSha256())))
-                .setResult(AckResult.ACK_RESULT_ACCEPTED)
+                .setResult(AckResult.ACK_RESULT_STALE)
                 .setDeleteRevision(1L)
                 .setTombstoneOrigin(TombstoneOrigin.TOMBSTONE_ORIGIN_WATCH)
                 .build()

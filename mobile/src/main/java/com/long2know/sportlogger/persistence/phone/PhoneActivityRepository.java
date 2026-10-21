@@ -381,7 +381,8 @@ public final class PhoneActivityRepository implements AutoCloseable {
                         false);
             }
             if (acknowledgement.getResult() != AckResult.ACK_RESULT_ACCEPTED
-                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE) {
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_STALE) {
                 throw new CanonicalContractException(
                         "ACK_NOT_TERMINAL",
                         "Phone tombstone acknowledgement does not confirm watch commit");

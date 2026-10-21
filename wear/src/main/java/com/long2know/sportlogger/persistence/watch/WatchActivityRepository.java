@@ -483,7 +483,8 @@ public final class WatchActivityRepository implements AutoCloseable {
                         false);
             }
             if (acknowledgement.getResult() != AckResult.ACK_RESULT_ACCEPTED
-                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE) {
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_DUPLICATE
+                    && acknowledgement.getResult() != AckResult.ACK_RESULT_STALE) {
                 throw new CanonicalContractException(
                         "ACK_NOT_TERMINAL",
                         "Tombstone acknowledgement does not confirm receiver commit");
