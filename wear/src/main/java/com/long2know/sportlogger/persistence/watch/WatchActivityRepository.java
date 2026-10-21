@@ -42,33 +42,45 @@ public final class WatchActivityRepository implements AutoCloseable {
     private final WatchDatabase database;
     private final WatchDao dao;
     private final Executor writeExecutor;
-    private final boolean ownsDatabase;
+    private final WatchDatabase.ProcessLease processLease;
     private final ExecutorService ownedExecutor;
 
     public WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor) {
-        this(database, writeExecutor, false);
+        this(database, writeExecutor, null);
     }
 
     private WatchActivityRepository(
             WatchDatabase database,
             Executor writeExecutor,
-            boolean ownsDatabase) {
+            WatchDatabase.ProcessLease processLease) {
         this.database = Objects.requireNonNull(database);
         this.dao = database.watchDao();
         this.writeExecutor = Objects.requireNonNull(writeExecutor);
-        this.ownsDatabase = ownsDatabase;
-        this.ownedExecutor = ownsDatabase && writeExecutor instanceof ExecutorService
+        this.processLease = processLease;
+        this.ownedExecutor = processLease != null
+                && writeExecutor instanceof ExecutorService
                 ? (ExecutorService) writeExecutor
                 : null;
     }
 
     public static WatchActivityRepository open(Context context) {
-        return new WatchActivityRepository(
-                WatchDatabase.open(context),
-                Executors.newSingleThreadExecutor(),
-                true);
+        ExecutorService writeExecutor = Executors.newSingleThreadExecutor();
+        WatchDatabase.ProcessLease processLease = null;
+        try {
+            processLease = WatchDatabase.acquireProcessLease(context);
+            return new WatchActivityRepository(
+                    processLease.database(),
+                    writeExecutor,
+                    processLease);
+        } catch (RuntimeException | Error error) {
+            writeExecutor.shutdown();
+            if (processLease != null) {
+                processLease.close();
+            }
+            throw error;
+        }
     }
 
     public CompletableFuture<SessionSnapshot> startSession(StartRequest request) {
@@ -1462,8 +1474,8 @@ public final class WatchActivityRepository implements AutoCloseable {
         if (ownedExecutor != null) {
             ownedExecutor.shutdown();
         }
-        if (ownsDatabase) {
-            database.close();
+        if (processLease != null) {
+            processLease.close();
         }
     }
 

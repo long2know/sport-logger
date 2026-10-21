@@ -142,6 +142,14 @@ joined to its matching outbox across READY, SENDING, AWAITING_COMMIT_ACK, RETRYA
 The existing Room invalidation observer now covers sessions, laps, and outboxes so UI integration
 does not need DAO access or polling.
 
+All declared phone and watch activities, services, and jobs run in their application's default
+process. Production repository factories therefore acquire a reference-counted process lease over
+one Room instance per canonical database. Independently opened repository wrappers keep their own
+lifecycle/executor but share the same open helper and invalidation tracker; closing a job/writer
+wrapper cannot close the database beneath a retained service/controller observer, and the final
+lease closes it. Constructor-injected Room databases remain caller-owned for isolated tests. This
+also prevents concurrent production wrappers from racing Room's database-open journal pragmas.
+
 Trinity owns service/controller actions, valid-state command results, selected activity type
 journaling, and callback/snapshot mapping. Switch consumes only those service callbacks and the
 read-only completed presentation API; UI does not own clocks, lap counters, or direct Room access.

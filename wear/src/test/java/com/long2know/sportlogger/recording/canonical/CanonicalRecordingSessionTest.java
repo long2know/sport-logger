@@ -31,11 +31,15 @@ import org.robolectric.annotation.Config;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -353,6 +357,155 @@ public class CanonicalRecordingSessionTest {
                 recent.get(0).getCommittedAtUtcMillis());
     }
 
+    @Test
+    public void productionObserverTracksImmediateExternalSyncThroughCommit()
+            throws Exception {
+        context.deleteDatabase(WatchDatabase.DATABASE_NAME);
+        AtomicReference<Throwable> productionFatal = new AtomicReference<>();
+        BlockingQueue<String> observedStates = new LinkedBlockingQueue<>();
+        CanonicalRecordingSession productionSession = null;
+        WatchActivityRepository syncRepository = null;
+        try {
+            WatchActivityRepository serviceRepository =
+                    WatchActivityRepository.open(context);
+            productionSession = new CanonicalRecordingSession(
+                    context,
+                    serviceRepository,
+                    new CanonicalSessionJournal(context),
+                    (message, error) -> productionFatal.set(error));
+            productionSession.observeLatestCompleted(
+                    Runnable::run,
+                    new CanonicalRecordingSession.CompletedListener() {
+                        @Override
+                        public void onChanged(CompletedRecordingSnapshot snapshot) {
+                            if (snapshot != null) {
+                                observedStates.offer(snapshot.getOutboxState());
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            productionFatal.set(error);
+                        }
+                    });
+
+            RecordingSnapshot recording = snapshot(
+                    ActivityType.ACTIVITY_TYPE_CYCLING,
+                    RecordingState.RECORDING,
+                    0L,
+                    0L,
+                    100_000L,
+                    100_000L);
+            productionSession.onRecordingSnapshot(recording);
+            RecordingSnapshot stopping = snapshot(
+                    ActivityType.ACTIVITY_TYPE_CYCLING,
+                    RecordingState.STOPPING,
+                    800L,
+                    1_000L,
+                    0L,
+                    0L);
+            CanonicalRecordingSession completingSession = productionSession;
+            awaitSuccess(callback ->
+                    completingSession.reserveCompletion(stopping, callback));
+            awaitSuccess(callback ->
+                    completingSession.finishCompletion(stopping, callback));
+            awaitObservedState(
+                    observedStates,
+                    WatchActivityRepository.OUTBOX_READY);
+
+            syncRepository = WatchActivityRepository.open(context);
+            assertNotSame(serviceRepository, syncRepository);
+            List<WatchActivityRepository.OutboxItem> reclaimed =
+                    syncRepository.reclaimPendingOutbox(10, 102_000L)
+                            .get(2, TimeUnit.SECONDS);
+            assertEquals(1, reclaimed.size());
+            WatchActivityRepository.OutboxItem ready = reclaimed.get(0);
+
+            syncRepository.transitionOutbox(
+                            ready.getTransferId(),
+                            WatchActivityRepository.OUTBOX_READY,
+                            WatchActivityRepository.OUTBOX_SENDING,
+                            102_100L,
+                            null,
+                            null)
+                    .get(2, TimeUnit.SECONDS);
+            awaitObservedState(
+                    observedStates,
+                    WatchActivityRepository.OUTBOX_SENDING);
+            syncRepository.transitionOutbox(
+                            ready.getTransferId(),
+                            WatchActivityRepository.OUTBOX_SENDING,
+                            WatchActivityRepository.OUTBOX_AWAITING_COMMIT_ACK,
+                            null,
+                            null,
+                            null)
+                    .get(2, TimeUnit.SECONDS);
+            awaitObservedState(
+                    observedStates,
+                    WatchActivityRepository.OUTBOX_AWAITING_COMMIT_ACK);
+
+            ActivityTransferFile transfer =
+                    CanonicalTransfers.parseActivityTransfer(
+                            ready.getPayload()).getTransfer();
+            syncRepository.acceptCommitAck(
+                            CanonicalTransfers.commitAck(
+                                            transfer,
+                                            transfer.getSessionRevision(),
+                                            AckResult.ACK_RESULT_ACCEPTED,
+                                            null,
+                                            null)
+                                    .toByteArray(),
+                            102_200L)
+                    .get(2, TimeUnit.SECONDS);
+            awaitObservedState(
+                    observedStates,
+                    WatchActivityRepository.OUTBOX_COMMITTED);
+
+            syncRepository.close();
+            syncRepository = null;
+            CompletedRecordingSnapshot committed =
+                    productionSession.recentCompleted(1)
+                            .get(2, TimeUnit.SECONDS)
+                            .get(0);
+            assertEquals(
+                    WatchActivityRepository.OUTBOX_COMMITTED,
+                    committed.getOutboxState());
+            assertArrayEquals(
+                    ready.getPayload(),
+                    serviceRepository.outbox(ready.getTransferId())
+                            .get(2, TimeUnit.SECONDS)
+                            .getPayload());
+            assertNull(productionFatal.get());
+
+            productionSession.close();
+            productionSession = null;
+            try (WatchActivityRepository reopened =
+                         WatchActivityRepository.open(context)) {
+                WatchActivityRepository.OutboxItem durable =
+                        reopened.outbox(ready.getTransferId())
+                                .get(2, TimeUnit.SECONDS);
+                assertEquals(
+                        WatchActivityRepository.OUTBOX_COMMITTED,
+                        durable.getState());
+                assertArrayEquals(ready.getPayload(), durable.getPayload());
+            }
+        } finally {
+            if (syncRepository != null) {
+                syncRepository.close();
+            }
+            if (productionSession != null) {
+                productionSession.close();
+            }
+            context.deleteDatabase(WatchDatabase.DATABASE_NAME);
+            context.getSharedPreferences(
+                            "sport_logger_canonical_recording",
+                            Context.MODE_PRIVATE)
+                    .edit()
+                    .clear()
+                    .commit();
+        }
+    }
+
     private static RecordingSnapshot snapshot(
             RecordingState state,
             long activeDuration,
@@ -455,6 +608,30 @@ public class CanonicalRecordingSessionTest {
             throw new AssertionError(error.get());
         }
         return state.get();
+    }
+
+    private static void awaitObservedState(
+            BlockingQueue<String> observedStates,
+            String expectedState) throws Exception {
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(5);
+        while (true) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                throw new AssertionError(
+                        "Timed out waiting for observed state " + expectedState);
+            }
+            String observed = observedStates.poll(
+                    remainingNanos,
+                    TimeUnit.NANOSECONDS);
+            if (observed == null) {
+                throw new AssertionError(
+                        "Timed out waiting for observed state " + expectedState);
+            }
+            if (expectedState.equals(observed)) {
+                return;
+            }
+        }
     }
 
     private interface AsyncOperation {

@@ -65,7 +65,7 @@ public class CanonicalCutoverFenceTest {
                 context,
                 (message, error) -> fatal.set(error));
         repository = WatchActivityRepository.open(context);
-        database = WatchDatabase.open(context);
+        database = WatchDatabase.openIndependent(context);
     }
 
     @After
