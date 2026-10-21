@@ -16,6 +16,7 @@ import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.sync.WatchSyncFinishHook;
+import com.long2know.utilities.contract.CanonicalContractException;
 import com.long2know.utilities.contract.CanonicalIds;
 import com.long2know.utilities.contract.CanonicalTransfers;
 import com.long2know.utilities.contract.proto.ActiveInterval;
@@ -130,6 +131,10 @@ public final class CanonicalRecordingSession
         }
         latestSnapshot = Objects.requireNonNull(snapshot);
         RecordingState state = snapshot.getState();
+        if (state != RecordingState.RECORDING
+                && state != RecordingState.STOPPING) {
+            acceptingSamples = false;
+        }
         if (snapshot.getActivityId() > 0
                 && (state == RecordingState.RECORDING
                 || state == RecordingState.PAUSED
@@ -210,7 +215,10 @@ public final class CanonicalRecordingSession
                             canonical)
                     .whenComplete((ignored, error) -> {
                         if (error != null) {
-                            fatal("Canonical sample persistence failed", unwrap(error));
+                            Throwable failure = unwrap(error);
+                            if (!isLateSampleRejection(failure)) {
+                                fatal("Canonical sample persistence failed", failure);
+                            }
                         }
                     });
         } catch (RuntimeException error) {
@@ -829,6 +837,12 @@ public final class CanonicalRecordingSession
             current = current.getCause();
         }
         return current;
+    }
+
+    private static boolean isLateSampleRejection(Throwable error) {
+        return error instanceof CanonicalContractException
+                && "SESSION_NOT_WRITABLE".equals(
+                ((CanonicalContractException) error).getCode());
     }
 
     private static long saturatedAdd(long left, long right) {

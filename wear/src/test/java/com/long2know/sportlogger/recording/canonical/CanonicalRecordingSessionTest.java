@@ -195,6 +195,101 @@ public class CanonicalRecordingSessionTest {
     }
 
     @Test
+    public void pauseDropsLateHealthAndRawSamplesThenResumeLapAndFinish()
+            throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                110_000L,
+                110_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        session.onAcceptedSample(heartRate(110_200_000_000L, 140D));
+
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.PAUSED,
+                200L,
+                300L,
+                0L,
+                110_300L));
+        session.onAcceptedSample(heartRate(110_400_000_000L, 190D));
+        session.onAcceptedSample(rawPressure(110_500_000_000L, 1_010D));
+
+        assertEquals(1, repository.samples(state.sessionId).join().size());
+        assertNull(fatal.get());
+
+        session.onRecordingSnapshot(snapshot(
+                RecordingState.RECORDING,
+                200L,
+                600L,
+                110_600L,
+                110_600L));
+        session.onAcceptedSample(heartRate(110_700_000_000L, 145D));
+        RecordingLapRecorder.LapState lap = awaitLap(callback ->
+                session.recordManualLap(
+                        new RecordingLapRecorder.Boundary(
+                                recording.getActivityId(),
+                                1_700L,
+                                700L,
+                                300L),
+                        callback));
+        assertEquals(2, lap.getCurrentLapIndex());
+
+        RecordingSnapshot stopping = snapshot(
+                RecordingState.STOPPING,
+                500L,
+                1_000L,
+                0L,
+                0L);
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+        session.onAcceptedSample(heartRate(111_000_000_000L, 150D));
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+
+        WatchActivityRepository.CompletedActivity completed =
+                repository.latestCompleted().join();
+        assertEquals(3L, completed.getActivity().getSummary().getSampleCount());
+        assertEquals(2, completed.getActivity().getLapsCount());
+        assertEquals(700L,
+                completed.getActivity().getLaps(0).getElapsedDurationMs());
+        assertEquals(300L,
+                completed.getActivity().getLaps(0).getActiveDurationMs());
+        assertEquals(300L,
+                completed.getActivity().getLaps(1).getElapsedDurationMs());
+        assertEquals(200L,
+                completed.getActivity().getLaps(1).getActiveDurationMs());
+        assertNull(fatal.get());
+    }
+
+    @Test
+    public void repositoryPauseRaceDropsRejectedSampleWithoutStorageError() {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                120_000L,
+                120_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        repository.transition(
+                        state.sessionId,
+                        state.leaseToken,
+                        WatchActivityRepository.LifecycleState.PAUSED,
+                        state.bootId,
+                        null,
+                        0L,
+                        null,
+                        null,
+                        1_300L)
+                .join();
+
+        session.onAcceptedSample(heartRate(120_300_000_000L, 175D));
+
+        assertTrue(repository.samples(state.sessionId).join().isEmpty());
+        assertNull(fatal.get());
+    }
+
+    @Test
     public void manualLapRecoversAndFinalizationClosesTheLastPartialLap()
             throws Exception {
         RecordingSnapshot recording = snapshot(
@@ -396,6 +491,17 @@ public class CanonicalRecordingSessionTest {
                 value,
                 sequenceNanos,
                 MeasurementProvenance.HEALTH_SERVICES,
+                MeasurementSample.Quality.HIGH);
+    }
+
+    private static MeasurementSample<Double> rawPressure(
+            long sequenceNanos,
+            double value) {
+        return new MeasurementSample<>(
+                ExerciseMetric.PRESSURE,
+                value,
+                sequenceNanos,
+                MeasurementProvenance.RAW_PLATFORM,
                 MeasurementSample.Quality.HIGH);
     }
 
