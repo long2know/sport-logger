@@ -1,93 +1,90 @@
 package com.long2know.sportlogger;
 
-import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.TextView;
 
-import com.long2know.utilities.data_access.SqlLogger;
-import com.long2know.utilities.models.SportActivity;
+import com.long2know.sportlogger.history.PhoneActivityDataSource.ActivityListItem;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class ActivityListAdapter extends BaseAdapter {
-
-    private LayoutInflater inflater = null;
-    private List<SportActivity> activityList;
+public final class ActivityListAdapter extends BaseAdapter {
+    private final LayoutInflater inflater;
+    private List<ActivityListItem> activities = new ArrayList<>();
 
     public ActivityListAdapter(LayoutInflater inflater) {
-        super();
         this.inflater = inflater;
+    }
+
+    public void setActivities(List<ActivityListItem> activities) {
+        this.activities = new ArrayList<>(activities);
+        notifyDataSetChanged();
     }
 
     @Override
     public int getCount() {
-        return activityList == null ? 0 : activityList.size();
+        return activities.size();
     }
 
     @Override
-    public Object getItem(int position) {
-        if (position < ((activityList == null ? 0 : activityList.size()) - 1))
-            return activityList.get(position);
-
-        Context context = inflater.getContext();
-        return "Blah";
-//        return String.format(context.getString(R.string.dialog_ellipsis), context.getString(R.string.Manage_workouts));
+    public ActivityListItem getItem(int position) {
+        return activities.get(position);
     }
 
     @Override
     public long getItemId(int position) {
-        return 0;
+        return getItem(position).getStorageId().hashCode();
     }
 
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
+        ViewHolder holder;
         if (convertView == null) {
-            convertView = inflater.inflate(android.R.layout.simple_spinner_dropdown_item, parent,
-                    false);
-        }
-
-        TextView ret = (TextView) convertView.findViewById(android.R.id.text1);
-        ret.setText(getItem(position).toString());
-        return ret;
-    }
-
-    public int find(String name) {
-        for (int i = 0; i < getCount(); i++) {
-            if (name.contentEquals(getItem(i).toString()))
-                return i;
-        }
-        return 0;
-    }
-
-    public void reload() {
-        List<SportActivity> list = load(inflater.getContext());
-        if (list == null) {
-            activityList = new ArrayList<SportActivity>();
+            convertView = inflater.inflate(R.layout.activity_history_item, parent, false);
+            holder = new ViewHolder(
+                    convertView.findViewById(R.id.activity_title),
+                    convertView.findViewById(R.id.activity_start),
+                    convertView.findViewById(R.id.activity_metrics),
+                    convertView.findViewById(R.id.activity_transfer_state));
+            convertView.setTag(holder);
         } else {
-            activityList = list;
-//            workoutList = new String[list.length];
-//            int index = 0;
-//            for (String s : list) {
-//                workoutList[index++] = s.substring(0, s.lastIndexOf('.'));
-            }
+            holder = (ViewHolder) convertView.getTag();
+        }
 
-        this.notifyDataSetChanged();
+        ActivityListItem item = getItem(position);
+        holder.title.setText(ActivityTextFormatter.title(inflater.getContext(), item));
+        holder.start.setText(ActivityTextFormatter.dateTime(inflater.getContext(), item));
+        holder.metrics.setText(ActivityTextFormatter.metrics(inflater.getContext(), item));
+        holder.transferState.setText(
+                ActivityTextFormatter.transferState(inflater.getContext(), item));
+        convertView.setContentDescription(
+                inflater.getContext().getString(
+                        R.string.activity_row_content_description,
+                        holder.title.getText(),
+                        holder.start.getText(),
+                        holder.metrics.getText(),
+                        holder.transferState.getText()));
+        return convertView;
     }
 
-    public static List<SportActivity> load(Context ctx) {
-        try (SqlLogger logger = new SqlLogger(ctx)) {
-            return logger.getSportActivities();
+    private static final class ViewHolder {
+        private final TextView title;
+        private final TextView start;
+        private final TextView metrics;
+        private final TextView transferState;
+
+        private ViewHolder(
+                TextView title,
+                TextView start,
+                TextView metrics,
+                TextView transferState) {
+            this.title = title;
+            this.start = start;
+            this.metrics = metrics;
+            this.transferState = transferState;
         }
-//        File f = ctx.getDir(WorkoutSerializer.WORKOUTS_DIR, 0);
-//        return f.list(new FilenameFilter() {
-//            @Override
-//            public boolean accept(File dir, String filename) {
-//                return filename.endsWith(".json");
-//            }
-//        });
     }
 }
