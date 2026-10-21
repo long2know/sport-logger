@@ -335,6 +335,129 @@ public class RecordingControllerTest {
     }
 
     @Test
+    public void manualLapUsesAuthoritativeTimingAndSurvivesRecovery()
+            throws Exception {
+        InMemoryJournal journal = new InMemoryJournal();
+        FakeStore store = new FakeStore();
+        FakeLapRecorder laps = new FakeLapRecorder();
+        MutableClock clock = new MutableClock(18_000L);
+        SnapshotRecorder firstSnapshots = new SnapshotRecorder();
+        ScheduledThreadPoolExecutor firstWorker = worker();
+        RecordingController first = canonicalController(
+                journal,
+                store,
+                laps,
+                firstWorker,
+                clock,
+                firstSnapshots);
+
+        first.start(ActivityType.ACTIVITY_TYPE_HIKING);
+        RecordingSnapshot recording =
+                firstSnapshots.awaitState(RecordingState.RECORDING);
+        clock.advance(2_000L);
+
+        ManualLapResult result =
+                first.recordManualLap().get(1, TimeUnit.SECONDS);
+
+        assertTrue(result.isAccepted());
+        assertEquals(recording.getActivityId(), laps.lastBoundary.getActivityId());
+        assertEquals(20_000L, laps.lastBoundary.getWallTimeUtcMillis());
+        assertEquals(2_000L, laps.lastBoundary.getElapsedDurationMillis());
+        assertEquals(2_000L, laps.lastBoundary.getActiveDurationMillis());
+        assertEquals(2, result.getSnapshot().getCurrentLapIndex());
+        assertEquals(
+                Long.valueOf(2_000L),
+                result.getSnapshot().getLastLapElapsedDurationMillis());
+        assertEquals(
+                Long.valueOf(2_000L),
+                result.getSnapshot().getLastLapActiveDurationMillis());
+
+        first.closeAsync();
+        assertTrue(firstWorker.awaitTermination(1, TimeUnit.SECONDS));
+
+        SnapshotRecorder replacementSnapshots = new SnapshotRecorder();
+        RecordingController replacement = canonicalController(
+                journal,
+                store,
+                laps,
+                worker(),
+                clock,
+                replacementSnapshots);
+        replacement.recover();
+
+        RecordingSnapshot recovered =
+                replacementSnapshots.awaitState(RecordingState.RECORDING);
+        assertEquals(2, recovered.getCurrentLapIndex());
+        assertEquals(
+                Long.valueOf(2_000L),
+                recovered.getLastLapElapsedDurationMillis());
+        assertEquals(
+                Long.valueOf(2_000L),
+                recovered.getLastLapActiveDurationMillis());
+        replacement.closeAsync();
+    }
+
+    @Test
+    public void manualLapRejectsPausedLegacyAndConcurrentRequests()
+            throws Exception {
+        InMemoryJournal canonicalJournal = new InMemoryJournal();
+        FakeStore canonicalStore = new FakeStore();
+        FakeLapRecorder heldLaps = new FakeLapRecorder();
+        heldLaps.hold = true;
+        SnapshotRecorder canonicalSnapshots = new SnapshotRecorder();
+        RecordingController canonical = canonicalController(
+                canonicalJournal,
+                canonicalStore,
+                heldLaps,
+                worker(),
+                new MutableClock(22_000L),
+                canonicalSnapshots);
+        canonical.start();
+        canonicalSnapshots.awaitState(RecordingState.RECORDING);
+
+        java.util.concurrent.CompletableFuture<ManualLapResult> first =
+                canonical.recordManualLap();
+        assertTrue(heldLaps.entered.await(1, TimeUnit.SECONDS));
+        ManualLapResult busy =
+                canonical.recordManualLap().get(1, TimeUnit.SECONDS);
+        assertEquals(ManualLapResult.Status.REJECTED_BUSY, busy.getStatus());
+        heldLaps.complete(new RecordingLapRecorder.LapState(
+                2,
+                0L,
+                0L));
+        assertTrue(first.get(1, TimeUnit.SECONDS).isAccepted());
+
+        canonical.pause();
+        canonicalSnapshots.awaitState(RecordingState.PAUSED);
+        ManualLapResult paused =
+                canonical.recordManualLap().get(1, TimeUnit.SECONDS);
+        assertEquals(
+                ManualLapResult.Status.REJECTED_NOT_RECORDING,
+                paused.getStatus());
+        canonical.closeAsync();
+
+        InMemoryJournal legacyJournal = new InMemoryJournal();
+        SnapshotRecorder legacySnapshots = new SnapshotRecorder();
+        RecordingController legacy = controller(
+                legacyJournal,
+                new FakeStore(),
+                new FakeExporter(),
+                worker(),
+                new MutableClock(24_000L),
+                legacySnapshots);
+        legacy.start();
+        legacySnapshots.awaitState(RecordingState.RECORDING);
+
+        ManualLapResult legacyResult =
+                legacy.recordManualLap().get(1, TimeUnit.SECONDS);
+
+        assertEquals(
+                ManualLapResult.Status.REJECTED_LEGACY_AUTHORITY,
+                legacyResult.getStatus());
+        legacy.closeAsync();
+    }
+
+    @Test
     public void failingFinalizationIsReportedAndRetriedWithoutReturningSuccess()
             throws Exception {
         InMemoryJournal journal = new InMemoryJournal();
@@ -614,6 +737,28 @@ public class RecordingControllerTest {
                 attempt -> 5L);
     }
 
+    private RecordingController canonicalController(
+            InMemoryJournal journal,
+            FakeStore store,
+            FakeLapRecorder lapRecorder,
+            ScheduledThreadPoolExecutor worker,
+            MutableClock clock,
+            SnapshotRecorder snapshots) {
+        return new RecordingController(
+                journal,
+                store,
+                store,
+                new FakeExporter(),
+                RecordingSessionTerminator.NO_OP,
+                lapRecorder,
+                RecordingAuthority.CANONICAL,
+                worker,
+                Runnable::run,
+                clock,
+                snapshots,
+                attempt -> 5L);
+    }
+
     private RecordingController controller(
             InMemoryJournal journal,
             FakeStore store,
@@ -828,6 +973,38 @@ public class RecordingControllerTest {
 
         private void complete() {
             callback.onComplete();
+        }
+    }
+
+    private static final class FakeLapRecorder implements RecordingLapRecorder {
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private volatile boolean hold;
+        private volatile Boundary lastBoundary;
+        private volatile Callback pending;
+
+        @Override
+        public void recordManualLap(Boundary boundary, Callback callback) {
+            lastBoundary = boundary;
+            entered.countDown();
+            if (hold) {
+                pending = callback;
+                return;
+            }
+            callback.onPersisted(new LapState(
+                    2,
+                    boundary.getElapsedDurationMillis(),
+                    boundary.getActiveDurationMillis()));
+        }
+
+        @Override
+        public void recover(int activityId, Callback callback) {
+            callback.onPersisted(LapState.initial());
+        }
+
+        private void complete(LapState state) {
+            Callback callback = pending;
+            pending = null;
+            callback.onPersisted(state);
         }
     }
 

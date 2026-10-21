@@ -4,6 +4,7 @@ import com.long2know.utilities.models.SportActivity;
 import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -44,6 +45,7 @@ public final class RecordingController {
     private final RecordingStore canonicalStore;
     private final RecordingExporter exporter;
     private final RecordingSessionTerminator sessionTerminator;
+    private final RecordingLapRecorder lapRecorder;
     private final RecordingAuthority newRecordingAuthority;
     private final ScheduledExecutorService worker;
     private final Executor callbackExecutor;
@@ -60,6 +62,8 @@ public final class RecordingController {
     private ScheduledFuture<?> retryFuture;
     private boolean exportInFlight;
     private boolean terminationInFlight;
+    private boolean lapInFlight;
+    private long lapToken;
     private long exportToken;
     private long terminationToken;
     private int endedSessionActivityId;
@@ -82,6 +86,7 @@ public final class RecordingController {
                 store,
                 exporter,
                 RecordingSessionTerminator.NO_OP,
+                RecordingLapRecorder.UNAVAILABLE,
                 RecordingAuthority.LEGACY_COMPATIBILITY,
                 worker,
                 callbackExecutor,
@@ -106,6 +111,7 @@ public final class RecordingController {
                 store,
                 exporter,
                 sessionTerminator,
+                RecordingLapRecorder.UNAVAILABLE,
                 RecordingAuthority.LEGACY_COMPATIBILITY,
                 worker,
                 callbackExecutor,
@@ -126,11 +132,40 @@ public final class RecordingController {
             Clock clock,
             Listener listener,
             RetryPolicy retryPolicy) {
+        this(
+                journal,
+                legacyStore,
+                canonicalStore,
+                exporter,
+                sessionTerminator,
+                RecordingLapRecorder.UNAVAILABLE,
+                newRecordingAuthority,
+                worker,
+                callbackExecutor,
+                clock,
+                listener,
+                retryPolicy);
+    }
+
+    public RecordingController(
+            RecordingJournal journal,
+            RecordingStore legacyStore,
+            RecordingStore canonicalStore,
+            RecordingExporter exporter,
+            RecordingSessionTerminator sessionTerminator,
+            RecordingLapRecorder lapRecorder,
+            RecordingAuthority newRecordingAuthority,
+            ScheduledExecutorService worker,
+            Executor callbackExecutor,
+            Clock clock,
+            Listener listener,
+            RetryPolicy retryPolicy) {
         this.journal = Objects.requireNonNull(journal);
         this.legacyStore = Objects.requireNonNull(legacyStore);
         this.canonicalStore = Objects.requireNonNull(canonicalStore);
         this.exporter = Objects.requireNonNull(exporter);
         this.sessionTerminator = Objects.requireNonNull(sessionTerminator);
+        this.lapRecorder = Objects.requireNonNull(lapRecorder);
         this.newRecordingAuthority = Objects.requireNonNull(newRecordingAuthority);
         this.worker = Objects.requireNonNull(worker);
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor);
@@ -172,6 +207,42 @@ public final class RecordingController {
     public boolean interrupt(RecordingError error) {
         Objects.requireNonNull(error);
         return submit(() -> interruptInternal(error));
+    }
+
+    public CompletableFuture<ManualLapResult> recordManualLap() {
+        CompletableFuture<ManualLapResult> result = new CompletableFuture<>();
+        if (closed.get()) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording controller is closed"));
+            return result;
+        }
+        try {
+            worker.execute(() -> {
+                if (closed.get() || !ensureLease() || !journal.isCurrent(lease)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Recording ownership is unavailable"));
+                    return;
+                }
+                recordManualLapInternal(result);
+            });
+        } catch (RejectedExecutionException error) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording worker is unavailable"));
+        }
+        return result;
+    }
+
+    public boolean restoreLapState(
+            int activityId,
+            RecordingLapRecorder.LapState lapState) {
+        Objects.requireNonNull(lapState);
+        return submit(() -> restoreLapStateInternal(activityId, lapState));
     }
 
     public RecordingSnapshot getSnapshot() {
@@ -336,6 +407,8 @@ public final class RecordingController {
             exportToken++;
         }
         terminationInFlight = false;
+        lapInFlight = false;
+        lapToken++;
         terminationToken++;
         endedSessionActivityId = 0;
         finalSampleActivityId = 0;
@@ -559,6 +632,152 @@ public final class RecordingController {
         cancel(sampleFuture);
         sampleFuture = null;
         publish(current);
+    }
+
+    private void recordManualLapInternal(
+            CompletableFuture<ManualLapResult> result) {
+        if (current.getState() != RecordingState.RECORDING) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_NOT_RECORDING,
+                    snapshot(current, current.getError()),
+                    "Manual laps require an active recording"));
+            return;
+        }
+        if (current.getAuthority() != RecordingAuthority.CANONICAL) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_LEGACY_AUTHORITY,
+                    snapshot(current, current.getError()),
+                    "Manual laps require canonical recording authority"));
+            return;
+        }
+        if (lapInFlight) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.REJECTED_BUSY,
+                    snapshot(current, current.getError()),
+                    "A manual lap is already being persisted"));
+            return;
+        }
+        long wallNow = clock.currentTimeMillis();
+        long elapsedNow = clock.elapsedRealtimeMillis();
+        long activeDuration =
+                current.durationAt(wallNow, elapsedNow, clock.bootCount());
+        long elapsedDuration =
+                current.elapsedDurationAt(wallNow, elapsedNow, clock.bootCount());
+        RecordingLapRecorder.Boundary boundary =
+                new RecordingLapRecorder.Boundary(
+                        current.getActivityId(),
+                        endTimestamp(elapsedDuration),
+                        elapsedDuration,
+                        activeDuration);
+        lapInFlight = true;
+        long operationToken = ++lapToken;
+        int activityId = current.getActivityId();
+        try {
+            lapRecorder.recordManualLap(
+                    boundary,
+                    new RecordingLapRecorder.Callback() {
+                        @Override
+                        public void onPersisted(RecordingLapRecorder.LapState lapState) {
+                            handleLapCallback(
+                                    activityId,
+                                    operationToken,
+                                    lapState,
+                                    null,
+                                    result);
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            handleLapCallback(
+                                    activityId,
+                                    operationToken,
+                                    null,
+                                    error,
+                                    result);
+                        }
+                    });
+        } catch (RuntimeException error) {
+            handleLapCallback(
+                    activityId,
+                    operationToken,
+                    null,
+                    error,
+                    result);
+        }
+    }
+
+    private void handleLapCallback(
+            int activityId,
+            long operationToken,
+            RecordingLapRecorder.LapState lapState,
+            Throwable error,
+            CompletableFuture<ManualLapResult> result) {
+        try {
+            worker.execute(() -> {
+                if (operationToken != lapToken || !lapInFlight) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap callback is stale"));
+                    return;
+                }
+                lapInFlight = false;
+                if (closed.get()
+                        || current.getActivityId() != activityId
+                        || !journal.isCurrent(lease)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap callback is stale"));
+                    return;
+                }
+                if (error != null) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot(current, current.getError()),
+                            message(error)));
+                    return;
+                }
+                PersistentRecording updated = current.withLapState(
+                        lapState.getCurrentLapIndex(),
+                        lapState.getLastLapElapsedDurationMillis(),
+                        lapState.getLastLapActiveDurationMillis());
+                if (!persist(updated)) {
+                    result.complete(ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            snapshot,
+                            "Manual lap state was not persisted"));
+                    return;
+                }
+                current = updated;
+                publish(current);
+                result.complete(ManualLapResult.accepted(
+                        snapshot(current, current.getError())));
+            });
+        } catch (RejectedExecutionException rejected) {
+            result.complete(ManualLapResult.rejected(
+                    ManualLapResult.Status.FAILED,
+                    snapshot,
+                    "Recording worker is unavailable"));
+        }
+    }
+
+    private void restoreLapStateInternal(
+            int activityId,
+            RecordingLapRecorder.LapState lapState) {
+        if (current.getActivityId() != activityId
+                || current.getAuthority() != RecordingAuthority.CANONICAL
+                || current.getState() == RecordingState.IDLE) {
+            return;
+        }
+        PersistentRecording restored = current.withLapState(
+                lapState.getCurrentLapIndex(),
+                lapState.getLastLapElapsedDurationMillis(),
+                lapState.getLastLapActiveDurationMillis());
+        if (persist(restored)) {
+            current = restored;
+            publish(current);
+        }
     }
 
     private void scheduleSamples() {
@@ -974,6 +1193,13 @@ public final class RecordingController {
         return new RecordingError(code, detail.isEmpty() ? message : message + ": " + detail);
     }
 
+    private static String message(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? error == null ? "Unknown error" : error.getClass().getSimpleName()
+                : message;
+    }
+
     private static void cancel(ScheduledFuture<?> future) {
         if (future != null) {
             future.cancel(false);
@@ -1004,7 +1230,10 @@ public final class RecordingController {
                 recording.getActiveSinceElapsedRealtimeMillis(),
                 recording.getElapsedSinceElapsedRealtimeMillis(),
                 recording.getBootCount(),
-                error);
+                error,
+                recording.getCurrentLapIndex(),
+                recording.getLastLapElapsedDurationMillis(),
+                recording.getLastLapActiveDurationMillis());
     }
 
     private RecordingStore storeFor(RecordingAuthority authority) {

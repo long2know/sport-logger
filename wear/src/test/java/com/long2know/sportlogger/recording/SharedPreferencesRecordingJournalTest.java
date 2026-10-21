@@ -226,7 +226,10 @@ public class SharedPreferencesRecordingJournalTest {
                 2_000L,
                 0L,
                 9,
-                null);
+                null,
+                3,
+                1_200L,
+                1_000L);
 
         journal.write(lease, recording);
         PersistentRecording restored = journal.read();
@@ -240,6 +243,13 @@ public class SharedPreferencesRecordingJournalTest {
         assertEquals(2_000L, restored.getAccumulatedMillis());
         assertEquals(2_000L, restored.getAccumulatedElapsedMillis());
         assertEquals(9, restored.getBootCount());
+        assertEquals(3, restored.getCurrentLapIndex());
+        assertEquals(
+                Long.valueOf(1_200L),
+                restored.getLastLapElapsedDurationMillis());
+        assertEquals(
+                Long.valueOf(1_000L),
+                restored.getLastLapActiveDurationMillis());
     }
 
     @Test

@@ -16,6 +16,9 @@ public final class RecordingSnapshot {
     private final long elapsedSinceElapsedRealtimeMillis;
     private final int bootCount;
     private final RecordingError error;
+    private final int currentLapIndex;
+    private final Long lastLapElapsedDurationMillis;
+    private final Long lastLapActiveDurationMillis;
 
     public RecordingSnapshot(
             RecordingState state,
@@ -122,6 +125,38 @@ public final class RecordingSnapshot {
             long elapsedSinceElapsedRealtimeMillis,
             int bootCount,
             RecordingError error) {
+        this(
+                state,
+                activityId,
+                activityType,
+                authority,
+                startedAtMillis,
+                durationMillis,
+                elapsedDurationMillis,
+                activeSinceElapsedRealtimeMillis,
+                elapsedSinceElapsedRealtimeMillis,
+                bootCount,
+                error,
+                activityId > 0 ? 1 : 0,
+                null,
+                null);
+    }
+
+    public RecordingSnapshot(
+            RecordingState state,
+            int activityId,
+            ActivityType activityType,
+            RecordingAuthority authority,
+            long startedAtMillis,
+            long durationMillis,
+            long elapsedDurationMillis,
+            long activeSinceElapsedRealtimeMillis,
+            long elapsedSinceElapsedRealtimeMillis,
+            int bootCount,
+            RecordingError error,
+            int currentLapIndex,
+            Long lastLapElapsedDurationMillis,
+            Long lastLapActiveDurationMillis) {
         this.state = Objects.requireNonNull(state);
         this.activityId = activityId;
         this.activityType = Objects.requireNonNull(activityType);
@@ -136,6 +171,9 @@ public final class RecordingSnapshot {
                 Math.max(0L, elapsedSinceElapsedRealtimeMillis);
         this.bootCount = bootCount;
         this.error = error;
+        this.currentLapIndex = Math.max(0, currentLapIndex);
+        this.lastLapElapsedDurationMillis = lastLapElapsedDurationMillis;
+        this.lastLapActiveDurationMillis = lastLapActiveDurationMillis;
     }
 
     public RecordingState getState() {
@@ -180,6 +218,18 @@ public final class RecordingSnapshot {
 
     public RecordingError getError() {
         return error;
+    }
+
+    public int getCurrentLapIndex() {
+        return currentLapIndex;
+    }
+
+    public Long getLastLapElapsedDurationMillis() {
+        return lastLapElapsedDurationMillis;
+    }
+
+    public Long getLastLapActiveDurationMillis() {
+        return lastLapActiveDurationMillis;
     }
 
     public boolean isActive() {

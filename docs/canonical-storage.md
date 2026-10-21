@@ -145,6 +145,13 @@ does not need DAO access or polling.
 Trinity owns service/controller actions, valid-state command results, selected activity type
 journaling, and callback/snapshot mapping. Switch consumes only those service callbacks and the
 read-only completed presentation API; UI does not own clocks, lap counters, or direct Room access.
+The compiled service boundary is `SportLoggerService.recordLap()`, which returns a
+`CompletableFuture<ManualLapResult>` with explicit accepted, not-recording, busy,
+legacy-authority, or failed status. `RecordingSnapshot` authoritatively exposes current lap index
+and last completed elapsed/active lap duration after rebind. Completed presentation uses
+`onLatestCompletedChanged(CompletedRecordingSnapshot)` plus asynchronous
+`recentCompleted(limit)`; each result contains the immutable `ActivityRecord` and matching outbox
+identity/state, including COMMITTED.
 
 ## Phone database and read/receipt API
 

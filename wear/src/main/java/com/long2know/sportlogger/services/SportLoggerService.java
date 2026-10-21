@@ -39,6 +39,8 @@ import com.long2know.sportlogger.persistence.watch.LegacyWatchMigrator;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
 import com.long2know.sportlogger.recording.AndroidRecordingClock;
 import com.long2know.sportlogger.recording.CanonicalAuthorityRecordingStore;
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
+import com.long2know.sportlogger.recording.ManualLapResult;
 import com.long2know.sportlogger.recording.RecordingController;
 import com.long2know.sportlogger.recording.RecordingActivityTypePolicy;
 import com.long2know.sportlogger.recording.RecordingError;
@@ -46,6 +48,7 @@ import com.long2know.sportlogger.recording.RecordingAuthority;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
+import com.long2know.sportlogger.recording.RecordingLapRecorder;
 import com.long2know.sportlogger.recording.SharedPreferencesRecordingJournal;
 import com.long2know.sportlogger.recording.SqlRecordingStore;
 import com.long2know.sportlogger.recording.WearDataLayerExporter;
@@ -54,7 +57,9 @@ import com.long2know.utilities.models.SharedData;
 import com.long2know.utilities.contract.proto.ActivityType;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -91,6 +96,8 @@ public final class SportLoggerService extends Service {
     private boolean locationStatusErrorReported;
     private RecordingState lastAcquisitionState;
     private int lastAcquisitionActivityId;
+    private int lapRecoveryActivityId;
+    private CompletedRecordingSnapshot latestCompletedSnapshot;
     private String lastAcquisitionError = "";
 
     @Override
@@ -142,6 +149,22 @@ public final class SportLoggerService extends Service {
             canonicalRecordingSession = new CanonicalRecordingSession(
                     this,
                     this::reportCanonicalFailure);
+            canonicalRecordingSession.observeLatestCompleted(
+                    mainExecutor,
+                    new CanonicalRecordingSession.CompletedListener() {
+                        @Override
+                        public void onChanged(
+                                @Nullable CompletedRecordingSnapshot snapshot) {
+                            latestCompletedSnapshot = snapshot;
+                            clients.dispatch(client ->
+                                    client.onLatestCompletedChanged(snapshot));
+                        }
+
+                        @Override
+                        public void onFailure(Throwable error) {
+                            Log.e(TAG, "Canonical completion query failed", error);
+                        }
+                    });
             measurementBridge = new LegacyMeasurementBridge(
                     canonicalRecordingSession::onAcceptedSample);
             healthServicesManager = new HealthServicesExerciseManager(
@@ -183,6 +206,7 @@ public final class SportLoggerService extends Service {
                             getString(R.string.wear_path),
                             recordingWorker),
                     this::terminateRecordingSession,
+                    canonicalRecordingSession,
                     RecordingAuthority.CANONICAL,
                     recordingWorker,
                     mainExecutor,
@@ -259,6 +283,7 @@ public final class SportLoggerService extends Service {
         if (healthServicesManager != null) {
             client.onAcquisitionStateChanged(healthServicesManager.getSnapshot());
         }
+        client.onLatestCompletedChanged(latestCompletedSnapshot);
         client.onRouteStatusChanged(routeStatus.get());
         client.onLoggerUpdate(SharedData.getInstance());
     }
@@ -302,6 +327,32 @@ public final class SportLoggerService extends Service {
 
     public Set<ActivityType> getSupportedActivityTypes() {
         return RecordingActivityTypePolicy.supportedTypes();
+    }
+
+    public CompletableFuture<ManualLapResult> recordLap() {
+        RecordingController controller = recordingController;
+        if (controller == null) {
+            return CompletableFuture.completedFuture(
+                    ManualLapResult.rejected(
+                            ManualLapResult.Status.FAILED,
+                            new RecordingSnapshot(
+                                    RecordingState.IDLE,
+                                    0,
+                                    0L,
+                                    null),
+                            "Recording service is not initialized"));
+        }
+        return controller.recordManualLap();
+    }
+
+    public CompletableFuture<List<CompletedRecordingSnapshot>> recentCompleted(
+            int limit) {
+        CanonicalRecordingSession session = canonicalRecordingSession;
+        if (session == null) {
+            return CompletableFuture.completedFuture(
+                    java.util.Collections.emptyList());
+        }
+        return session.recentCompleted(limit);
     }
 
     public boolean pauseActivity() {
@@ -378,6 +429,9 @@ public final class SportLoggerService extends Service {
         if (canonicalRecordingSession != null
                 && snapshot.getAuthority() == RecordingAuthority.CANONICAL) {
             canonicalRecordingSession.onRecordingSnapshot(snapshot);
+            recoverLapStateIfNeeded(snapshot);
+        } else if (snapshot.getState() == RecordingState.IDLE) {
+            lapRecoveryActivityId = 0;
         }
         synchronizeAcquisition(snapshot);
         boolean recording = state == RecordingState.STARTING
@@ -724,6 +778,44 @@ public final class SportLoggerService extends Service {
                     RecordingError.Code.STORAGE,
                     detail));
         }
+    }
+
+    private void recoverLapStateIfNeeded(RecordingSnapshot snapshot) {
+        RecordingState state = snapshot.getState();
+        if (snapshot.getActivityId() <= 0
+                || (state != RecordingState.RECORDING
+                && state != RecordingState.PAUSED
+                && state != RecordingState.INTERRUPTED)
+                || lapRecoveryActivityId == snapshot.getActivityId()) {
+            return;
+        }
+        lapRecoveryActivityId = snapshot.getActivityId();
+        canonicalRecordingSession.recover(
+                snapshot.getActivityId(),
+                new RecordingLapRecorder.Callback() {
+                    @Override
+                    public void onPersisted(RecordingLapRecorder.LapState lapState) {
+                        mainHandler.post(() -> {
+                            RecordingController controller = recordingController;
+                            if (controller == null
+                                    || !controller.restoreLapState(
+                                    snapshot.getActivityId(),
+                                    lapState)) {
+                                lapRecoveryActivityId = 0;
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(Throwable error) {
+                        mainHandler.post(() -> {
+                            lapRecoveryActivityId = 0;
+                            reportCanonicalFailure(
+                                    "Canonical lap recovery failed",
+                                    error);
+                        });
+                    }
+                });
     }
 
     private void migrateLegacyWatchData() {

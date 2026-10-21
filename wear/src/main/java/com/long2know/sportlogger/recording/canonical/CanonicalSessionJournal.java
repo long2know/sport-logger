@@ -27,6 +27,7 @@ final class CanonicalSessionJournal {
     private static final String KEY_BOOT_ID = "boot_id";
     private static final String KEY_MONOTONIC_ANCHOR = "monotonic_anchor";
     private static final String KEY_ACCUMULATED_AT_START = "accumulated_at_start";
+    private static final String KEY_ELAPSED_AT_START = "elapsed_at_start";
     private static final String KEY_NEXT_SEQUENCE = "next_sequence";
     private static final String KEY_LIFECYCLE = "lifecycle";
     private static final String KEY_OPEN_INTERVAL_ELAPSED = "open_interval_elapsed";
@@ -91,6 +92,9 @@ final class CanonicalSessionJournal {
                             KEY_MONOTONIC_ANCHOR,
                             snapshot.getElapsedSinceElapsedRealtimeMillis())
                     .putLong(KEY_ACCUMULATED_AT_START, snapshot.getDurationMillis())
+                    .putLong(
+                            KEY_ELAPSED_AT_START,
+                            snapshot.getElapsedDurationMillis())
                     .putLong(KEY_NEXT_SEQUENCE, 1L)
                     .putString(KEY_LIFECYCLE, snapshot.getState().name())
                     .putString(KEY_INTERVALS, intervals)
@@ -259,6 +263,7 @@ final class CanonicalSessionJournal {
                         ? preferences.getLong(KEY_MONOTONIC_ANCHOR, 0L)
                         : null,
                 preferences.getLong(KEY_ACCUMULATED_AT_START, 0L),
+                preferences.getLong(KEY_ELAPSED_AT_START, 0L),
                 preferences.getLong(KEY_NEXT_SEQUENCE, 1L),
                 preferences.getString(KEY_LIFECYCLE, "RECORDING"),
                 preferences.contains(KEY_OPEN_INTERVAL_ELAPSED)
@@ -303,6 +308,7 @@ final class CanonicalSessionJournal {
                 KEY_BOOT_ID,
                 KEY_MONOTONIC_ANCHOR,
                 KEY_ACCUMULATED_AT_START,
+                KEY_ELAPSED_AT_START,
                 KEY_NEXT_SEQUENCE,
                 KEY_LIFECYCLE,
                 KEY_OPEN_INTERVAL_ELAPSED,
@@ -388,6 +394,7 @@ final class CanonicalSessionJournal {
         final String bootId;
         final Long monotonicAnchorMs;
         final long accumulatedActiveAtStartMs;
+        final long elapsedAtStartMs;
         final long nextSequence;
         final String lifecycle;
         final Long openIntervalElapsed;
@@ -410,6 +417,7 @@ final class CanonicalSessionJournal {
                 String bootId,
                 Long monotonicAnchorMs,
                 long accumulatedActiveAtStartMs,
+                long elapsedAtStartMs,
                 long nextSequence,
                 String lifecycle,
                 Long openIntervalElapsed,
@@ -430,6 +438,7 @@ final class CanonicalSessionJournal {
             this.bootId = bootId;
             this.monotonicAnchorMs = monotonicAnchorMs;
             this.accumulatedActiveAtStartMs = accumulatedActiveAtStartMs;
+            this.elapsedAtStartMs = elapsedAtStartMs;
             this.nextSequence = nextSequence;
             this.lifecycle = lifecycle;
             this.openIntervalElapsed = openIntervalElapsed;

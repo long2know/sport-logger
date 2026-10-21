@@ -14,6 +14,7 @@ import android.view.MenuItem;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
@@ -26,6 +27,7 @@ import com.long2know.sportlogger.acquisition.RecordingPermissionPolicy;
 import com.long2know.sportlogger.acquisition.RouteStatus;
 import com.long2know.sportlogger.acquisition.healthservices.HealthServicesExerciseSnapshot;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.sportlogger.services.ISportLoggerServiceClient;
 import com.long2know.sportlogger.services.SportLoggerService;
@@ -130,6 +132,11 @@ public final class MainActivity extends FragmentActivity implements
     @Override
     public void onAcquisitionStateChanged(
             HealthServicesExerciseSnapshot snapshot) {
+    }
+
+    @Override
+    public void onLatestCompletedChanged(
+            @Nullable CompletedRecordingSnapshot snapshot) {
     }
 
     @Override

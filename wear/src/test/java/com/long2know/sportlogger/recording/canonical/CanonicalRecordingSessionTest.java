@@ -11,10 +11,14 @@ import com.long2know.sportlogger.acquisition.MeasurementProvenance;
 import com.long2know.sportlogger.acquisition.MeasurementSample;
 import com.long2know.sportlogger.persistence.watch.WatchActivityRepository;
 import com.long2know.sportlogger.persistence.watch.WatchDatabase;
+import com.long2know.sportlogger.recording.CompletedRecordingSnapshot;
+import com.long2know.sportlogger.recording.RecordingLapRecorder;
 import com.long2know.sportlogger.recording.RecordingSessionTerminator;
 import com.long2know.sportlogger.recording.RecordingSnapshot;
 import com.long2know.sportlogger.recording.RecordingState;
 import com.long2know.utilities.contract.CanonicalPayload;
+import com.long2know.utilities.contract.CanonicalTransfers;
+import com.long2know.utilities.contract.proto.AckResult;
 import com.long2know.utilities.contract.proto.ActivityTransferFile;
 import com.long2know.utilities.contract.proto.ActivityType;
 
@@ -26,6 +30,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -189,6 +194,165 @@ public class CanonicalRecordingSessionTest {
         replacement.close();
     }
 
+    @Test
+    public void manualLapRecoversAndFinalizationClosesTheLastPartialLap()
+            throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                80_000L,
+                80_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+
+        RecordingLapRecorder.LapState recorded = awaitLap(callback ->
+                session.recordManualLap(
+                        new RecordingLapRecorder.Boundary(
+                                recording.getActivityId(),
+                                1_500L,
+                                500L,
+                                400L),
+                        callback));
+        RecordingLapRecorder.LapState recovered = awaitLap(callback ->
+                session.recover(recording.getActivityId(), callback));
+
+        assertEquals(2, recorded.getCurrentLapIndex());
+        assertEquals(Long.valueOf(500L),
+                recovered.getLastLapElapsedDurationMillis());
+        assertEquals(Long.valueOf(400L),
+                recovered.getLastLapActiveDurationMillis());
+
+        RecordingSnapshot stopping = snapshot(
+                RecordingState.STOPPING,
+                700L,
+                1_000L,
+                0L,
+                0L);
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+
+        com.long2know.utilities.contract.proto.ActivityRecord activity =
+                repository.latestCompleted().join().getActivity();
+        assertEquals(state.sessionId, activity.getSessionId());
+        assertEquals(2, activity.getLapsCount());
+        assertEquals(500L, activity.getLaps(0).getElapsedDurationMs());
+        assertEquals(400L, activity.getLaps(0).getActiveDurationMs());
+        assertEquals(500L, activity.getLaps(1).getElapsedDurationMs());
+        assertEquals(300L, activity.getLaps(1).getActiveDurationMs());
+    }
+
+    @Test
+    public void discardRemovesDurableManualLaps() throws Exception {
+        RecordingSnapshot recording = snapshot(
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                90_000L,
+                90_000L);
+        session.onRecordingSnapshot(recording);
+        CanonicalSessionJournal.State state = journal.read();
+        awaitLap(callback -> session.recordManualLap(
+                new RecordingLapRecorder.Boundary(
+                        recording.getActivityId(),
+                        1_500L,
+                        500L,
+                        450L),
+                callback));
+        assertEquals(2, repository.laps(state.sessionId).join().size());
+
+        awaitSuccess(callback -> session.discard(
+                snapshot(
+                        RecordingState.DISCARDING,
+                        450L,
+                        500L,
+                        0L,
+                        0L),
+                callback));
+
+        assertTrue(repository.laps(state.sessionId).join().isEmpty());
+        assertEquals(
+                WatchActivityRepository.LifecycleState.DISCARDED,
+                repository.session(state.sessionId).join().getState());
+    }
+
+    @Test
+    public void completedPresentationObservesAndQueriesCommittedOutbox()
+            throws Exception {
+        CountDownLatch completedChanged = new CountDownLatch(1);
+        AtomicReference<CompletedRecordingSnapshot> observed =
+                new AtomicReference<>();
+        session.observeLatestCompleted(
+                Runnable::run,
+                new CanonicalRecordingSession.CompletedListener() {
+                    @Override
+                    public void onChanged(CompletedRecordingSnapshot snapshot) {
+                        if (snapshot != null) {
+                            observed.set(snapshot);
+                            completedChanged.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Throwable error) {
+                        fatal.set(error);
+                        completedChanged.countDown();
+                    }
+                });
+        RecordingSnapshot recording = snapshot(
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                RecordingState.RECORDING,
+                0L,
+                0L,
+                100_000L,
+                100_000L);
+        session.onRecordingSnapshot(recording);
+        RecordingSnapshot stopping = snapshot(
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                RecordingState.STOPPING,
+                800L,
+                1_000L,
+                0L,
+                0L);
+        awaitSuccess(callback -> session.reserveCompletion(stopping, callback));
+        awaitSuccess(callback -> session.finishCompletion(stopping, callback));
+
+        assertTrue(completedChanged.await(2, TimeUnit.SECONDS));
+        assertNull(fatal.get());
+        CompletedRecordingSnapshot ready = observed.get();
+        assertEquals(
+                ActivityType.ACTIVITY_TYPE_CYCLING,
+                ready.getActivity().getActivityType());
+        assertEquals(
+                WatchActivityRepository.OUTBOX_READY,
+                ready.getOutboxState());
+
+        WatchActivityRepository.OutboxItem outbox =
+                repository.outbox(ready.getTransferId()).join();
+        ActivityTransferFile transfer =
+                CanonicalTransfers.parseActivityTransfer(
+                        outbox.getPayload()).getTransfer();
+        repository.acceptCommitAck(
+                        CanonicalTransfers.commitAck(
+                                        transfer,
+                                        transfer.getSessionRevision(),
+                                        AckResult.ACK_RESULT_ACCEPTED,
+                                        null,
+                                        null)
+                                .toByteArray(),
+                        101_500L)
+                .join();
+
+        List<CompletedRecordingSnapshot> recent =
+                session.recentCompleted(10).get(2, TimeUnit.SECONDS);
+        assertEquals(1, recent.size());
+        assertEquals(
+                WatchActivityRepository.OUTBOX_COMMITTED,
+                recent.get(0).getOutboxState());
+        assertEquals(Long.valueOf(101_500L),
+                recent.get(0).getCommittedAtUtcMillis());
+    }
+
     private static RecordingSnapshot snapshot(
             RecordingState state,
             long activeDuration,
@@ -267,7 +431,37 @@ public class CanonicalRecordingSessionTest {
         }
     }
 
+    private static RecordingLapRecorder.LapState awaitLap(
+            LapOperation operation) throws Exception {
+        CountDownLatch complete = new CountDownLatch(1);
+        AtomicReference<RecordingLapRecorder.LapState> state =
+                new AtomicReference<>();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        operation.run(new RecordingLapRecorder.Callback() {
+            @Override
+            public void onPersisted(RecordingLapRecorder.LapState persisted) {
+                state.set(persisted);
+                complete.countDown();
+            }
+
+            @Override
+            public void onFailure(Throwable failure) {
+                error.set(failure);
+                complete.countDown();
+            }
+        });
+        assertTrue(complete.await(2, TimeUnit.SECONDS));
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return state.get();
+    }
+
     private interface AsyncOperation {
         void run(RecordingSessionTerminator.Callback callback);
+    }
+
+    private interface LapOperation {
+        void run(RecordingLapRecorder.Callback callback);
     }
 }

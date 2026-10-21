@@ -29,6 +29,9 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
     private static final String KEY_ACCUMULATED_ELAPSED = "accumulated_elapsed";
     private static final String KEY_ENDED_AT = "ended_at";
     private static final String KEY_BOOT_COUNT = "boot_count";
+    private static final String KEY_CURRENT_LAP_INDEX = "current_lap_index";
+    private static final String KEY_LAST_LAP_ELAPSED = "last_lap_elapsed";
+    private static final String KEY_LAST_LAP_ACTIVE = "last_lap_active";
     private static final String KEY_ERROR_CODE = "error_code";
     private static final String KEY_ERROR_MESSAGE = "error_message";
 
@@ -147,7 +150,16 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
                             preferences.getLong(KEY_ACCUMULATED, 0L)),
                     preferences.getLong(KEY_ENDED_AT, 0L),
                     preferences.getInt(KEY_BOOT_COUNT, -1),
-                    recordingError);
+                    recordingError,
+                    preferences.getInt(
+                            KEY_CURRENT_LAP_INDEX,
+                            activityId > 0 ? 1 : 0),
+                    preferences.contains(KEY_LAST_LAP_ELAPSED)
+                            ? preferences.getLong(KEY_LAST_LAP_ELAPSED, 0L)
+                            : null,
+                    preferences.contains(KEY_LAST_LAP_ACTIVE)
+                            ? preferences.getLong(KEY_LAST_LAP_ACTIVE, 0L)
+                            : null);
         }
     }
 
@@ -178,7 +190,24 @@ public final class SharedPreferencesRecordingJournal implements RecordingJournal
                             KEY_ACCUMULATED_ELAPSED,
                             recording.getAccumulatedElapsedMillis())
                     .putLong(KEY_ENDED_AT, recording.getEndedAtMillis())
-                    .putInt(KEY_BOOT_COUNT, recording.getBootCount());
+                    .putInt(KEY_BOOT_COUNT, recording.getBootCount())
+                    .putInt(
+                            KEY_CURRENT_LAP_INDEX,
+                            recording.getCurrentLapIndex());
+            if (recording.getLastLapElapsedDurationMillis() == null) {
+                editor.remove(KEY_LAST_LAP_ELAPSED);
+            } else {
+                editor.putLong(
+                        KEY_LAST_LAP_ELAPSED,
+                        recording.getLastLapElapsedDurationMillis());
+            }
+            if (recording.getLastLapActiveDurationMillis() == null) {
+                editor.remove(KEY_LAST_LAP_ACTIVE);
+            } else {
+                editor.putLong(
+                        KEY_LAST_LAP_ACTIVE,
+                        recording.getLastLapActiveDurationMillis());
+            }
             RecordingError error = recording.getError();
             if (error == null) {
                 editor.remove(KEY_ERROR_CODE).remove(KEY_ERROR_MESSAGE);
